@@ -20,7 +20,7 @@ func (e *Entity) memkey() string {
 	return memkey(e.Key)
 }
 
-type PartialEntity struct {
+type partialEntity struct {
 	Src Kind
 	NotFound bool
 }
@@ -29,7 +29,7 @@ func (e *Entity) Gob() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	gob.Register(e.Src)
-	p := &PartialEntity{
+	p := &partialEntity{
 		Src: e.Src,
 		NotFound: e.NotFound,
 	}
