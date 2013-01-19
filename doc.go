@@ -32,6 +32,5 @@ Usage:
 Currently in early development: do not use in production.
 
 Submit bugs and code to: https://github.com/mjibson/goon
-
 */
 package goon
