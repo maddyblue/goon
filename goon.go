@@ -68,11 +68,7 @@ func (g *Goon) PutMulti(es []*Entity) error {
 		src[i] = e.Src
 	}
 
-	err = memcache.DeleteMulti(g.context, memkeys)
-
-	if err != nil {
-		return err
-	}
+	memcache.DeleteMulti(g.context, memkeys)
 
 	keys, err = datastore.PutMulti(g.context, keys, src)
 
