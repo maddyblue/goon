@@ -33,7 +33,7 @@ type Goon struct {
 	cache         map[string]*Entity
 	inTransaction bool
 	toSet         map[string]*Entity
-	toDelete      map[string]*Entity
+	toDelete      []string
 }
 
 func memkey(k *datastore.Key) string {
@@ -60,7 +60,6 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			context:       tc,
 			inTransaction: true,
 			toSet:         make(map[string]*Entity),
-			toDelete:      make(map[string]*Entity),
 		}
 		return f(ng)
 	}, opts)
@@ -70,7 +69,7 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			g.cache[k] = v
 		}
 
-		for k := range ng.toDelete {
+		for _, k := range ng.toDelete {
 			delete(g.cache, k)
 		}
 	}
@@ -303,8 +302,14 @@ func (g *Goon) Delete(key *datastore.Key) error {
 func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	memkeys := make([]string, len(keys))
 	for i, k := range keys {
-		memkeys[i] = memkey(k)
-		delete(g.cache, memkey(k))
+		mk := memkey(k)
+		memkeys[i] = mk
+
+		if g.inTransaction {
+			g.toDelete = append(g.toDelete, mk)
+		} else {
+			delete(g.cache, mk)
+		}
 	}
 
 	memcache.DeleteMulti(g.context, memkeys)
