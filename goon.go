@@ -99,7 +99,7 @@ func (g *Goon) putMemcache(es []*Entity) error {
 	items := make([]*memcache.Item, len(es))
 
 	for i, e := range es {
-		gob, err := e.Gob()
+		gob, err := e.gob()
 		if err != nil {
 			return err
 		}

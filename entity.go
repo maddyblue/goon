@@ -41,7 +41,7 @@ type partialEntity struct {
 	NotFound bool
 }
 
-func (e *Entity) Gob() ([]byte, error) {
+func (e *Entity) gob() ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	gob.Register(e.Src)
