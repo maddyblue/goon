@@ -24,7 +24,9 @@ import (
 	"appengine/memcache"
 	"bytes"
 	"encoding/gob"
+	"errors"
 	"net/http"
+	"reflect"
 )
 
 type Goon struct {
@@ -44,7 +46,7 @@ func NewGoon(r *http.Request) *Goon {
 }
 
 func (g *Goon) Put(e *Entity) error {
-	return g.PutMulti([]*Entity{ e })
+	return g.PutMulti([]*Entity{e})
 }
 
 func (g *Goon) PutMulti(es []*Entity) error {
@@ -103,7 +105,7 @@ func (g *Goon) putMemcache(es []*Entity) error {
 		}
 
 		items[i] = &memcache.Item{
-			Key: e.memkey(),
+			Key:   e.memkey(),
 			Value: gob,
 		}
 	}
@@ -118,10 +120,27 @@ func (g *Goon) putMemcache(es []*Entity) error {
 	return nil
 }
 
-func (g *Goon) Get(src Kind, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
-	key := datastore.NewKey(g.context, src.Kind(), stringID, intID, parent)
+// structKind returns the reflect.Kind name of src if it is a struct, else nil.
+func structKind(src interface{}) (string, error) {
+	v := reflect.ValueOf(src)
+	v = reflect.Indirect(v)
+	t := v.Type()
+	k := t.Kind()
+
+	if k == reflect.Struct {
+		return t.Name(), nil
+	}
+	return "", errors.New("goon: src has invalid type")
+}
+
+func (g *Goon) Get(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
+	k, err := structKind(src)
+	if err != nil {
+		return nil, err
+	}
+	key := datastore.NewKey(g.context, k, stringID, intID, parent)
 	e := NewEntity(key, src)
-	err := g.GetMulti([]*Entity{ e })
+	err = g.GetMulti([]*Entity{e})
 	if err != nil {
 		return nil, err
 	}

@@ -25,7 +25,7 @@ import (
 
 type Entity struct {
 	Key      *datastore.Key
-	Src      Kind
+	Src      interface{}
 	StringID string
 	IntID    int64
 
@@ -37,7 +37,7 @@ func (e *Entity) memkey() string {
 }
 
 type partialEntity struct {
-	Src Kind
+	Src      interface{}
 	NotFound bool
 }
 
@@ -46,7 +46,7 @@ func (e *Entity) Gob() ([]byte, error) {
 	enc := gob.NewEncoder(&buf)
 	gob.Register(e.Src)
 	p := &partialEntity{
-		Src: e.Src,
+		Src:      e.Src,
 		NotFound: e.NotFound,
 	}
 	err := enc.Encode(p)
@@ -61,9 +61,9 @@ func (e *Entity) String() string {
 	return fmt.Sprintf("%v: %v", e.Key, e.Src)
 }
 
-func NewEntity(key *datastore.Key, src Kind) *Entity {
+func NewEntity(key *datastore.Key, src interface{}) *Entity {
 	e := &Entity{
-		Src:      src,
+		Src: src,
 	}
 	e.setKey(key)
 	return e
@@ -75,10 +75,18 @@ func (e *Entity) setKey(key *datastore.Key) {
 	e.StringID = key.StringID()
 }
 
-func (g *Goon) NewEntity(parent *datastore.Key, src Kind) *Entity {
-	return NewEntity(datastore.NewIncompleteKey(g.context, src.Kind(), parent), src)
+func (g *Goon) NewEntity(parent *datastore.Key, src interface{}) (*Entity, error) {
+	k, e := structKind(src)
+	if e != nil {
+		return nil, e
+	}
+	return NewEntity(datastore.NewIncompleteKey(g.context, k, parent), src), nil
 }
 
-func (g *Goon) KeyEntity(src Kind, stringID string, intID int64, parent *datastore.Key) *Entity {
-	return NewEntity(datastore.NewKey(g.context, src.Kind(), stringID, intID, parent), src)
+func (g *Goon) KeyEntity(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
+	k, e := structKind(src)
+	if e != nil {
+		return nil, e
+	}
+	return NewEntity(datastore.NewKey(g.context, k, stringID, intID, parent), src), nil
 }
