@@ -40,10 +40,14 @@ Usage:
 		fmt.Fprintln(w, "e3:", e3)
 
 		_ = n.Delete(e.Key)
+		_ = n.RunInTransaction(func(ng *goon.Goon) error {
+			_ = ng.Delete(e.Key)
+			return nil
+		}, nil)
+
 		e4, _ := n.KeyGet(&Group{}, e.Key)
 		fmt.Fprintln(w, "e4:", e4)
 	}
-
 Currently in early development: do not use in production.
 
 Submit bugs and code to: https://github.com/mjibson/goon
