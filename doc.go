@@ -28,5 +28,10 @@ Usage:
 		e2, _ := n.KeyGet(&g2, e.Key)
 		fmt.Fprintln(w, "e2:", e2)
 	}
+
+Currently in early development: do not use in production.
+
+Submit bugs and code to: https://github.com/mjibson/goon
+
 */
 package goon
