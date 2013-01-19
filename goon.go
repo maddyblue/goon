@@ -292,3 +292,22 @@ func fromGob(e *Entity, b []byte) error {
 	dec := gob.NewDecoder(&buf)
 	return dec.Decode(e)
 }
+
+// Delete deletes the entity for the given key.
+func (g *Goon) Delete(key *datastore.Key) error {
+	keys := []*datastore.Key{key}
+	return g.DeleteMulti(keys)
+}
+
+// DeleteMulti is a batch version of Delete.
+func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
+	memkeys := make([]string, len(keys))
+	for i, k := range keys {
+		memkeys[i] = memkey(k)
+		delete(g.cache, memkey(k))
+	}
+
+	memcache.DeleteMulti(g.context, memkeys)
+
+	return datastore.DeleteMulti(g.context, keys)
+}

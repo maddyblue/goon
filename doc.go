@@ -38,6 +38,10 @@ Usage:
 
 		e3, _ := n.KeyGet(&Group{}, e.Key)
 		fmt.Fprintln(w, "e3:", e3)
+
+		_ = n.Delete(e.Key)
+		e4, _ := n.KeyGet(&Group{}, e.Key)
+		fmt.Fprintln(w, "e4:", e4)
 	}
 
 Currently in early development: do not use in production.
