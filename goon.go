@@ -48,12 +48,12 @@ func NewGoon(r *http.Request) *Goon {
 }
 
 // RunInTransaction runs f in a transaction. It calls f with a transaction
-// context g that f should use for all App Engine operations. Neither cache nor
+// context tg that f should use for all App Engine operations. Neither cache nor
 // memcache are used or set during a transaction.
 //
 // Otherwise similar to appengine/datastore.RunInTransaction:
 // https://developers.google.com/appengine/docs/go/datastore/reference#RunInTransaction
-func (g *Goon) RunInTransaction(f func(g *Goon) error, opts *datastore.TransactionOptions) error {
+func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.TransactionOptions) error {
 	var ng *Goon
 	err := datastore.RunInTransaction(g.context, func(tc appengine.Context) error {
 		ng = &Goon{
