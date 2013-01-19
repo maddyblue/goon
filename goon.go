@@ -139,7 +139,7 @@ func structKind(src interface{}) (string, error) {
 	return "", errors.New("goon: src has invalid type")
 }
 
-// Get fetches an entity of kind src. src is populated is the returned Entity's Src field.
+// Get fetches an entity of kind src by.
 // Refer to appengine/datastore.NewKey regarding key specification.
 func (g *Goon) Get(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
 	k, err := structKind(src)
@@ -147,12 +147,18 @@ func (g *Goon) Get(src interface{}, stringID string, intID int64, parent *datast
 		return nil, err
 	}
 	key := datastore.NewKey(g.context, k, stringID, intID, parent)
+	return g.KeyGet(src, key)
+}
+
+// KeyGet fetches an entity of kind src by key.
+func (g *Goon) KeyGet(src interface{}, key *datastore.Key) (*Entity, error) {
 	e := NewEntity(key, src)
-	err = g.GetMulti([]*Entity{e})
+	es := []*Entity{e}
+	err := g.GetMulti(es)
 	if err != nil {
 		return nil, err
 	}
-	return e, nil
+	return es[0], nil
 }
 
 // Get fetches a sequency of Entities, whose keys must already be valid.
