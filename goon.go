@@ -14,8 +14,6 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-// Package goon provides an autocaching interface to the app engine datastore
-// similar to the python NDB package.
 package goon
 
 import (
