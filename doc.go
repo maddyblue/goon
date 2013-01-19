@@ -27,6 +27,17 @@ Usage:
 		// Fetch it back.
 		e2, _ := n.KeyGet(&g2, e.Key)
 		fmt.Fprintln(w, "e2:", e2)
+
+		_ = n.RunInTransaction(func(ng *goon.Goon) error {
+			var g3 Group
+			ne, _ := ng.KeyGet(&g3, e.Key)
+			g3.Name = "new name"
+			ng.Put(ne)
+			return nil
+		}, nil)
+
+		e3, _ := n.KeyGet(&Group{}, e.Key)
+		fmt.Fprintln(w, "e3:", e3)
 	}
 
 Currently in early development: do not use in production.

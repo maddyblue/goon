@@ -29,8 +29,11 @@ import (
 
 // Goon holds the app engine context and request memory cache.
 type Goon struct {
-	context appengine.Context
-	cache   map[string]*Entity
+	context       appengine.Context
+	cache         map[string]*Entity
+	inTransaction bool
+	toSet         map[string]*Entity
+	toDelete      map[string]*Entity
 }
 
 func memkey(k *datastore.Key) string {
@@ -42,6 +45,37 @@ func NewGoon(r *http.Request) *Goon {
 		context: appengine.NewContext(r),
 		cache:   make(map[string]*Entity),
 	}
+}
+
+// RunInTransaction runs f in a transaction. It calls f with a transaction
+// context g that f should use for all App Engine operations. Neither cache nor
+// memcache are used or set during a transaction.
+//
+// Otherwise similar to appengine/datastore.RunInTransaction:
+// https://developers.google.com/appengine/docs/go/datastore/reference#RunInTransaction
+func (g *Goon) RunInTransaction(f func(g *Goon) error, opts *datastore.TransactionOptions) error {
+	var ng *Goon
+	err := datastore.RunInTransaction(g.context, func(tc appengine.Context) error {
+		ng = &Goon{
+			context:       tc,
+			inTransaction: true,
+			toSet:         make(map[string]*Entity),
+			toDelete:      make(map[string]*Entity),
+		}
+		return f(ng)
+	}, opts)
+
+	if err == nil {
+		for k, v := range ng.toSet {
+			g.cache[k] = v
+		}
+
+		for k := range ng.toDelete {
+			delete(g.cache, k)
+		}
+	}
+
+	return err
 }
 
 // Put stores Entity e.
@@ -76,11 +110,17 @@ func (g *Goon) PutMulti(es []*Entity) error {
 		return err
 	}
 
-	for i := range es {
+	for i, e := range es {
 		es[i].setKey(keys[i])
+
+		if g.inTransaction {
+			g.toSet[e.memkey()] = e
+		}
 	}
 
-	g.putMemoryMulti(es)
+	if !g.inTransaction {
+		g.putMemoryMulti(es)
+	}
 
 	return nil
 }
@@ -158,46 +198,58 @@ func (g *Goon) KeyGet(src interface{}, key *datastore.Key) (*Entity, error) {
 // Get fetches a sequency of Entities, whose keys must already be valid.
 // Entities with no correspending key have their NotFound field set to true.
 func (g *Goon) GetMulti(es []*Entity) error {
-	var memkeys []string
-	var mixs []int
-
-	for i, e := range es {
-		m := e.memkey()
-		if s, present := g.cache[m]; present {
-			es[i] = s
-		} else {
-			memkeys = append(memkeys, m)
-			mixs = append(mixs, i)
-		}
-	}
-
-	memvalues, err := memcache.GetMulti(g.context, memkeys)
-	if err != nil {
-		return err
-	}
-
 	var dskeys []*datastore.Key
 	var dst []interface{}
 	var dixs []int
 
-	for i, m := range memkeys {
-		e := es[mixs[i]]
-		if s, present := memvalues[m]; present {
-			err := fromGob(e, s.Value)
-			if err != nil {
-				return err
-			}
+	if !g.inTransaction {
+		var memkeys []string
+		var mixs []int
 
-			g.putMemory(e)
-		} else {
-			dskeys = append(dskeys, e.Key)
-			dst = append(dst, e.Src)
-			dixs = append(dixs, mixs[i])
+		for i, e := range es {
+			m := e.memkey()
+			if s, present := g.cache[m]; present {
+				es[i] = s
+			} else {
+				memkeys = append(memkeys, m)
+				mixs = append(mixs, i)
+			}
+		}
+
+		memvalues, err := memcache.GetMulti(g.context, memkeys)
+		if err != nil {
+			return err
+		}
+
+		for i, m := range memkeys {
+			e := es[mixs[i]]
+			if s, present := memvalues[m]; present {
+				err := fromGob(e, s.Value)
+				if err != nil {
+					return err
+				}
+
+				g.putMemory(e)
+			} else {
+				dskeys = append(dskeys, e.Key)
+				dst = append(dst, e.Src)
+				dixs = append(dixs, mixs[i])
+			}
+		}
+	} else {
+		dskeys = make([]*datastore.Key, len(es))
+		dst = make([]interface{}, len(es))
+		dixs = make([]int, len(es))
+
+		for i, e := range es {
+			dskeys[i] = e.Key
+			dst[i] = e.Src
+			dixs[i] = i
 		}
 	}
 
 	var merr appengine.MultiError
-	err = datastore.GetMulti(g.context, dskeys, dst)
+	err := datastore.GetMulti(g.context, dskeys, dst)
 	if err != nil {
 		merr = err.(appengine.MultiError)
 	}
@@ -211,9 +263,11 @@ func (g *Goon) GetMulti(es []*Entity) error {
 		mes = append(mes, e)
 	}
 
-	err = g.putMemcache(mes)
-	if err != nil {
-		return err
+	if !g.inTransaction {
+		err = g.putMemcache(mes)
+		if err != nil {
+			return err
+		}
 	}
 
 	multiErr, any := make(appengine.MultiError, len(es)), false
