@@ -81,8 +81,9 @@ func (g *Goon) PutMulti(es []*Entity) error {
 		es[i].setKey(keys[i])
 	}
 
-	return g.putMemoryMulti(es)
+	g.putMemoryMulti(es)
 
+	return nil
 }
 
 func (g *Goon) putMemoryMulti(es []*Entity) {
