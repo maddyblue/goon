@@ -29,6 +29,7 @@ import (
 	"reflect"
 )
 
+// Goon holds the app engine context and request memory cache.
 type Goon struct {
 	context appengine.Context
 	cache   map[string]*Entity
@@ -45,10 +46,14 @@ func NewGoon(r *http.Request) *Goon {
 	}
 }
 
+// Put stores Entity e.
+// If e has an incomplete key, it is updated.
 func (g *Goon) Put(e *Entity) error {
 	return g.PutMulti([]*Entity{e})
 }
 
+// PutMulti stores a sequence of Entities.
+// Any entity with an incomplete key will be updated.
 func (g *Goon) PutMulti(es []*Entity) error {
 	var err error
 
@@ -134,6 +139,8 @@ func structKind(src interface{}) (string, error) {
 	return "", errors.New("goon: src has invalid type")
 }
 
+// Get fetches an entity of kind src. src is populated is the returned Entity's Src field.
+// Refer to appengine/datastore.NewKey regarding key specification.
 func (g *Goon) Get(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
 	k, err := structKind(src)
 	if err != nil {
@@ -148,6 +155,8 @@ func (g *Goon) Get(src interface{}, stringID string, intID int64, parent *datast
 	return e, nil
 }
 
+// Get fetches a sequency of Entities, whose keys must already be valid.
+// Entities with no correspending key have their NotFound field set to true.
 func (g *Goon) GetMulti(es []*Entity) error {
 	var memkeys []string
 	var mixs []int

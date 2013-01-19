@@ -23,6 +23,8 @@ import (
 	"fmt"
 )
 
+// Entity contains data to fetch and store datastore entities.
+// The internal fields are designed to be used in a readonly fashion.
 type Entity struct {
 	Key      *datastore.Key
 	Src      interface{}
@@ -61,6 +63,7 @@ func (e *Entity) String() string {
 	return fmt.Sprintf("%v: %v", e.Key, e.Src)
 }
 
+// NewEntity returns a new Entity from key and src.
 func NewEntity(key *datastore.Key, src interface{}) *Entity {
 	e := &Entity{
 		Src: src,
@@ -75,6 +78,7 @@ func (e *Entity) setKey(key *datastore.Key) {
 	e.StringID = key.StringID()
 }
 
+// NewEntity returns a new Entity from src with an incomplete key.
 func (g *Goon) NewEntity(parent *datastore.Key, src interface{}) (*Entity, error) {
 	k, e := structKind(src)
 	if e != nil {
@@ -83,6 +87,8 @@ func (g *Goon) NewEntity(parent *datastore.Key, src interface{}) (*Entity, error
 	return NewEntity(datastore.NewIncompleteKey(g.context, k, parent), src), nil
 }
 
+// KeyEntity returns a new Entity from key and src.
+// Refer to appengine/datastore.NewKey regarding key specification.
 func (g *Goon) KeyEntity(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
 	k, e := structKind(src)
 	if e != nil {
