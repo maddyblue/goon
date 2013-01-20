@@ -28,8 +28,6 @@ import (
 type Entity struct {
 	Key      *datastore.Key
 	Src      interface{}
-	StringID string
-	IntID    int64
 
 	NotFound bool
 }
@@ -74,8 +72,6 @@ func NewEntity(key *datastore.Key, src interface{}) *Entity {
 
 func (e *Entity) setKey(key *datastore.Key) {
 	e.Key = key
-	e.IntID = key.IntID()
-	e.StringID = key.StringID()
 }
 
 // NewEntity returns a new Entity from src with an incomplete key.
