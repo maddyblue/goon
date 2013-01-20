@@ -83,6 +83,15 @@ func (g *Goon) NewEntity(parent *datastore.Key, src interface{}) (*Entity, error
 	return NewEntity(datastore.NewIncompleteKey(g.context, k, parent), src), nil
 }
 
+// NewEntityById returns a new Entity from src with a key made from given IDs.
+func (g *Goon) NewEntityById(stringID string, intID int64, parent *datastore.Key, src interface{}) (*Entity, error) {
+	k, err := structKind(src)
+	if err != nil {
+		return nil, err
+	}
+	return NewEntity(datastore.NewKey(g.context, k, stringID, intID, parent), src), nil
+}
+
 // KeyEntity returns a new Entity from key and src.
 // Refer to appengine/datastore.NewKey regarding key specification.
 func (g *Goon) KeyEntity(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
