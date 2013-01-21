@@ -289,7 +289,24 @@ func fromGob(e *Entity, b []byte) error {
 	_, _ = buf.Write(b)
 	gob.Register(e.Src)
 	dec := gob.NewDecoder(&buf)
-	return dec.Decode(e)
+	t := Entity{}
+	err := dec.Decode(&t)
+	if err != nil {
+		return err
+	}
+
+	e.NotFound = t.NotFound
+	ev := reflect.Indirect(reflect.ValueOf(e.Src))
+
+	v := reflect.Indirect(reflect.ValueOf(t.Src))
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		if f.CanSet() {
+			ev.Field(i).Set(f)
+		}
+	}
+
+	return nil
 }
 
 // Delete deletes the entity for the given key.
