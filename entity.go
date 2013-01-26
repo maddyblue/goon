@@ -26,8 +26,8 @@ import (
 // Entity contains data to fetch and store datastore entities.
 // The internal fields are designed to be used in a readonly fashion.
 type Entity struct {
-	Key      *datastore.Key
-	Src      interface{}
+	Key *datastore.Key
+	Src interface{}
 
 	NotFound bool
 }
