@@ -25,11 +25,13 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+
+	"github.com/mjibson/appstats"
 )
 
 // Goon holds the app engine context and request memory cache.
 type Goon struct {
-	context       appengine.Context
+	context       appstats.Context
 	cache         map[string]*Entity
 	inTransaction bool
 	toSet         map[string]*Entity
@@ -42,9 +44,13 @@ func memkey(k *datastore.Key) string {
 
 func NewGoon(r *http.Request) *Goon {
 	return &Goon{
-		context: appengine.NewContext(r),
+		context: appstats.NewContext(r),
 		cache:   make(map[string]*Entity),
 	}
+}
+
+func (g *Goon) Save() {
+	g.context.Save()
 }
 
 // RunInTransaction runs f in a transaction. It calls f with a transaction
@@ -57,7 +63,7 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 	var ng *Goon
 	err := datastore.RunInTransaction(g.context, func(tc appengine.Context) error {
 		ng = &Goon{
-			context:       tc,
+			context:       g.context.FromContext(tc),
 			inTransaction: true,
 			toSet:         make(map[string]*Entity),
 		}
