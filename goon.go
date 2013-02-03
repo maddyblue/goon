@@ -266,7 +266,7 @@ func (g *Goon) GetMulti(es []*Entity) error {
 		mes = append(mes, e)
 	}
 
-	if !g.inTransaction {
+	if len(mes) > 0 && !g.inTransaction {
 		err = g.putMemcache(mes)
 		if err != nil {
 			return err
