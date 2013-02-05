@@ -76,7 +76,7 @@ func (e *Entity) setKey(key *datastore.Key) {
 
 // NewEntity returns a new Entity from src with an incomplete key.
 func (g *Goon) NewEntity(parent *datastore.Key, src interface{}) (*Entity, error) {
-	k, err := structKind(src)
+	k, err := StructKind(src)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (g *Goon) NewEntity(parent *datastore.Key, src interface{}) (*Entity, error
 
 // NewEntityById returns a new Entity from src with a key made from given IDs.
 func (g *Goon) NewEntityById(stringID string, intID int64, parent *datastore.Key, src interface{}) (*Entity, error) {
-	k, err := structKind(src)
+	k, err := StructKind(src)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (g *Goon) NewEntityById(stringID string, intID int64, parent *datastore.Key
 // KeyEntity returns a new Entity from key and src.
 // Refer to appengine/datastore.NewKey regarding key specification.
 func (g *Goon) KeyEntity(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
-	k, e := structKind(src)
+	k, e := StructKind(src)
 	if e != nil {
 		return nil, e
 	}
