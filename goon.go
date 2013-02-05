@@ -254,7 +254,12 @@ func (g *Goon) GetMulti(es []*Entity) error {
 	var merr appengine.MultiError
 	err := datastore.GetMulti(g.context, dskeys, dst)
 	if err != nil {
-		merr = err.(appengine.MultiError)
+		switch err.(type) {
+		case appengine.MultiError:
+			merr = err.(appengine.MultiError)
+		default:
+			return err
+		}
 	}
 	var mes []*Entity
 
