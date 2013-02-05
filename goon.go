@@ -47,7 +47,7 @@ func NewGoon(r *http.Request) *Goon {
 func ContextGoon(c appengine.Context) *Goon {
 	return &Goon{
 		context: c,
-		cache: make(map[string]*Entity),
+		cache:   make(map[string]*Entity),
 	}
 }
 
