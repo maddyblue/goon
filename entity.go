@@ -91,13 +91,3 @@ func (g *Goon) NewEntityById(stringID string, intID int64, parent *datastore.Key
 	}
 	return NewEntity(datastore.NewKey(g.context, k, stringID, intID, parent), src), nil
 }
-
-// KeyEntity returns a new Entity from key and src.
-// Refer to appengine/datastore.NewKey regarding key specification.
-func (g *Goon) KeyEntity(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
-	k, e := StructKind(src)
-	if e != nil {
-		return nil, e
-	}
-	return NewEntity(datastore.NewKey(g.context, k, stringID, intID, parent), src), nil
-}
