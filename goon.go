@@ -279,10 +279,16 @@ func (g *Goon) GetMulti(es []*Entity) error {
 	}
 	var mes []*Entity
 
+	multiErr, any := make(appengine.MultiError, len(es)), false
 	for i, idx := range dixs {
 		e := es[idx]
-		if merr != nil && merr[i] != nil {
-			e.NotFound = true
+		if merr != nil {
+			if merr[i] == datastore.ErrNoSuchEntity {
+				e.NotFound = true
+			} else {
+				multiErr[i] = merr[i]
+				any = true
+			}
 		}
 		mes = append(mes, e)
 	}
@@ -291,14 +297,6 @@ func (g *Goon) GetMulti(es []*Entity) error {
 		err = g.putMemcache(mes)
 		if err != nil {
 			return err
-		}
-	}
-
-	multiErr, any := make(appengine.MultiError, len(es)), false
-	for i, e := range es {
-		if e.NotFound {
-			multiErr[i] = datastore.ErrNoSuchEntity
-			any = true
 		}
 	}
 
