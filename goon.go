@@ -40,10 +40,10 @@ func memkey(k *datastore.Key) string {
 }
 
 func NewGoon(r *http.Request) *Goon {
-	return ContextGoon(appengine.NewContext(r))
+	return FromContext(appengine.NewContext(r))
 }
 
-func ContextGoon(c appengine.Context) *Goon {
+func FromContext(c appengine.Context) *Goon {
 	return &Goon{
 		context: c,
 		cache:   make(map[string]*Entity),
