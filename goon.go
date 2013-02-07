@@ -22,7 +22,6 @@ import (
 	"appengine/memcache"
 	"bytes"
 	"encoding/gob"
-	"errors"
 	"net/http"
 	"reflect"
 )
@@ -168,16 +167,17 @@ func (g *Goon) putMemcache(es []*Entity) error {
 	return nil
 }
 
-// StructKind returns the Kind name of src, which must be a struct.
+// Kind returns the Kind name of src, which must be a struct.
 // If src has a field named _goon with a tag "kind", that is used.
 // Otherwise, reflection is used to determine the type name of src.
+// In the case of an error, the empty string is returned.
 //
 // For example, to overwrite the default "Group" kind name:
 //   type Group struct {
 //     _goon interface{} `kind:"something_else"`
 //     Name  string
 //   }
-func StructKind(src interface{}) (string, error) {
+func Kind (src interface{}) string {
 	v := reflect.ValueOf(src)
 	v = reflect.Indirect(v)
 	t := v.Type()
@@ -187,23 +187,19 @@ func StructKind(src interface{}) (string, error) {
 		if f, present := t.FieldByName("_goon"); present {
 			name := f.Tag.Get("kind")
 			if name != "" {
-				return name, nil
+				return name
 			}
 		}
 
-		return t.Name(), nil
+		return t.Name()
 	}
-	return "", errors.New("goon: src has invalid type")
+	return ""
 }
 
 // GetById fetches an entity of kind src by id.
 // Refer to appengine/datastore.NewKey regarding key specification.
 func (g *Goon) GetById(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
-	k, err := StructKind(src)
-	if err != nil {
-		return nil, err
-	}
-	key := datastore.NewKey(g.context, k, stringID, intID, parent)
+	key := datastore.NewKey(g.context, Kind(src), stringID, intID, parent)
 	return g.Get(src, key)
 }
 
