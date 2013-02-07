@@ -87,6 +87,11 @@ func (g *Goon) Put(e *Entity) error {
 	return g.PutMulti([]*Entity{e})
 }
 
+// PutMany is a wrapper around PutMulti.
+func (g *Goon) PutMany(es ...*Entity) error {
+	return g.PutMulti(es)
+}
+
 // PutMulti stores a sequence of Entities.
 // Any entity with an incomplete key will be updated.
 func (g *Goon) PutMulti(es []*Entity) error {
