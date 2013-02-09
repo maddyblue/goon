@@ -74,9 +74,14 @@ func (e *Entity) setKey(key *datastore.Key) {
 	e.Key = key
 }
 
-// NewEntity returns a new Entity from src with an incomplete key.
+// NewEntity returns a new Entity from src with an incomplete key of kind src.
 func (g *Goon) NewEntity(parent *datastore.Key, src interface{}) (*Entity, error) {
-	return NewEntity(datastore.NewIncompleteKey(g.context, Kind(src), parent), src), nil
+	return g.NewEntityKind(parent, src, Kind(src))
+}
+
+// NewEntity returns a new Entity from src with an incomplete key of specified kind.
+func (g *Goon) NewEntityKind(parent *datastore.Key, src interface{}, kind string) (*Entity, error) {
+	return NewEntity(datastore.NewIncompleteKey(g.context, kind, parent), src), nil
 }
 
 // NewEntityById returns a new Entity from src with a key made from given IDs.

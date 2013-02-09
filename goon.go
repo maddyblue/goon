@@ -200,7 +200,13 @@ func Kind(src interface{}) string {
 // GetById fetches an entity of kind src by id.
 // Refer to appengine/datastore.NewKey regarding key specification.
 func (g *Goon) GetById(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
-	key := datastore.NewKey(g.context, Kind(src), stringID, intID, parent)
+	return g.GetByIdKind(src, Kind(src), stringID, intID, parent)
+}
+
+// GetByIdKind fetches an entity of specified kind by id.
+// Refer to appengine/datastore.NewKey regarding key specification.
+func (g *Goon) GetByIdKind(src interface{}, kind, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
+	key := datastore.NewKey(g.context, kind, stringID, intID, parent)
 	return g.Get(src, key)
 }
 
