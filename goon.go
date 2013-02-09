@@ -178,7 +178,7 @@ func (g *Goon) putMemcache(es []*Entity) error {
 //     _goon interface{} `kind:"something_else"`
 //     Name  string
 //   }
-func Kind (src interface{}) string {
+func Kind(src interface{}) string {
 	v := reflect.ValueOf(src)
 	v = reflect.Indirect(v)
 	t := v.Type()
