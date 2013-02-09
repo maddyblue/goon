@@ -22,6 +22,7 @@ import (
 	"appengine/memcache"
 	"bytes"
 	"encoding/gob"
+	"errors"
 	"net/http"
 	"reflect"
 )
@@ -217,6 +218,14 @@ func (g *Goon) Get(src interface{}, key *datastore.Key) (*Entity, error) {
 // Get fetches a sequency of Entities, whose keys must already be valid.
 // Entities with no correspending key have their NotFound field set to true.
 func (g *Goon) GetMulti(es []*Entity) error {
+	for _, e := range es {
+		t := reflect.TypeOf(e.Src)
+		pt := reflect.Indirect(reflect.ValueOf(e.Src)).Type()
+		if t.Kind() != reflect.Ptr || pt.Kind() != reflect.Struct {
+			return errors.New("goon: expected *struct (ptr to struct), got struct")
+		}
+	}
+
 	var dskeys []*datastore.Key
 	var dst []interface{}
 	var dixs []int
