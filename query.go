@@ -45,18 +45,29 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*Entity, error) {
 		return nil, err
 	}
 
-	v := reflect.Indirect(reflect.ValueOf(dst))
-	t := v.Type()
+	keysOnly := dst == nil
 
-	// try to detect a keys-only query
-	if t.Kind() != reflect.Slice || v.Len() != len(keys) {
-		return nil, nil
+	var v reflect.Value
+	var t reflect.Type
+	if !keysOnly {
+		v = reflect.Indirect(reflect.ValueOf(dst))
+		t = v.Type()
+
+		// try to detect a keys-only query
+		if t.Kind() != reflect.Slice || v.Len() != len(keys) {
+			keysOnly = true
+		}
 	}
 
 	es := make([]*Entity, len(keys))
 
 	for i, k := range keys {
-		e := NewEntity(k, v.Index(i).Interface())
+		var e *Entity
+		if keysOnly {
+			e = NewEntity(k, nil)
+		} else {
+			e = NewEntity(k, v.Index(i).Interface())
+		}
 		es[i] = e
 
 		if !g.inTransaction {
