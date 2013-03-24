@@ -42,6 +42,7 @@ func (g *Goon) Count(q *datastore.Query) (int, error) {
 func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*Entity, error) {
 	keys, err := q.GetAll(g.context, dst)
 	if err != nil {
+		g.error(err)
 		return nil, err
 	}
 

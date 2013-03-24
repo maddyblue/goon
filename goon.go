@@ -27,6 +27,11 @@ import (
 	"reflect"
 )
 
+var (
+	// LogErrors issues appengine.Context.Errorf on any error.
+	LogErrors bool = true
+)
+
 // Goon holds the app engine context and request memory cache.
 type Goon struct {
 	context       appengine.Context
@@ -48,6 +53,12 @@ func FromContext(c appengine.Context) *Goon {
 	return &Goon{
 		context: c,
 		cache:   make(map[string]*Entity),
+	}
+}
+
+func (g *Goon) error(err error) {
+	if LogErrors {
+		g.context.Errorf(err.Error())
 	}
 }
 
@@ -76,6 +87,8 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 		for _, k := range ng.toDelete {
 			delete(g.cache, k)
 		}
+	} else {
+		g.error(err)
 	}
 
 	return err
@@ -92,11 +105,11 @@ func (g *Goon) PutMany(es ...*Entity) error {
 	return g.PutMulti(es)
 }
 
+const putMultiLimit = 500
+
 // PutMulti stores a sequence of Entities.
 // Any entity with an incomplete key will be updated.
 func (g *Goon) PutMulti(es []*Entity) error {
-	var err error
-
 	var memkeys []string
 	keys := make([]*datastore.Key, len(es))
 	src := make([]interface{}, len(es))
@@ -112,17 +125,24 @@ func (g *Goon) PutMulti(es []*Entity) error {
 
 	memcache.DeleteMulti(g.context, memkeys)
 
-	keys, err = datastore.PutMulti(g.context, keys, src)
+	for i := 0; i <= len(src)/putMultiLimit; i++ {
+		lo := i * putMultiLimit
+		hi := (i + 1) * putMultiLimit
+		if hi > len(src) {
+			hi = len(src)
+		}
+		rkeys, err := datastore.PutMulti(g.context, keys[lo:hi], src[lo:hi])
+		if err != nil {
+			g.error(err)
+			return err
+		}
 
-	if err != nil {
-		return err
-	}
+		for i, e := range es[lo:hi] {
+			es[lo+i].setKey(rkeys[i])
 
-	for i, e := range es {
-		es[i].setKey(keys[i])
-
-		if g.inTransaction {
-			g.toSet[e.memkey()] = e
+			if g.inTransaction {
+				g.toSet[e.memkey()] = e
+			}
 		}
 	}
 
@@ -149,6 +169,7 @@ func (g *Goon) putMemcache(es []*Entity) error {
 	for i, e := range es {
 		gob, err := e.gob()
 		if err != nil {
+			g.error(err)
 			return err
 		}
 
@@ -161,6 +182,7 @@ func (g *Goon) putMemcache(es []*Entity) error {
 	err := memcache.SetMulti(g.context, items)
 
 	if err != nil {
+		g.error(err)
 		return err
 	}
 
@@ -252,6 +274,7 @@ func (g *Goon) GetMulti(es []*Entity) error {
 
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
 		if err != nil {
+			g.error(err)
 			return err
 		}
 
@@ -289,6 +312,7 @@ func (g *Goon) GetMulti(es []*Entity) error {
 		case appengine.MultiError:
 			merr = err.(appengine.MultiError)
 		default:
+			g.error(err)
 			return err
 		}
 	}
