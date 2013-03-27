@@ -123,7 +123,8 @@ func (g *Goon) PutMulti(es []*Entity) error {
 		src[i] = e.Src
 	}
 
-	memcache.DeleteMulti(g.context, memkeys)
+	// Memcache needs to be updated after the datastore to prevent a common race condition
+	defer memcache.DeleteMulti(g.context, memkeys)
 
 	for i := 0; i <= len(src)/putMultiLimit; i++ {
 		lo := i * putMultiLimit
@@ -391,7 +392,8 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 		}
 	}
 
-	memcache.DeleteMulti(g.context, memkeys)
+	// Memcache needs to be updated after the datastore to prevent a common race condition
+	defer memcache.DeleteMulti(g.context, memkeys)
 
 	return datastore.DeleteMulti(g.context, keys)
 }
