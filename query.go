@@ -71,7 +71,8 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*Entity, error) {
 		}
 		es[i] = e
 
-		if !g.inTransaction {
+		// Do not pollute the cache with empty results from keys-only queries
+		if !g.inTransaction && !keysOnly {
 			g.cache[e.memkey()] = e
 		}
 	}
