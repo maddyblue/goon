@@ -284,6 +284,7 @@ func (g *Goon) GetMulti(es []*Entity) error {
 			if s, present := memvalues[m]; present {
 				err := fromGob(e, s.Value)
 				if err != nil {
+					g.error(err)
 					return err
 				}
 
