@@ -49,7 +49,7 @@ err := n.Put(e)
 datastore:
 ```
 k := datastore.NewKey(c, "Group", "stringID", 0, nil)
-err := datastore.Get(c, k, e)
+err := datastore.Get(c, k, g)
 ```
 
 goon:
