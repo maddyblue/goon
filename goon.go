@@ -275,8 +275,9 @@ func (g *Goon) GetMulti(es []*Entity) error {
 
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
 		if err != nil {
-			g.error(err)
-			return err
+			g.error(errors.New(fmt.Sprintf("ignored memcache error: %v", err.Error())))
+			// ignore memcache errors
+			//return err
 		}
 
 		for i, m := range memkeys {
