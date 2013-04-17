@@ -77,6 +77,15 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*Entity, error) {
 		}
 	}
 
+	// Before returning, update the structs to have correct key info
+	if !keysOnly {
+		for _, e := range es {
+			if e.Src != nil {
+				setStructKey(e.Src, e.Key)
+			}
+		}
+	}
+
 	return es, nil
 }
 
@@ -128,6 +137,9 @@ func (t *Iterator) Next(dst interface{}) (*Entity, error) {
 	if !t.g.inTransaction {
 		t.g.cache[e.memkey()] = e
 	}
+
+	// Before returning, update the struct to have correct key info
+	setStructKey(e.Src, e.Key)
 
 	return e, nil
 }
