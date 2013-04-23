@@ -26,6 +26,8 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
+	"fmt"
 )
 
 var (
@@ -152,6 +154,13 @@ func (g *Goon) PutMulti(es []*Entity) error {
 		g.putMemoryMulti(es)
 	}
 
+	// Before returning, update the structs to have correct key info
+	for _, e := range es {
+		if e.Src != nil {
+			setStructKey(e.Src, e.Key)
+		}
+	}
+
 	return nil
 }
 
@@ -255,6 +264,15 @@ func (g *Goon) GetMulti(es []*Entity) error {
 			return errors.New("goon: expected *struct (ptr to struct), got struct")
 		}
 	}
+
+	// Before returning, update the structs to have correct key info
+	defer func() {
+		for _, e := range es {
+			if e.Src != nil {
+				setStructKey(e.Src, e.Key)
+			}
+		}
+	}()
 
 	var dskeys []*datastore.Key
 	var dst []interface{}
@@ -369,6 +387,45 @@ func fromGob(e *Entity, b []byte) error {
 		f := v.Field(i)
 		if f.CanSet() {
 			ev.Field(i).Set(f)
+		}
+	}
+
+	return nil
+}
+
+func setStructKey(src interface{}, key *datastore.Key) error {
+	v := reflect.Indirect(reflect.ValueOf(src))
+	t := v.Type()
+	k := t.Kind()
+
+	if k != reflect.Struct {
+		return errors.New(fmt.Sprintf("goon: Expected struct, got instead: %v", k))
+	}
+
+	for i := 0; i < v.NumField(); i++ {
+		tf := t.Field(i)
+		vf := v.Field(i)
+		
+		if !vf.CanSet() {
+			continue
+		}
+
+		tag := tf.Tag.Get("goon")
+		if tag != "" {
+			tagValues := strings.Split(tag, ",")
+			for _, tagValue := range tagValues {
+				if tagValue == "id" {
+					if vf.Kind() == reflect.Int64 {
+						vf.SetInt(key.IntID())
+					} else if vf.Kind() == reflect.String {
+						vf.SetString(key.StringID())
+					}
+				} else if tagValue == "parent" {
+					if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
+						vf.Set(reflect.ValueOf(key.Parent()))
+					}
+				}
+			}
 		}
 	}
 
