@@ -20,8 +20,6 @@ import (
 	"appengine"
 	"appengine/datastore"
 	"appengine/memcache"
-	"bytes"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"net/http"
@@ -36,9 +34,9 @@ var (
 // Goon holds the app engine context and request memory cache.
 type Goon struct {
 	context       appengine.Context
-	cache         map[string]*Entity
+	cache         map[string]interface{}
 	inTransaction bool
-	toSet         map[string]*Entity
+	toSet         map[string]interface{}
 	toDelete      []string
 }
 
@@ -53,7 +51,7 @@ func NewGoon(r *http.Request) *Goon {
 func FromContext(c appengine.Context) *Goon {
 	return &Goon{
 		context: c,
-		cache:   make(map[string]*Entity),
+		cache:   make(map[string]interface{}),
 	}
 }
 
@@ -61,6 +59,10 @@ func (g *Goon) error(err error) {
 	if LogErrors {
 		g.context.Errorf(err.Error())
 	}
+}
+
+func (g *Goon) Key(src interface{}) (*datastore.Key, error) {
+	return g.getStructKey(src)
 }
 
 // RunInTransaction runs f in a transaction. It calls f with a transaction
@@ -75,7 +77,7 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 		ng = &Goon{
 			context:       tc,
 			inTransaction: true,
-			toSet:         make(map[string]*Entity),
+			toSet:         make(map[string]interface{}),
 		}
 		return f(ng)
 	}, opts)
@@ -95,88 +97,91 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 	return err
 }
 
-// Put stores Entity e.
-// If e has an incomplete key, it is updated.
-func (g *Goon) Put(e *Entity) error {
-	return g.PutMulti([]*Entity{e})
+// Put stores src.
+// If src has an incomplete key, it is updated.
+func (g *Goon) Put(src interface{}) error {
+	return g.PutMulti([]interface{}{src})
 }
 
 // PutMany is a wrapper around PutMulti.
-func (g *Goon) PutMany(es ...*Entity) error {
-	return g.PutMulti(es)
+func (g *Goon) PutMany(srcs ...interface{}) error {
+	return g.PutMulti(srcs)
 }
 
 const putMultiLimit = 500
 
-// PutMulti stores a sequence of Entities.
+// PutMulti stores a sequence of entities.
 // Any entity with an incomplete key will be updated.
-func (g *Goon) PutMulti(es []*Entity) error {
+func (g *Goon) PutMulti(srcs []interface{}) error {
 	var memkeys []string
-	keys := make([]*datastore.Key, len(es))
-	src := make([]interface{}, len(es))
-
-	for i, e := range es {
-		if !e.Key.Incomplete() {
-			memkeys = append(memkeys, e.memkey())
+	keys := make([]*datastore.Key, len(srcs))
+	for i, src := range srcs {
+		key, err := g.getStructKey(src)
+		if err != nil {
+			return err
 		}
-
-		keys[i] = e.Key
-		src[i] = e.Src
+		if !key.Incomplete() {
+			memkeys = append(memkeys, memkey(key))
+		}
+		keys[i] = key
 	}
 
 	// Memcache needs to be updated after the datastore to prevent a common race condition
 	defer memcache.DeleteMulti(g.context, memkeys)
 
-	for i := 0; i <= len(src)/putMultiLimit; i++ {
+	for i := 0; i <= len(srcs)/putMultiLimit; i++ {
 		lo := i * putMultiLimit
 		hi := (i + 1) * putMultiLimit
-		if hi > len(src) {
-			hi = len(src)
+		if hi > len(srcs) {
+			hi = len(srcs)
 		}
-		rkeys, err := datastore.PutMulti(g.context, keys[lo:hi], src[lo:hi])
+		rkeys, err := datastore.PutMulti(g.context, keys[lo:hi], srcs[lo:hi])
 		if err != nil {
 			g.error(err)
 			return err
 		}
 
-		for i, e := range es[lo:hi] {
-			es[lo+i].setKey(rkeys[i])
-
+		for i, src := range srcs[lo:hi] {
+			if keys[lo+i].Incomplete() {
+				setStructKey(src, rkeys[i])
+			}
 			if g.inTransaction {
-				g.toSet[e.memkey()] = e
+				g.toSet[memkey(rkeys[i])] = src
 			}
 		}
 	}
 
 	if !g.inTransaction {
-		g.putMemoryMulti(es)
+		g.putMemoryMulti(srcs)
 	}
 
 	return nil
 }
 
-func (g *Goon) putMemoryMulti(es []*Entity) {
-	for _, e := range es {
-		g.putMemory(e)
+func (g *Goon) putMemoryMulti(srcs []interface{}) {
+	for _, src := range srcs {
+		g.putMemory(src)
 	}
 }
 
-func (g *Goon) putMemory(e *Entity) {
-	g.cache[e.memkey()] = e
+func (g *Goon) putMemory(src interface{}) {
+	key, _ := g.getStructKey(src)
+	g.cache[memkey(key)] = src
 }
 
-func (g *Goon) putMemcache(es []*Entity) error {
-	items := make([]*memcache.Item, len(es))
+func (g *Goon) putMemcache(srcs []interface{}) error {
+	items := make([]*memcache.Item, len(srcs))
 
-	for i, e := range es {
-		gob, err := e.gob()
+	for i, src := range srcs {
+		gob, err := toGob(src)
 		if err != nil {
 			g.error(err)
 			return err
 		}
+		key, err := g.getStructKey(src)
 
 		items[i] = &memcache.Item{
-			Key:   e.memkey(),
+			Key:   memkey(key),
 			Value: gob,
 		}
 	}
@@ -188,86 +193,57 @@ func (g *Goon) putMemcache(es []*Entity) error {
 		return err
 	}
 
-	g.putMemoryMulti(es)
+	g.putMemoryMulti(srcs)
 	return nil
 }
 
-// Kind returns the Kind name of src, which must be a struct.
-// If src has a field named _goon with a tag "kind", that is used.
-// Otherwise, reflection is used to determine the type name of src.
-// In the case of an error, the empty string is returned.
-//
-// For example, to overwrite the default "Group" kind name:
-//   type Group struct {
-//     _goon interface{} `kind:"something_else"`
-//     Name  string
-//   }
-func Kind(src interface{}) string {
-	v := reflect.ValueOf(src)
-	v = reflect.Indirect(v)
-	t := v.Type()
-	k := t.Kind()
-
-	if k == reflect.Struct {
-		if f, present := t.FieldByName("_goon"); present {
-			name := f.Tag.Get("kind")
-			if name != "" {
-				return name
+// Get fetches an entity of kind src by key.
+// If there is no such key, datastore.ErrNoSuchEntity is returned.
+func (g *Goon) Get(dst interface{}) error {
+	dsts := []interface{}{dst}
+	if err := g.GetMulti(dsts); err != nil {
+		// Look for an embedded error if it's multi
+		if me, ok := err.(appengine.MultiError); ok {
+			for i, merr := range me {
+				if i == 0 {
+					return merr
+				}
 			}
 		}
-
-		return t.Name()
+		// Not multi, normal error
+		return err
 	}
-	return ""
-}
-
-// GetById fetches an entity of kind src by id.
-// Refer to appengine/datastore.NewKey regarding key specification.
-func (g *Goon) GetById(src interface{}, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
-	return g.GetByIdKind(src, Kind(src), stringID, intID, parent)
-}
-
-// GetByIdKind fetches an entity of specified kind by id.
-// Refer to appengine/datastore.NewKey regarding key specification.
-func (g *Goon) GetByIdKind(src interface{}, kind, stringID string, intID int64, parent *datastore.Key) (*Entity, error) {
-	key := datastore.NewKey(g.context, kind, stringID, intID, parent)
-	return g.Get(src, key)
-}
-
-// Get fetches an entity of kind src by key.
-func (g *Goon) Get(src interface{}, key *datastore.Key) (*Entity, error) {
-	e := NewEntity(key, src)
-	es := []*Entity{e}
-	err := g.GetMulti(es)
-	if err != nil {
-		return nil, err
-	}
-	return es[0], nil
+	return nil
 }
 
 // Get fetches a sequency of Entities, whose keys must already be valid.
 // Entities with no correspending key have their NotFound field set to true.
-func (g *Goon) GetMulti(es []*Entity) error {
-	for _, e := range es {
-		t := reflect.TypeOf(e.Src)
-		pt := reflect.Indirect(reflect.ValueOf(e.Src)).Type()
-		if t.Kind() != reflect.Ptr || pt.Kind() != reflect.Struct {
-			return errors.New("goon: expected *struct (ptr to struct), got struct")
-		}
+func (g *Goon) GetMulti(dst interface{}) error {
+	v := reflect.Indirect(reflect.ValueOf(dst))
+	if v.Kind() != reflect.Slice {
+		return errors.New("goon: dst must be a slice or pointer-to-slice")
 	}
+	l := v.Len()
 
 	var dskeys []*datastore.Key
-	var dst []interface{}
+	var dsdst []interface{}
+	var gmdst interface{}
 	var dixs []int
 
 	if !g.inTransaction {
 		var memkeys []string
 		var mixs []int
 
-		for i, e := range es {
-			m := e.memkey()
+		for i := 0; i < l; i++ {
+			vi := v.Index(i)
+			key, err := g.getStructKey(vi.Interface())
+			if err != nil {
+				g.error(err)
+				return err
+			}
+			m := memkey(key)
 			if s, present := g.cache[m]; present {
-				es[i] = s
+				vi.Set(reflect.ValueOf(s))
 			} else {
 				memkeys = append(memkeys, m)
 				mixs = append(mixs, i)
@@ -276,103 +252,74 @@ func (g *Goon) GetMulti(es []*Entity) error {
 
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
 		if err != nil {
-			g.error(errors.New(fmt.Sprintf("ignored memcache error: %v", err.Error())))
+			g.error(errors.New(fmt.Sprintf("goon: ignored memcache error: %v", err.Error())))
 			// ignore memcache errors
 			//return err
 		}
 
 		for i, m := range memkeys {
-			e := es[mixs[i]]
+			d := v.Index(mixs[i]).Interface()
 			if s, present := memvalues[m]; present {
-				err := fromGob(e, s.Value)
+				err := fromGob(d, s.Value)
 				if err != nil {
 					g.error(err)
 					return err
 				}
 
-				g.putMemory(e)
+				g.putMemory(d)
 			} else {
-				dskeys = append(dskeys, e.Key)
-				dst = append(dst, e.Src)
+				key, err := g.getStructKey(d)
+				if err != nil {
+					g.error(err)
+					return err
+				}
+				dskeys = append(dskeys, key)
+				dsdst = append(dsdst, d)
 				dixs = append(dixs, mixs[i])
 			}
 		}
+		gmdst = dsdst
 	} else {
-		dskeys = make([]*datastore.Key, len(es))
-		dst = make([]interface{}, len(es))
-		dixs = make([]int, len(es))
+		dskeys = make([]*datastore.Key, l)
+		dixs = make([]int, l)
+		gmdst = dst
 
-		for i, e := range es {
-			dskeys[i] = e.Key
-			dst[i] = e.Src
+		for i := 0; i < l; i++ {
+			vi := v.Index(i)
+			key, err := g.getStructKey(vi.Interface())
+			if err != nil {
+				g.error(err)
+				return err
+			}
+			dskeys[i] = key
 			dixs[i] = i
 		}
 	}
 
-	var merr appengine.MultiError
-	err := datastore.GetMulti(g.context, dskeys, dst)
-	if err != nil {
-		switch err.(type) {
-		case appengine.MultiError:
-			merr = err.(appengine.MultiError)
-		default:
+	gmerr := datastore.GetMulti(g.context, dskeys, gmdst)
+	var ret error
+	var multiErr appengine.MultiError
+	if gmerr != nil {
+		merr, ok := gmerr.(appengine.MultiError)
+		if !ok {
+			g.error(gmerr)
+			return gmerr
+		}
+		multiErr = make(appengine.MultiError, l)
+		for i, idx := range dixs {
+			multiErr[idx] = merr[i]
+		}
+		ret = multiErr
+	}
+
+	if len(dskeys) > 0 && !g.inTransaction {
+		if err := g.putMemcache(dsdst); err != nil {
 			g.error(err)
 			return err
 		}
 	}
-	var mes []*Entity
 
-	multiErr, any := make(appengine.MultiError, len(es)), false
-	for i, idx := range dixs {
-		e := es[idx]
-		if merr != nil {
-			if merr[i] == datastore.ErrNoSuchEntity {
-				e.NotFound = true
-			} else {
-				multiErr[i] = merr[i]
-				any = true
-			}
-		}
-		mes = append(mes, e)
-	}
-
-	if len(mes) > 0 && !g.inTransaction {
-		err = g.putMemcache(mes)
-		if err != nil {
-			return err
-		}
-	}
-
-	if any {
-		return multiErr
-	}
-
-	return nil
-}
-
-func fromGob(e *Entity, b []byte) error {
-	var buf bytes.Buffer
-	_, _ = buf.Write(b)
-	gob.Register(e.Src)
-	dec := gob.NewDecoder(&buf)
-	t := Entity{}
-	err := dec.Decode(&t)
-	if err != nil {
-		return err
-	}
-
-	e.NotFound = t.NotFound
-	ev := reflect.Indirect(reflect.ValueOf(e.Src))
-
-	v := reflect.Indirect(reflect.ValueOf(t.Src))
-	for i := 0; i < v.NumField(); i++ {
-		f := v.Field(i)
-		if f.CanSet() {
-			ev.Field(i).Set(f)
-		}
-	}
-
-	return nil
+	return ret
 }
 
 // Delete deletes the entity for the given key.
@@ -399,4 +346,12 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	defer memcache.DeleteMulti(g.context, memkeys)
 
 	return datastore.DeleteMulti(g.context, keys)
+}
+
+// NotFound returns true if err is an appengine.MultiError and err[idx] is an datastore.ErrNoSuchEntity.
+func NotFound(err error, idx int) bool {
+	if merr, ok := err.(appengine.MultiError); ok {
+		return len(merr) <= idx && merr[idx] == datastore.ErrNoSuchEntity
+	}
+	return false
 }
