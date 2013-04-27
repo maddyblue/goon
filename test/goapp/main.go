@@ -19,6 +19,7 @@ package goapp
 import (
 	"appengine"
 	"appengine/datastore"
+	"appengine/memcache"
 	"fmt"
 	"github.com/mjibson/goon"
 	"net/http"
@@ -33,6 +34,7 @@ func Main(w http.ResponseWriter, r *http.Request) {
 	n := goon.NewGoon(r)
 
 	// key tests
+
 	noid := NoId{}
 	if _, err := n.Key(noid); err == nil {
 		fmt.Fprintln(w, "expected error on noid")
@@ -65,7 +67,27 @@ func Main(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// datastore tests
+
+	initTest(c)
+	if err := n.Get(&HasId{Id: 0}); err == nil {
+		fmt.Fprintln(w, "ds: expected error")
+	}
+	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
+		fmt.Fprintln(w, "ds: expected no such entity")
+	}
+	// run twice to make sure autocaching works correctly
+	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
+		fmt.Fprintln(w, "ds: expected no such entity")
+	}
+
 	fmt.Fprintln(w, "done")
+}
+
+func initTest(c appengine.Context) {
+	keys, _ := datastore.NewQuery("HasId").KeysOnly().GetAll(c, nil)
+	datastore.DeleteMulti(c, keys)
+	memcache.Flush(c)
 }
 
 type keyTest struct {
@@ -77,15 +99,18 @@ type NoId struct {
 }
 
 type HasId struct {
-	Id int64 `goon:"id"`
+	Id   int64 `datastore:"-" goon:"id"`
+	Name string
 }
 
 type HasKind struct {
-	Id   int64  `goon:"id"`
-	Kind string `goon:"kind"`
+	Id   int64  `datastore:"-" goon:"id"`
+	Kind string `datastore:"-" goon:"kind"`
+	Name string
 }
 
 type HasDefaultKind struct {
-	Id   int64  `goon:"id"`
-	Kind string `goon:"kind,DefaultKind"`
+	Id   int64  `datastore:"-" goon:"id"`
+	Kind string `datastore:"-" goon:"kind,DefaultKind"`
+	Name string
 }
