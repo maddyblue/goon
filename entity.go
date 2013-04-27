@@ -67,45 +67,39 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 		tf := t.Field(i)
 		vf := v.Field(i)
 
-		if !vf.CanSet() {
-			continue
-		}
-
 		tag := tf.Tag.Get("goon")
-		if tag != "" {
-			tagValues := strings.Split(tag, ",")
-			if len(tagValues) > 0 {
-				tagValue := tagValues[0]
-				if tagValue == "id" {
-					switch vf.Kind() {
-					case reflect.Int64:
-						if intID != 0 {
-							return nil, errors.New("goon: Only one field may be marked id")
-						}
-						intID = vf.Int()
-					case reflect.String:
-						if stringID != "" {
-							return nil, errors.New("goon: Only one field may be marked id")
-						}
-						stringID = vf.String()
+		tagValues := strings.Split(tag, ",")
+		if len(tagValues) > 0 {
+			tagValue := tagValues[0]
+			if tagValue == "id" {
+				switch vf.Kind() {
+				case reflect.Int64:
+					if intID != 0 {
+						return nil, errors.New("goon: Only one field may be marked id")
 					}
-				} else if tagValue == "kind" {
-					if vf.Kind() == reflect.String {
-						if kind != "" {
-							return nil, errors.New("goon: Only one field may be marked kind")
-						}
-						kind = vf.String()
-						if kind == "" && len(tagValues) > 1 && tagValues[1] != "" {
-							kind = tagValues[1]
-						}
+					intID = vf.Int()
+				case reflect.String:
+					if stringID != "" {
+						return nil, errors.New("goon: Only one field may be marked id")
 					}
-				} else if tagValue == "parent" {
-					if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
-						if parent != nil {
-							return nil, errors.New("goon: Only one field may be marked parent")
-						}
-						parent = vf.Interface().(*datastore.Key)
+					stringID = vf.String()
+				}
+			} else if tagValue == "kind" {
+				if vf.Kind() == reflect.String {
+					if kind != "" {
+						return nil, errors.New("goon: Only one field may be marked kind")
 					}
+					kind = vf.String()
+					if kind == "" && len(tagValues) > 1 && tagValues[1] != "" {
+						kind = tagValues[1]
+					}
+				}
+			} else if tagValue == "parent" {
+				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
+					if parent != nil {
+						return nil, errors.New("goon: Only one field may be marked parent")
+					}
+					parent = vf.Interface().(*datastore.Key)
 				}
 			}
 		}
@@ -151,40 +145,38 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 		}
 
 		tag := tf.Tag.Get("goon")
-		if tag != "" {
-			tagValues := strings.Split(tag, ",")
-			if len(tagValues) > 0 {
-				tagValue := tagValues[0]
-				if tagValue == "id" {
-					if idSet {
-						return errors.New("goon: Only one field may be marked id")
+		tagValues := strings.Split(tag, ",")
+		if len(tagValues) > 0 {
+			tagValue := tagValues[0]
+			if tagValue == "id" {
+				if idSet {
+					return errors.New("goon: Only one field may be marked id")
+				}
+				switch vf.Kind() {
+				case reflect.Int64:
+					vf.SetInt(key.IntID())
+					idSet = true
+				case reflect.String:
+					vf.SetString(key.StringID())
+					idSet = true
+				}
+			} else if tagValue == "kind" {
+				if kindSet {
+					return errors.New("goon: Only one field may be marked kind")
+				}
+				if vf.Kind() == reflect.String {
+					if (len(tagValues) <= 1 || key.Kind() != tagValues[1]) && typeName(src) != key.Kind() {
+						vf.Set(reflect.ValueOf(key.Kind()))
 					}
-					switch vf.Kind() {
-					case reflect.Int64:
-						vf.SetInt(key.IntID())
-						idSet = true
-					case reflect.String:
-						vf.SetString(key.StringID())
-						idSet = true
-					}
-				} else if tagValue == "kind" {
-					if kindSet {
-						return errors.New("goon: Only one field may be marked kind")
-					}
-					if vf.Kind() == reflect.String {
-						if (len(tagValues) <= 1 || key.Kind() != tagValues[1]) && typeName(src) != key.Kind() {
-							vf.Set(reflect.ValueOf(key.Kind()))
-						}
-						kindSet = true
-					}
-				} else if tagValue == "parent" {
-					if parentSet {
-						return errors.New("goon: Only one field may be marked parent")
-					}
-					if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
-						vf.Set(reflect.ValueOf(key.Parent()))
-						parentSet = true
-					}
+					kindSet = true
+				}
+			} else if tagValue == "parent" {
+				if parentSet {
+					return errors.New("goon: Only one field may be marked parent")
+				}
+				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
+					vf.Set(reflect.ValueOf(key.Parent()))
+					parentSet = true
 				}
 			}
 		}
