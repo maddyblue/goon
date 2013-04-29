@@ -225,80 +225,72 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	}
 	l := v.Len()
 
+	keys := make([]*datastore.Key, l)
+	for i := 0; i < l; i++ {
+		vi := v.Index(i)
+		key, err := g.getStructKey(vi.Interface())
+		if err != nil {
+			g.error(err)
+			return err
+		}
+		keys[i] = key
+	}
+
+	if g.inTransaction {
+		return datastore.GetMulti(g.context, keys, dst)
+	}
+
 	var dskeys []*datastore.Key
 	var dsdst []interface{}
-	var gmdst interface{}
 	var dixs []int
 
-	if !g.inTransaction {
-		var memkeys []string
-		var mixs []int
+	var memkeys []string
+	var mixs []int
 
-		for i := 0; i < l; i++ {
+	for i, key := range keys {
+		m := memkey(key)
+		if s, present := g.cache[m]; present {
 			vi := v.Index(i)
-			key, err := g.getStructKey(vi.Interface())
-			if err != nil {
-				g.error(err)
-				return err
-			}
-			m := memkey(key)
-			if s, present := g.cache[m]; present {
-				vi.Set(reflect.ValueOf(s))
-			} else {
-				memkeys = append(memkeys, m)
-				mixs = append(mixs, i)
-			}
-		}
-
-		memvalues, err := memcache.GetMulti(g.context, memkeys)
-		if err != nil {
-			g.error(errors.New(fmt.Sprintf("goon: ignored memcache error: %v", err.Error())))
-			// ignore memcache errors
-			//return err
-		}
-
-		for i, m := range memkeys {
-			d := v.Index(mixs[i]).Interface()
-			if s, present := memvalues[m]; present {
-				err := fromGob(d, s.Value)
-				if err != nil {
-					g.error(err)
-					return err
-				}
-
-				g.putMemory(d)
-			} else {
-				key, err := g.getStructKey(d)
-				if err != nil {
-					g.error(err)
-					return err
-				}
-				dskeys = append(dskeys, key)
-				dsdst = append(dsdst, d)
-				dixs = append(dixs, mixs[i])
-			}
-		}
-		gmdst = dsdst
-	} else {
-		dskeys = make([]*datastore.Key, l)
-		dixs = make([]int, l)
-		gmdst = dst
-
-		for i := 0; i < l; i++ {
-			vi := v.Index(i)
-			key, err := g.getStructKey(vi.Interface())
-			if err != nil {
-				g.error(err)
-				return err
-			}
-			dskeys[i] = key
-			dixs[i] = i
+			vi.Set(reflect.ValueOf(s))
+		} else {
+			memkeys = append(memkeys, m)
+			mixs = append(mixs, i)
 		}
 	}
 
-	gmerr := datastore.GetMulti(g.context, dskeys, gmdst)
+	memvalues, err := memcache.GetMulti(g.context, memkeys)
+	if err != nil {
+		g.error(errors.New(fmt.Sprintf("goon: ignored memcache error: %v", err.Error())))
+		// ignore memcache errors
+		//return err
+	}
+
+	for i, m := range memkeys {
+		d := v.Index(mixs[i]).Interface()
+		if s, present := memvalues[m]; present {
+			err := fromGob(d, s.Value)
+			if err != nil {
+				g.error(err)
+				return err
+			}
+
+			g.putMemory(d)
+		} else {
+			key, err := g.getStructKey(d)
+			if err != nil {
+				g.error(err)
+				return err
+			}
+			dskeys = append(dskeys, key)
+			dsdst = append(dsdst, d)
+			dixs = append(dixs, mixs[i])
+		}
+	}
+
+	gmerr := datastore.GetMulti(g.context, dskeys, dsdst)
 	var ret error
 	var multiErr appengine.MultiError
+	var toCache []interface{}
 	if gmerr != nil {
 		merr, ok := gmerr.(appengine.MultiError)
 		if !ok {
@@ -308,12 +300,17 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		multiErr = make(appengine.MultiError, l)
 		for i, idx := range dixs {
 			multiErr[idx] = merr[i]
+			if merr[i] == nil {
+				toCache = append(toCache, dsdst[i])
+			}
 		}
 		ret = multiErr
+	} else {
+		toCache = dsdst
 	}
 
-	if len(dskeys) > 0 && !g.inTransaction {
-		if err := g.putMemcache(dsdst); err != nil {
+	if len(dskeys) > 0 {
+		if err := g.putMemcache(toCache); err != nil {
 			g.error(err)
 			return err
 		}
