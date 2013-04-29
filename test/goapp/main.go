@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"github.com/mjibson/goon"
 	"net/http"
+	"time"
 )
 
 func init() {
@@ -80,8 +81,50 @@ func Main(w http.ResponseWriter, r *http.Request) {
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
 		fmt.Fprintln(w, "ds: expected no such entity")
 	}
+	es := []*HasId{
+		{Id: 1, Name: "one"},
+		{Id: 2, Name: "two"},
+	}
+	nes := []*HasId{
+		{Id: 1},
+		{Id: 2},
+	}
+	if err := n.GetMulti(es); err == nil {
+		fmt.Fprintln(w, "ds: expected error")
+	} else if !goon.NotFound(err, 0) {
+		fmt.Fprintln(w, "ds: not found error 0")
+	} else if !goon.NotFound(err, 1) {
+		fmt.Fprintln(w, "ds: not found error 1")
+	} else if goon.NotFound(err, 2) {
+		fmt.Fprintln(w, "ds: not found error 2")
+	}
+	if err := n.PutMulti(es); err != nil {
+		fmt.Fprintln(w, "put: unexpected error")
+	}
+	if err := n.GetMulti(nes); err != nil {
+		fmt.Fprintln(w, "put: unexpected error")
+	} else if es[0] != nes[0] || es[1] != nes[1] {
+		fmt.Fprintln(w, "put: bad results")
+	} else {
+		nesk0, _ := n.Key(nes[0])
+		if !nesk0.Equal(datastore.NewKey(c, "HasId", "", 1, nil)) {
+			fmt.Fprintln(w, "put: bad key")
+		}
+		nesk1, _ := n.Key(nes[1])
+		if !nesk1.Equal(datastore.NewKey(c, "HasId", "", 2, nil)) {
+			fmt.Fprintln(w, "put: bad key")
+		}
+	}
+	// force partial fetch from memcache and then datastore
+	memcache.Flush(c)
+	if err := n.Get(nes[0]); err != nil {
+		fmt.Fprintln(w, "get: unexpected error")
+	}
+	if err := n.GetMulti(nes); err != nil {
+		fmt.Fprintln(w, "get: unexpected error")
+	}
 
-	fmt.Fprintln(w, "done")
+	fmt.Fprintln(w, "done", time.Now())
 }
 
 func initTest(c appengine.Context) {
