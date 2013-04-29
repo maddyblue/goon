@@ -161,7 +161,7 @@ func (g *Goon) PutMulti(src interface{}) error {
 		}
 
 		for i, key := range keys[lo:hi] {
-			vi := v.Index(lo+i).Interface()
+			vi := v.Index(lo + i).Interface()
 			if key.Incomplete() {
 				setStructKey(vi, rkeys[i])
 			}
