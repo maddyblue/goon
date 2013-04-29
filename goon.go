@@ -61,6 +61,25 @@ func (g *Goon) error(err error) {
 	}
 }
 
+func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
+	v := reflect.Indirect(reflect.ValueOf(src))
+	if v.Kind() != reflect.Slice {
+		return nil, errors.New("goon: value must be a slice or pointer-to-slice")
+	}
+	l := v.Len()
+
+	keys := make([]*datastore.Key, l)
+	for i := 0; i < l; i++ {
+		vi := v.Index(i)
+		key, err := g.getStructKey(vi.Interface())
+		if err != nil {
+			return nil, err
+		}
+		keys[i] = key
+	}
+	return keys, nil
+}
+
 func (g *Goon) Key(src interface{}) (*datastore.Key, error) {
 	return g.getStructKey(src)
 }
@@ -112,55 +131,57 @@ const putMultiLimit = 500
 
 // PutMulti stores a sequence of entities.
 // Any entity with an incomplete key will be updated.
-func (g *Goon) PutMulti(srcs []interface{}) error {
+func (g *Goon) PutMulti(src interface{}) error {
+	keys, err := g.extractKeys(src)
+	if err != nil {
+		return err
+	}
+
 	var memkeys []string
-	keys := make([]*datastore.Key, len(srcs))
-	for i, src := range srcs {
-		key, err := g.getStructKey(src)
-		if err != nil {
-			return err
-		}
+	for _, key := range keys {
 		if !key.Incomplete() {
 			memkeys = append(memkeys, memkey(key))
 		}
-		keys[i] = key
 	}
 
 	// Memcache needs to be updated after the datastore to prevent a common race condition
 	defer memcache.DeleteMulti(g.context, memkeys)
 
-	for i := 0; i <= len(srcs)/putMultiLimit; i++ {
+	v := reflect.Indirect(reflect.ValueOf(src))
+	for i := 0; i <= len(keys)/putMultiLimit; i++ {
 		lo := i * putMultiLimit
 		hi := (i + 1) * putMultiLimit
-		if hi > len(srcs) {
-			hi = len(srcs)
+		if hi > len(keys) {
+			hi = len(keys)
 		}
-		rkeys, err := datastore.PutMulti(g.context, keys[lo:hi], srcs[lo:hi])
+		rkeys, err := datastore.PutMulti(g.context, keys[lo:hi], v.Slice(lo, hi).Interface())
 		if err != nil {
 			g.error(err)
 			return err
 		}
 
-		for i, src := range srcs[lo:hi] {
-			if keys[lo+i].Incomplete() {
-				setStructKey(src, rkeys[i])
+		for i, key := range keys[lo:hi] {
+			vi := v.Index(lo+i).Interface()
+			if key.Incomplete() {
+				setStructKey(vi, rkeys[i])
 			}
 			if g.inTransaction {
-				g.toSet[memkey(rkeys[i])] = src
+				g.toSet[memkey(rkeys[i])] = vi
 			}
 		}
 	}
 
 	if !g.inTransaction {
-		g.putMemoryMulti(srcs)
+		g.putMemoryMulti(src)
 	}
 
 	return nil
 }
 
-func (g *Goon) putMemoryMulti(srcs []interface{}) {
-	for _, src := range srcs {
-		g.putMemory(src)
+func (g *Goon) putMemoryMulti(src interface{}) {
+	v := reflect.Indirect(reflect.ValueOf(src))
+	for i := 0; i < v.Len(); i++ {
+		g.putMemory(v.Index(i).Interface())
 	}
 }
 
@@ -219,21 +240,9 @@ func (g *Goon) Get(dst interface{}) error {
 // Get fetches a sequency of Entities, whose keys must already be valid.
 // Entities with no correspending key have their NotFound field set to true.
 func (g *Goon) GetMulti(dst interface{}) error {
-	v := reflect.Indirect(reflect.ValueOf(dst))
-	if v.Kind() != reflect.Slice {
-		return errors.New("goon: dst must be a slice or pointer-to-slice")
-	}
-	l := v.Len()
-
-	keys := make([]*datastore.Key, l)
-	for i := 0; i < l; i++ {
-		vi := v.Index(i)
-		key, err := g.getStructKey(vi.Interface())
-		if err != nil {
-			g.error(err)
-			return err
-		}
-		keys[i] = key
+	keys, err := g.extractKeys(dst)
+	if err != nil {
+		return err
 	}
 
 	if g.inTransaction {
@@ -247,6 +256,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	var memkeys []string
 	var mixs []int
 
+	v := reflect.Indirect(reflect.ValueOf(dst))
 	for i, key := range keys {
 		m := memkey(key)
 		if s, present := g.cache[m]; present {
@@ -297,7 +307,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			g.error(gmerr)
 			return gmerr
 		}
-		multiErr = make(appengine.MultiError, l)
+		multiErr = make(appengine.MultiError, len(keys))
 		for i, idx := range dixs {
 			multiErr[idx] = merr[i]
 			if merr[i] == nil {
