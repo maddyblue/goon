@@ -80,7 +80,14 @@ func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
 	return keys, nil
 }
 
-func (g *Goon) Key(src interface{}) (*datastore.Key, error) {
+func (g *Goon) Key(src interface{}) *datastore.Key {
+	if k, err := g.KeyError(src); err == nil {
+		return k
+	}
+	return nil
+}
+
+func (g *Goon) KeyError(src interface{}) (*datastore.Key, error) {
 	return g.getStructKey(src)
 }
 
