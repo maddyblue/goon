@@ -348,7 +348,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 // NotFound returns true if err is an appengine.MultiError and err[idx] is an datastore.ErrNoSuchEntity.
 func NotFound(err error, idx int) bool {
 	if merr, ok := err.(appengine.MultiError); ok {
-		return len(merr) <= idx && merr[idx] == datastore.ErrNoSuchEntity
+		return idx < len(merr) && merr[idx] == datastore.ErrNoSuchEntity
 	}
 	return false
 }
