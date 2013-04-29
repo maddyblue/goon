@@ -110,11 +110,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 		kind = typeName(src)
 	}
 
-	if stringID != "" || intID != 0 {
-		return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
-	}
-
-	return nil, errors.New("goon: Could not get key field")
+	return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
 }
 
 func typeName(src interface{}) string {
