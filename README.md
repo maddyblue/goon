@@ -16,43 +16,50 @@ Documentation: [http://godoc.org/github.com/mjibson/goon](http://godoc.org/githu
 
 ## api comparisons between goon and appengine/datastore
 
-Assume the following exists:
-
-```
-type Group struct {
-  name string
-}
-
-c := appengine.NewContext(r)
-n := goon.NewGoon(r)
-g := new(Group)
-```
-
 ### Put with new, unknown key
 
 datastore:
 ```
-g.name = "test"
+type Group struct {
+  Name string
+}
+c := appengine.NewContext(r)
+g := &Group{Name: "name"}
 k := datastore.NewIncompleteKey(c, "Group", nil)
 err := datastore.Put(c, k, g)
 ```
 
 goon:
 ```
-g.name = "test"
-e, _ := n.NewEntity(nil, g)
-err := n.Put(e)
+type Group struct {
+  Id   int64 `datastore:"-" goon:"id"`
+  Name string
+}
+n := goon.NewGoon(r)
+g := &Group{Name: "name"}
+err := n.Put(g)
 ```
 
 ### Get with known key
 
 datastore:
 ```
-k := datastore.NewKey(c, "Group", "stringID", 0, nil)
+type Group struct {
+  Name string
+}
+c := appengine.NewContext(r)
+g := &Group{}
+k := datastore.NewKey(c, "Group", "", 1, nil)
 err := datastore.Get(c, k, g)
 ```
 
 goon:
 ```
-e, err := n.GetById(g, "stringId", 0, nil)
+type Group struct {
+  Id   int64 `datastore:"-" goon:"id"`
+  Name string
+}
+n := goon.NewGoon(r)
+g := &Group{Id: 1}
+err := n.Get(g)
 ```

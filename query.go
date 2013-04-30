@@ -70,6 +70,7 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 	return keys, err
 }
 
+// Run runs the query.
 func (g *Goon) Run(q *datastore.Query) *Iterator {
 	return &Iterator{
 		g: g,
@@ -94,8 +95,7 @@ func (t *Iterator) Cursor() (datastore.Cursor, error) {
 //
 // If the query is not keys only and dst is non-nil, it also loads the entity
 // stored for that key into the struct pointer dst, with the same semantics
-// and possible errors as for the Get function. This is returned as an Entity
-// and cached in memory.
+// and possible errors as for the Get function. This result is cached in memory.
 //
 // If the query is keys only, dst must be passed as nil. Otherwise the cache
 // will be populated with empty entities since there is no way to detect the
