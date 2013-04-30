@@ -106,7 +106,7 @@ func (t *Iterator) Cursor() (datastore.Cursor, error) {
 func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
 	k, err := t.i.Next(dst)
 	if err != nil {
-		return nil, err
+		return k, err
 	}
 
 	if !t.g.inTransaction && dst != nil {
