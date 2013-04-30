@@ -115,6 +115,13 @@ func (g *Goon) Key(src interface{}) *datastore.Key {
 //	}
 // To override the kind above to UserKind:
 //	u := User{_kind: "UserKind"}
+//
+// An example with a parent:
+//	type UserData struct {
+//		Id     string         `datastore:"-" goon:"id"`
+//		Parent *datastore.Key `datastore:"-" goon:"parent"`
+//		Data   []byte
+//	}
 func (g *Goon) KeyError(src interface{}) (*datastore.Key, error) {
 	return g.getStructKey(src)
 }
