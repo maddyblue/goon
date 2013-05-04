@@ -37,8 +37,8 @@ func Main(w http.ResponseWriter, r *http.Request) {
 	// key tests
 
 	noid := NoId{}
-	if _, err := n.Key(noid); err == nil {
-		fmt.Fprintln(w, "expected error on noid")
+	if k, err := n.KeyError(noid); err != nil || !k.Incomplete() {
+		fmt.Fprintln(w, "expected incomplete on noid")
 	}
 
 	var keyTests = []keyTest{
@@ -61,7 +61,7 @@ func Main(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, kt := range keyTests {
-		if k, err := n.Key(kt.obj); err != nil {
+		if k, err := n.KeyError(kt.obj); err != nil {
 			fmt.Fprintln(w, "error:", err.Error())
 		} else if !k.Equal(kt.key) {
 			fmt.Fprintln(w, "keys not equal")
@@ -106,11 +106,11 @@ func Main(w http.ResponseWriter, r *http.Request) {
 	} else if es[0] != nes[0] || es[1] != nes[1] {
 		fmt.Fprintln(w, "put: bad results")
 	} else {
-		nesk0, _ := n.Key(nes[0])
+		nesk0 := n.Key(nes[0])
 		if !nesk0.Equal(datastore.NewKey(c, "HasId", "", 1, nil)) {
 			fmt.Fprintln(w, "put: bad key")
 		}
-		nesk1, _ := n.Key(nes[1])
+		nesk1 := n.Key(nes[1])
 		if !nesk1.Equal(datastore.NewKey(c, "HasId", "", 2, nil)) {
 			fmt.Fprintln(w, "put: bad key")
 		}
