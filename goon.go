@@ -92,7 +92,7 @@ func (g *Goon) Key(src interface{}) *datastore.Key {
 	return nil
 }
 
-// Key returns the key src based on its properties.
+// Key returns the key of src based on its properties.
 //
 // src must be a S or *S for some struct type S. The key is extracted based on
 // various fields of S. If a field of type int64 or string has a struct tag
@@ -458,7 +458,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	return datastore.DeleteMulti(g.context, keys)
 }
 
-// NotFound returns true if err is an appengine.MultiError and err[idx] is an datastore.ErrNoSuchEntity.
+// NotFound returns true if err is an appengine.MultiError and err[idx] is a datastore.ErrNoSuchEntity.
 func NotFound(err error, idx int) bool {
 	if merr, ok := err.(appengine.MultiError); ok {
 		return idx < len(merr) && merr[idx] == datastore.ErrNoSuchEntity
