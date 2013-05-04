@@ -59,7 +59,7 @@ func FromContext(c appengine.Context) *Goon {
 
 func (g *Goon) error(err error) {
 	if LogErrors {
-		g.context.Errorf(err.Error())
+		g.context.Errorf("goon: %v", err.Error())
 	}
 }
 
