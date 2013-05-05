@@ -41,7 +41,7 @@ type Goon struct {
 }
 
 func memkey(k *datastore.Key) string {
-	return k.String()
+	return k.Encode()
 }
 
 // NewGoon creates a new Goon object from the given request.
