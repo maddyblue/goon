@@ -12,8 +12,8 @@ In general, the difference is that Goon's API is identical to the datastore API,
 it's just shorter.
 
 Keys in Goon are stored in the structs themselves. Below is an example struct
-with a field to specify the id. There are also optional kind and parent fields.
-See docs on the KeyError() function for a full specification.
+with a field to specify the id (see the Key Specifications section below for
+full documentation).
 	type User struct {
 		Id    string `datastore:"-" goon:"id"`
 		Name  string
