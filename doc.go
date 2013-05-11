@@ -27,15 +27,15 @@ Thus, to get a User with id 2:
 
 Key Specifications
 
-src must be a S or *S for some struct type S. The key is extracted based on
-various fields of S. If a field of type int64 or string has a struct tag
-named goon with value "id", it is used as the key's id. If a field of type
-*datastore.Key has a struct tag named goon with value "parent", it is used
-as the key's parent. If a field of type string has a struct tag named goon
-with value "kind", it is used as the key's kind. The "kind" field supports
-an optional second parameter which is the default kind name. If no kind
-field exists, the struct's name is used. These fields should all have
-their datastore field marked as "-".
+For both the Key and KeyError functions, src must be a S or *S for some
+struct type S. The key is extracted based on various fields of S. If a field
+of type int64 or string has a struct tag named goon with value "id", it is
+used as the key's id. If a field of type *datastore.Key has a struct tag
+named goon with value "parent", it is used as the key's parent. If a field
+of type string has a struct tag named goon with value "kind", it is used
+as the key's kind. The "kind" field supports an optional second parameter
+which is the default kind name. If no kind field exists, the struct's name
+is used. These fields should all have their datastore field marked as "-".
 
 Example, with kind User:
 	type User struct {
