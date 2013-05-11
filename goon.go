@@ -91,37 +91,6 @@ func (g *Goon) Key(src interface{}) *datastore.Key {
 }
 
 // Key returns the key of src based on its properties.
-//
-// src must be a S or *S for some struct type S. The key is extracted based on
-// various fields of S. If a field of type int64 or string has a struct tag
-// named goon with value "id", it is used as the key's id. If a field of type
-// *datastore.Key has a struct tag named goon with value "parent", it is used
-// as the key's parent. If a field of type string has a struct tag named goon
-// with value "kind", it is used as the key's kind. The "kind" field supports
-// an optional second parameter which is the default kind name. If no kind
-// field exists, the struct's name is used. These fields should all have
-// their datastore field marked as "-".
-//
-// Example, with kind User:
-//	type User struct {
-//		Id    string `datastore:"-" goon:"id"`
-//		Read  time.Time
-//	}
-// Example, with kind U if _kind is the empty string:
-//	type User struct {
-//		_kind string `goon:"kind,U"`
-//		Id    string `datastore:"-" goon:"id"`
-//		Read  time.Time
-//	}
-// To override the kind above to UserKind:
-//	u := User{_kind: "UserKind"}
-//
-// An example with a parent:
-//	type UserData struct {
-//		Id     string         `datastore:"-" goon:"id"`
-//		Parent *datastore.Key `datastore:"-" goon:"parent"`
-//		Data   []byte
-//	}
 func (g *Goon) KeyError(src interface{}) (*datastore.Key, error) {
 	return g.getStructKey(src)
 }
