@@ -220,13 +220,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 		}
 	}
 
-	err := memcache.SetMulti(g.context, items)
-
-	if err != nil {
-		g.error(err)
-		return err
-	}
-
+	memcache.SetMulti(g.context, items)
 	g.putMemoryMulti(srcs)
 	return nil
 }
@@ -283,12 +277,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		}
 	}
 
-	memvalues, err := memcache.GetMulti(g.context, memkeys)
-	if err != nil {
-		g.error(errors.New(fmt.Sprintf("goon: ignored memcache error: %v", err.Error())))
-		// ignore memcache errors
-		//return err
-	}
+	memvalues, _ := memcache.GetMulti(g.context, memkeys)
 
 	for i, m := range memkeys {
 		d := v.Index(mixs[i]).Interface()
