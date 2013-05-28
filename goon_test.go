@@ -34,8 +34,11 @@ func TestMain(t *testing.T) {
 	// key tests
 
 	noid := NoId{}
-	if k, err := n.KeyError(noid); err != nil || !k.Incomplete() {
+	if _, err := n.KeyError(noid); err == nil {
 		t.Error("expected incomplete on noid")
+	}
+	if n.Key(noid) != nil {
+		t.Error("expected to not find a key")
 	}
 
 	var keyTests = []keyTest{

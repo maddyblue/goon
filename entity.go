@@ -74,12 +74,12 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 			if tagValue == "id" {
 				switch vf.Kind() {
 				case reflect.Int64:
-					if intID != 0 {
+					if intID != 0 || stringID != "" {
 						return nil, errors.New("goon: Only one field may be marked id")
 					}
 					intID = vf.Int()
 				case reflect.String:
-					if stringID != "" {
+					if stringID != "" || intID != 0 {
 						return nil, errors.New("goon: Only one field may be marked id")
 					}
 					stringID = vf.String()
@@ -110,7 +110,11 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 		kind = typeName(src)
 	}
 
-	return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
+	key := datastore.NewKey(g.context, kind, stringID, intID, parent)
+	if key.Incomplete() {
+		return nil, errors.New("No ID found in struct")
+	}
+	return key, nil
 }
 
 func typeName(src interface{}) string {
