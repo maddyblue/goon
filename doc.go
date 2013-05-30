@@ -35,7 +35,9 @@ named goon with value "parent", it is used as the key's parent. If a field
 of type string has a struct tag named goon with value "kind", it is used
 as the key's kind. The "kind" field supports an optional second parameter
 which is the default kind name. If no kind field exists, the struct's name
-is used. These fields should all have their datastore field marked as "-".
+is used. If a field of type *datastore.Key has a struct tag named goon with
+a value "self", it is used as the struct representing that key.  These
+fields should all have their datastore field marked as "-".
 
 Example, with kind User:
 	type User struct {
