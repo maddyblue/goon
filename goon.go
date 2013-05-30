@@ -62,7 +62,8 @@ func (g *Goon) error(err error) {
 	}
 }
 
-func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
+// a flag to allow incomplete keys
+func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	if v.Kind() != reflect.Slice {
 		return nil, errors.New("goon: value must be a slice or pointer-to-slice")
@@ -76,6 +77,9 @@ func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
 		if err != nil {
 			return nil, err
 		}
+		if !allowIncomplete && key.Incomplete() {
+			return nil, errors.New("Key is incomplete")
+		}
 		keys[i] = key
 	}
 	return keys, nil
@@ -84,7 +88,9 @@ func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
 // Key is the same as KeyError, except nil is returned on error.
 func (g *Goon) Key(src interface{}) *datastore.Key {
 	if k, err := g.KeyError(src); err == nil {
-		return k
+		if !k.Incomplete() {
+			return k
+		}
 	}
 	return nil
 }
@@ -144,7 +150,7 @@ const putMultiLimit = 500
 //
 // src must satisfy the same conditions as the dst argument to GetMulti.
 func (g *Goon) PutMulti(src interface{}) error {
-	keys, err := g.extractKeys(src)
+	keys, err := g.extractKeys(src, true) // allow incompletes as the datastore will create the key
 	if err != nil {
 		return err
 	}
@@ -241,6 +247,7 @@ func (g *Goon) Get(dst interface{}) error {
 		// Not multi, normal error
 		return err
 	}
+	reflect.ValueOf(dst).Elem().Set(reflect.ValueOf(dsts[0]).Elem())
 	return nil
 }
 
@@ -248,7 +255,7 @@ func (g *Goon) Get(dst interface{}) error {
 //
 // dst has similar constraints as datastore.GetMulti.
 func (g *Goon) GetMulti(dst interface{}) error {
-	keys, err := g.extractKeys(dst)
+	keys, err := g.extractKeys(dst, false) // no incomplete keys allowed in a Get operation
 	if err != nil {
 		return err
 	}
@@ -286,7 +293,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				g.error(err)
 				return err
 			}
-
+			//g.context.Debugf("Set value from memcache for %#v", d)
 			g.putMemory(d)
 		} else {
 			key, err := g.getStructKey(d)
@@ -299,8 +306,8 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			dixs = append(dixs, mixs[i])
 		}
 	}
-
 	gmerr := datastore.GetMulti(g.context, dskeys, dsdst)
+	//g.context.Debugf("Set value from datastore for %#v", dsdst)
 	var ret error
 	var multiErr appengine.MultiError
 	var toCache []interface{}

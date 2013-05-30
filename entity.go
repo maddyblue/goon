@@ -62,6 +62,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 	var stringID string
 	var intID int64
 	var kind string
+	foundSelf := false
 
 	for i := 0; i < v.NumField(); i++ {
 		tf := t.Field(i)
@@ -101,6 +102,15 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 					}
 					parent = vf.Interface().(*datastore.Key)
 				}
+			} else if tagValue == "self" {
+				if foundSelf {
+					return nil, errors.New("goon: Only one field may be marked as self")
+				}
+				key := vf.Interface().(*datastore.Key)
+				if key != nil {
+					return key, nil
+				}
+				foundSelf = true
 			}
 		}
 	}
@@ -109,12 +119,8 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 	if kind == "" {
 		kind = typeName(src)
 	}
-
-	key := datastore.NewKey(g.context, kind, stringID, intID, parent)
-	if key.Incomplete() {
-		return nil, errors.New("No ID found in struct")
-	}
-	return key, nil
+	return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
+	// can be an incomplete Key
 }
 
 func typeName(src interface{}) string {
@@ -136,6 +142,7 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 	idSet := false
 	kindSet := false
 	parentSet := false
+	selfSet := false
 	for i := 0; i < v.NumField(); i++ {
 		tf := t.Field(i)
 		vf := v.Field(i)
@@ -177,6 +184,14 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
 					vf.Set(reflect.ValueOf(key.Parent()))
 					parentSet = true
+				}
+			} else if tagValue == "self" {
+				if selfSet {
+					return errors.New("goon: Only one field may be marked self")
+				}
+				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
+					vf.Set(reflect.ValueOf(key))
+					selfSet = true
 				}
 			}
 		}

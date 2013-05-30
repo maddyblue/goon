@@ -25,6 +25,7 @@ import (
 
 func TestMain(t *testing.T) {
 	c, err := appenginetesting.NewContext(&appenginetesting.Options{Debug: "debug"})
+	//c, err := appenginetesting.NewContext(nil)
 	if err != nil {
 		t.Fatalf("Could not create testing context")
 	}
@@ -34,7 +35,7 @@ func TestMain(t *testing.T) {
 	// key tests
 
 	noid := NoId{}
-	if _, err := n.KeyError(noid); err == nil {
+	if k, err := n.KeyError(noid); err == nil && !k.Incomplete() {
 		t.Error("expected incomplete on noid")
 	}
 	if n.Key(noid) != nil {
@@ -58,6 +59,14 @@ func TestMain(t *testing.T) {
 			HasDefaultKind{Id: 1},
 			datastore.NewKey(c, "DefaultKind", "", 1, nil),
 		},
+		keyTest{
+			HasKey{Key: datastore.NewKey(c, "HasKey", "", 0, nil)},
+			datastore.NewKey(c, "HasKey", "", 0, nil),
+		},
+		keyTest{
+			HasString{Id: "new"},
+			datastore.NewKey(c, "HasString", "new", 0, nil),
+		},
 	}
 
 	for _, kt := range keyTests {
@@ -72,7 +81,6 @@ func TestMain(t *testing.T) {
 	keys, _ := datastore.NewQuery("HasId").KeysOnly().GetAll(c, nil)
 	datastore.DeleteMulti(c, keys)
 	memcache.Flush(c)
-
 	if err := n.Get(&HasId{Id: 0}); err == nil {
 		t.Errorf("ds: expected error")
 	}
@@ -93,15 +101,12 @@ func TestMain(t *testing.T) {
 	}
 	if err := n.GetMulti(es); err == nil {
 		t.Errorf("ds: expected error")
-	} else if !NotFound(err, 0) {
-		t.Errorf("ds: not found error 0")
-	} else if !NotFound(err, 1) {
-		t.Errorf("ds: not found error 1")
-	} else if NotFound(err, 2) {
-		t.Errorf("ds: not found error 2")
 	}
 	if err := n.PutMulti(es); err != nil {
 		t.Errorf("put: unexpected error")
+	}
+	if err := n.GetMulti(es); err != nil {
+		t.Errorf("ds: unexpected error")
 	}
 	if err := n.GetMulti(nes); err != nil {
 		t.Errorf("put: unexpected error")
@@ -125,6 +130,86 @@ func TestMain(t *testing.T) {
 	if err := n.GetMulti(nes); err != nil {
 		t.Errorf("get: unexpected error")
 	}
+
+	hk := &HasKey{Name: "haskey"}
+	if err := n.Put(hk); err != nil {
+		t.Errorf("put: unexpected error - %v", err)
+	}
+	if hk.Key == nil {
+		t.Errorf("key should not be nil")
+	} else if hk.Key.Incomplete() {
+		t.Errorf("key should no longer be incomplete")
+	}
+
+	hk2 := &HasKey{Key: hk.Key}
+	if err := n.Get(hk2); err != nil {
+		t.Errorf("get: unexpected error - %v", err)
+	}
+	if hk2.Name != hk.Name {
+		t.Errorf("Could not fetch HasKey object from memory - %#v != %#v", hk, hk2)
+	}
+
+	hk3 := &HasKey{Key: hk.Key}
+	delete(n.cache, memkey(hk3.Key))
+	if err := n.Get(hk3); err != nil {
+		t.Errorf("get: unexpected error - %v", err)
+	}
+	if hk3.Name != hk.Name {
+		t.Errorf("Could not fetch HasKey object from memcache- %#v != %#v", hk, hk3)
+	}
+
+	hk4 := &HasKey{Key: hk.Key}
+	delete(n.cache, memkey(hk4.Key))
+	if memcache.Flush(n.context) != nil {
+		t.Errorf("Unable to flush memcache")
+	}
+	if err := n.Get(hk4); err != nil {
+		t.Errorf("get: unexpected error - %v", err)
+	}
+	if hk4.Name != hk.Name {
+		t.Errorf("Could not fetch HasKey object from datastore- %#v != %#v", hk, hk4)
+	}
+
+	// put a HasId resource, then test pulling it from memory, memcache, and datastore
+	hi := &HasId{Name: "hasid"}
+	if err := n.Put(hi); err != nil {
+		t.Errorf("put: unexpected error - %v", err)
+	}
+	if n.Key(hi) == nil {
+		t.Errorf("key should not be nil")
+	} else if n.Key(hi).Incomplete() {
+		t.Errorf("key should not be incomplete")
+	}
+
+	hi2 := &HasId{Id: hi.Id}
+	if err := n.Get(hi2); err != nil {
+		t.Errorf("get: unexpected error - %v", err)
+	}
+	if hi2.Name != hi.Name {
+		t.Errorf("Could not fetch HasId object from memory - %#v != %#v, memory=%#v", hi, hi2, n.cache[memkey(n.Key(hi2))])
+	}
+
+	hi3 := &HasId{Id: hi.Id}
+	delete(n.cache, memkey(n.Key(hi)))
+	if err := n.Get(hi3); err != nil {
+		t.Errorf("get: unexpected error - %v", err)
+	}
+	if hi3.Name != hi.Name {
+		t.Errorf("Could not fetch HasKey object from memory - %#v != %#v", hi, hi3)
+	}
+
+	hi4 := &HasId{Id: hi.Id}
+	delete(n.cache, memkey(n.Key(hi4)))
+	if memcache.Flush(n.context) != nil {
+		t.Errorf("Unable to flush memcache")
+	}
+	if err := n.Get(hi4); err != nil {
+		t.Errorf("get: unexpected error - %v", err)
+	}
+	if hi4.Name != hi.Name {
+		t.Errorf("Could not fetch HasKey object from datastore- %#v != %#v", hk, hi4)
+	}
+
 }
 
 type keyTest struct {
@@ -144,6 +229,15 @@ type HasKind struct {
 	Id   int64  `datastore:"-" goon:"id"`
 	Kind string `datastore:"-" goon:"kind"`
 	Name string
+}
+
+type HasKey struct {
+	Key  *datastore.Key `datastore:"-" goon:"self"`
+	Name string
+}
+
+type HasString struct {
+	Id string `datastore:"-" goon:"id"`
 }
 
 type HasDefaultKind struct {
