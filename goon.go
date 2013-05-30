@@ -293,7 +293,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				g.error(err)
 				return err
 			}
-			//g.context.Debugf("Set value from memcache for %#v", d)
 			g.putMemory(d)
 		} else {
 			key, err := g.getStructKey(d)
@@ -307,7 +306,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		}
 	}
 	gmerr := datastore.GetMulti(g.context, dskeys, dsdst)
-	//g.context.Debugf("Set value from datastore for %#v", dsdst)
 	var ret error
 	var multiErr appengine.MultiError
 	var toCache []interface{}

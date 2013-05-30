@@ -130,6 +130,28 @@ func TestMain(t *testing.T) {
 	if err := n.GetMulti(nes); err != nil {
 		t.Errorf("get: unexpected error")
 	}
+	hkp := &HasKey{}
+	if err := n.Put(hkp); err != nil {
+		t.Errorf("put: unexpected error - %v", err)
+	}
+
+	hkm := []HasKey{
+		{Name: "one"},
+		{Name: "two", Parent: hkp.Key},
+	}
+	err = n.PutMulti(hkm)
+	if err != nil {
+		t.Errorf("putmulti: unexpected error")
+	}
+	query := datastore.NewQuery("HasKey").Ancestor(hkp.Key).Filter("Name =", "two")
+	var hks []HasKey
+	_, err = n.GetAll(query, &hks)
+	if err != nil {
+		t.Errorf("getmulti: unexpected error - %v", err)
+	}
+	if len(hks) <= 0 || hks[0].Name != "two" {
+		t.Errorf("getmulti: could not fetch resource - fetched %#v", hks[0])
+	}
 
 	hk := &HasKey{Name: "haskey"}
 	if err := n.Put(hk); err != nil {
@@ -232,8 +254,9 @@ type HasKind struct {
 }
 
 type HasKey struct {
-	Key  *datastore.Key `datastore:"-" goon:"self"`
-	Name string
+	Key    *datastore.Key `datastore:"-" goon:"self"`
+	Parent *datastore.Key `datastore:"-" goon:"parent"`
+	Name   string
 }
 
 type HasString struct {
