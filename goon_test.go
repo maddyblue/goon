@@ -169,6 +169,42 @@ func TestMain(t *testing.T) {
 	if hi4.Name != hi.Name {
 		t.Errorf("Could not fetch HasKey object from datastore- %#v != %#v", hi, hi4)
 	}
+
+	dad := &HasParent{Name: "dad"}
+	if err := n.Put(dad); err != nil {
+		t.Errorf("dad not able to be stored")
+	}
+
+	son := &HasParent{Name: "son", Parent: n.Key(dad)}
+	if err := n.Put(son); err != nil {
+		t.Errorf("son not able to be stored")
+	}
+
+	sonCopy := &HasParent{Id: son.Id, Parent: son.Parent}
+	if err := n.Get(sonCopy); err != nil {
+		t.Errorf("son not able to be fetched - %v", err)
+	}
+	if sonCopy.Name != "son" {
+		t.Errorf("Name not fetched for son")
+	}
+
+	var sons []HasParent
+	allSonsQuery := datastore.NewQuery("HasParent").Ancestor(n.Key(dad))
+	if _, err := n.GetAll(allSonsQuery, &sons); err != nil {
+		t.Errorf("sons not able to be fetched")
+	}
+	for _, child := range sons {
+		if child.Name == "" {
+			t.Errorf("did not properly fetch sons with GetAll")
+		}
+		if child.Name == "son" && child.Parent != n.Key(dad) {
+			t.Errorf("did not properly populate the Parent() key for son")
+		}
+	}
+	if len(sons) != 2 {
+		t.Errorf("Should have two HasParent structs")
+	}
+
 }
 
 type keyTest struct {
@@ -198,4 +234,10 @@ type HasDefaultKind struct {
 
 type HasString struct {
 	Id string `datastore:"-" goon:"id"`
+}
+
+type HasParent struct {
+	Id     int64          `datastore:"-" goon:"id"`
+	Parent *datastore.Key `datastore:"-" goon:"parent"`
+	Name   string
 }
