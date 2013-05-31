@@ -21,6 +21,7 @@ import (
 	"appengine/datastore"
 	"appengine/memcache"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 )
@@ -62,7 +63,6 @@ func (g *Goon) error(err error) {
 	}
 }
 
-// a flag to allow incomplete keys
 func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	if v.Kind() != reflect.Slice {
@@ -78,7 +78,7 @@ func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.
 			return nil, err
 		}
 		if !allowIncomplete && key.Incomplete() {
-			return nil, errors.New("Key is incomplete")
+			return nil, errors.New("goon: cannot find a key for struct")
 		}
 		keys[i] = key
 	}
@@ -150,7 +150,7 @@ const putMultiLimit = 500
 //
 // src must satisfy the same conditions as the dst argument to GetMulti.
 func (g *Goon) PutMulti(src interface{}) error {
-	keys, err := g.extractKeys(src, true) // allow incompletes as the datastore will create the key
+	keys, err := g.extractKeys(src, true) // allow incompletes on a Put request as the datastore will create the key
 	if err != nil {
 		return err
 	}
@@ -234,6 +234,10 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 // If there is no such entity for the key, Get returns
 // datastore.ErrNoSuchEntity.
 func (g *Goon) Get(dst interface{}) error {
+	set := reflect.ValueOf(dst)
+	if set.Kind() != reflect.Ptr {
+		return errors.New(fmt.Sprintf("goon: expected pointer to a struct, got %#v", dst))
+	}
 	dsts := []interface{}{dst}
 	if err := g.GetMulti(dsts); err != nil {
 		// Look for an embedded error if it's multi
@@ -247,7 +251,7 @@ func (g *Goon) Get(dst interface{}) error {
 		// Not multi, normal error
 		return err
 	}
-	reflect.ValueOf(dst).Elem().Set(reflect.ValueOf(dsts[0]).Elem())
+	set.Elem().Set(reflect.ValueOf(dsts[0]).Elem())
 	return nil
 }
 
@@ -255,7 +259,7 @@ func (g *Goon) Get(dst interface{}) error {
 //
 // dst has similar constraints as datastore.GetMulti.
 func (g *Goon) GetMulti(dst interface{}) error {
-	keys, err := g.extractKeys(dst, false) // no incomplete keys allowed in a Get operation
+	keys, err := g.extractKeys(dst, false) // don't allow incomplete keys on a Get request
 	if err != nil {
 		return err
 	}

@@ -82,7 +82,7 @@ func TestMain(t *testing.T) {
 	datastore.DeleteMulti(c, keys)
 	memcache.Flush(c)
 	if err := n.Get(&HasId{Id: 0}); err == nil {
-		t.Errorf("ds: expected error")
+		t.Errorf("ds: expected error, we're fetching from the datastore on an incomplete key!")
 	}
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
 		t.Errorf("ds: expected no such entity")
@@ -193,7 +193,7 @@ func TestMain(t *testing.T) {
 	}
 
 	// put a HasId resource, then test pulling it from memory, memcache, and datastore
-	hi := &HasId{Name: "hasid"}
+	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
 	if err := n.Put(hi); err != nil {
 		t.Errorf("put: unexpected error - %v", err)
 	}
@@ -229,7 +229,42 @@ func TestMain(t *testing.T) {
 		t.Errorf("get: unexpected error - %v", err)
 	}
 	if hi4.Name != hi.Name {
-		t.Errorf("Could not fetch HasKey object from datastore- %#v != %#v", hk, hi4)
+		t.Errorf("Could not fetch HasKey object from datastore- %#v != %#v", hi, hi4)
+	}
+
+	dad := &HasParent{Name: "dad"}
+	if err := n.Put(dad); err != nil {
+		t.Errorf("dad not able to be stored")
+	}
+
+	son := &HasParent{Name: "son", Parent: n.Key(dad)}
+	if err := n.Put(son); err != nil {
+		t.Errorf("son not able to be stored")
+	}
+
+	sonCopy := &HasParent{Id: son.Id, Parent: son.Parent}
+	if err := n.Get(sonCopy); err != nil {
+		t.Errorf("son not able to be fetched - %v", err)
+	}
+	if sonCopy.Name != "son" {
+		t.Errorf("Name not fetched for son")
+	}
+
+	var sons []HasParent
+	allSonsQuery := datastore.NewQuery("HasParent").Ancestor(n.Key(dad))
+	if _, err := n.GetAll(allSonsQuery, &sons); err != nil {
+		t.Errorf("sons not able to be fetched")
+	}
+	for _, child := range sons {
+		if child.Name == "" {
+			t.Errorf("did not properly fetch sons with GetAll")
+		}
+		if child.Name == "son" && child.Parent != n.Key(dad) {
+			t.Errorf("did not properly populate the Parent() key for son")
+		}
+	}
+	if len(sons) != 2 {
+		t.Errorf("Should have two HasParent structs")
 	}
 
 }
@@ -259,12 +294,18 @@ type HasKey struct {
 	Name   string
 }
 
-type HasString struct {
-	Id string `datastore:"-" goon:"id"`
-}
-
 type HasDefaultKind struct {
 	Id   int64  `datastore:"-" goon:"id"`
 	Kind string `datastore:"-" goon:"kind,DefaultKind"`
 	Name string
+}
+
+type HasString struct {
+	Id string `datastore:"-" goon:"id"`
+}
+
+type HasParent struct {
+	Id     int64          `datastore:"-" goon:"id"`
+	Parent *datastore.Key `datastore:"-" goon:"parent"`
+	Name   string
 }

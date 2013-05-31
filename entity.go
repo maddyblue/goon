@@ -119,8 +119,8 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 	if kind == "" {
 		kind = typeName(src)
 	}
-	return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
 	// can be an incomplete Key
+	return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
 }
 
 func typeName(src interface{}) string {
