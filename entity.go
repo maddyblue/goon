@@ -62,7 +62,6 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 	var stringID string
 	var intID int64
 	var kind string
-	foundSelf := false
 
 	for i := 0; i < v.NumField(); i++ {
 		tf := t.Field(i)
@@ -84,6 +83,14 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 						return nil, errors.New("goon: Only one field may be marked id")
 					}
 					stringID = vf.String()
+				case reflect.TypeOf(&datastore.Key{}).Kind():
+					if stringID != "" || intID != 0 {
+						return nil, errors.New("goon: Only one field may be marked id")
+					}
+					key := vf.Interface().(*datastore.Key)
+					if key != nil {
+						return key, nil
+					}
 				}
 			} else if tagValue == "kind" {
 				if vf.Kind() == reflect.String {
@@ -102,15 +109,6 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 					}
 					parent = vf.Interface().(*datastore.Key)
 				}
-			} else if tagValue == "self" {
-				if foundSelf {
-					return nil, errors.New("goon: Only one field may be marked as self")
-				}
-				key := vf.Interface().(*datastore.Key)
-				if key != nil {
-					return key, nil
-				}
-				foundSelf = true
 			}
 		}
 	}
@@ -142,7 +140,6 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 	idSet := false
 	kindSet := false
 	parentSet := false
-	selfSet := false
 	for i := 0; i < v.NumField(); i++ {
 		tf := t.Field(i)
 		vf := v.Field(i)
@@ -159,14 +156,17 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 				if idSet {
 					return errors.New("goon: Only one field may be marked id")
 				}
+
 				switch vf.Kind() {
 				case reflect.Int64:
 					vf.SetInt(key.IntID())
-					idSet = true
 				case reflect.String:
 					vf.SetString(key.StringID())
-					idSet = true
+				case reflect.TypeOf(&datastore.Key{}).Kind():
+					vf.Set(reflect.ValueOf(key))
+
 				}
+				idSet = true
 			} else if tagValue == "kind" {
 				if kindSet {
 					return errors.New("goon: Only one field may be marked kind")
@@ -184,14 +184,6 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
 					vf.Set(reflect.ValueOf(key.Parent()))
 					parentSet = true
-				}
-			} else if tagValue == "self" {
-				if selfSet {
-					return errors.New("goon: Only one field may be marked self")
-				}
-				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
-					vf.Set(reflect.ValueOf(key))
-					selfSet = true
 				}
 			}
 		}

@@ -267,6 +267,8 @@ func TestMain(t *testing.T) {
 		t.Errorf("Should have two HasParent structs")
 	}
 
+	// test setStructKey
+
 }
 
 type keyTest struct {
@@ -289,7 +291,7 @@ type HasKind struct {
 }
 
 type HasKey struct {
-	Key    *datastore.Key `datastore:"-" goon:"self"`
+	Key    *datastore.Key `datastore:"-" goon:"id"`
 	Parent *datastore.Key `datastore:"-" goon:"parent"`
 	Name   string
 }
