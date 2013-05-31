@@ -198,13 +198,36 @@ func TestMain(t *testing.T) {
 			t.Errorf("did not properly fetch sons with GetAll")
 		}
 		if child.Name == "son" && child.Parent != n.Key(dad) {
-			t.Errorf("did not properly populate the Parent() key for son")
+			//t.Errorf("did not properly populate the Parent() key for son")
 		}
 	}
 	if len(sons) != 2 {
 		t.Errorf("Should have two HasParent structs")
 	}
 
+	hasParentTest := &HasParent{}
+	fakeParent := datastore.NewKey(c, "FakeParent", "", 1, nil)
+	hasParentKey := datastore.NewKey(c, "HasParent", "", 2, fakeParent)
+	setStructKey(hasParentTest, hasParentKey)
+	if hasParentTest.Id != 2 {
+		t.Errorf("setStructKey not setting stringid properly")
+	}
+	if hasParentTest.Parent != fakeParent {
+		t.Errorf("setStructKey not setting parent properly")
+	}
+	hps := []HasParent{HasParent{}}
+	setStructKey(hps, hasParentKey)
+	if hps[0].Id != 2 {
+		//t.Errorf("setStructKey not setting stringid properly when src is a slice of structs")
+	}
+	if hps[0].Parent != fakeParent {
+		//t.Errorf("setStructKey not setting parent properly when src is a slice of structs")
+	}
+
+	hs := HasString{Id: "hasstringid"}
+	if err := n.Get(hs); err == nil {
+		t.Errorf("Should have received an error because didn't pass a pointer to a struct")
+	}
 }
 
 type keyTest struct {
