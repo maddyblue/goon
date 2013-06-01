@@ -57,10 +57,9 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 	if keysOnly {
 		return keys, err
 	}
-
 	for i, k := range keys {
-		e := v.Index(i).Interface()
-		setStructKey(&e, k)
+		e := v.Index(i).Addr().Interface()
+		setStructKey(e, k)
 
 		if !g.inTransaction {
 			g.cache[memkey(k)] = &e

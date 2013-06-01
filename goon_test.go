@@ -255,20 +255,42 @@ func TestMain(t *testing.T) {
 	if _, err := n.GetAll(allSonsQuery, &sons); err != nil {
 		t.Errorf("sons not able to be fetched")
 	}
+
 	for _, child := range sons {
 		if child.Name == "" {
 			t.Errorf("did not properly fetch sons with GetAll")
 		}
-		if child.Name == "son" && child.Parent != n.Key(dad) {
-			t.Errorf("did not properly populate the Parent() key for son")
+		if child.Name == "son" && !child.Parent.Equal(n.Key(dad)) {
+			t.Errorf("did not properly populate the Parent() key for son - %#v", child)
 		}
 	}
 	if len(sons) != 2 {
 		t.Errorf("Should have two HasParent structs")
 	}
 
-	// test setStructKey
+	hasParentTest := &HasParent{}
+	fakeParent := datastore.NewKey(c, "FakeParent", "", 1, nil)
+	hasParentKey := datastore.NewKey(c, "HasParent", "", 2, fakeParent)
+	setStructKey(hasParentTest, hasParentKey)
+	if hasParentTest.Id != 2 {
+		t.Errorf("setStructKey not setting stringid properly")
+	}
+	if hasParentTest.Parent != fakeParent {
+		t.Errorf("setStructKey not setting parent properly")
+	}
+	hps := []HasParent{HasParent{}}
+	setStructKey(&hps[0], hasParentKey)
+	if hps[0].Id != 2 {
+		t.Errorf("setStructKey not setting stringid properly when src is a slice of structs")
+	}
+	if hps[0].Parent != fakeParent {
+		t.Errorf("setStructKey not setting parent properly when src is a slice of structs")
+	}
 
+	hs := HasString{Id: "hasstringid"}
+	if err := n.Get(hs); err == nil {
+		t.Errorf("Should have received an error because didn't pass a pointer to a struct")
+	}
 }
 
 type keyTest struct {
