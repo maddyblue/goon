@@ -193,12 +193,13 @@ func TestMain(t *testing.T) {
 	if _, err := n.GetAll(allSonsQuery, &sons); err != nil {
 		t.Errorf("sons not able to be fetched")
 	}
+
 	for _, child := range sons {
 		if child.Name == "" {
 			t.Errorf("did not properly fetch sons with GetAll")
 		}
-		if child.Name == "son" && child.Parent != n.Key(dad) {
-			t.Errorf("did not properly populate the Parent() key for son")
+		if child.Name == "son" && !child.Parent.Equal(n.Key(dad)) {
+			t.Errorf("did not properly populate the Parent() key for son - %#v", child)
 		}
 	}
 	if len(sons) != 2 {
@@ -216,7 +217,7 @@ func TestMain(t *testing.T) {
 		t.Errorf("setStructKey not setting parent properly")
 	}
 	hps := []HasParent{HasParent{}}
-	setStructKey(hps, hasParentKey)
+	setStructKey(&hps[0], hasParentKey)
 	if hps[0].Id != 2 {
 		t.Errorf("setStructKey not setting stringid properly when src is a slice of structs")
 	}
