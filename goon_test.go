@@ -198,7 +198,7 @@ func TestMain(t *testing.T) {
 			t.Errorf("did not properly fetch sons with GetAll")
 		}
 		if child.Name == "son" && child.Parent != n.Key(dad) {
-			//t.Errorf("did not properly populate the Parent() key for son")
+			t.Errorf("did not properly populate the Parent() key for son")
 		}
 	}
 	if len(sons) != 2 {
