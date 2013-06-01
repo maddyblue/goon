@@ -218,10 +218,10 @@ func TestMain(t *testing.T) {
 	hps := []HasParent{HasParent{}}
 	setStructKey(hps, hasParentKey)
 	if hps[0].Id != 2 {
-		//t.Errorf("setStructKey not setting stringid properly when src is a slice of structs")
+		t.Errorf("setStructKey not setting stringid properly when src is a slice of structs")
 	}
 	if hps[0].Parent != fakeParent {
-		//t.Errorf("setStructKey not setting parent properly when src is a slice of structs")
+		t.Errorf("setStructKey not setting parent properly when src is a slice of structs")
 	}
 
 	hs := HasString{Id: "hasstringid"}
