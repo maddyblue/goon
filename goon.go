@@ -40,6 +40,11 @@ type Goon struct {
 	toDelete      []string
 }
 
+// Returns the internal appengine.Context in use
+func (g *Goon) C() appengine.Context {
+	return g.context
+}
+
 func memkey(k *datastore.Key) string {
 	return k.Encode()
 }
