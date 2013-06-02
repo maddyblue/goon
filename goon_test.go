@@ -217,7 +217,7 @@ func TestMain(t *testing.T) {
 		t.Errorf("get: unexpected error - %v", err)
 	}
 	if hi3.Name != hi.Name {
-		t.Errorf("Could not fetch HasKey object from memory - %#v != %#v", hi, hi3)
+		t.Errorf("Could not fetch HasId object from memory - %#v != %#v", hi, hi3)
 	}
 
 	hi4 := &HasId{Id: hi.Id}
@@ -229,7 +229,7 @@ func TestMain(t *testing.T) {
 		t.Errorf("get: unexpected error - %v", err)
 	}
 	if hi4.Name != hi.Name {
-		t.Errorf("Could not fetch HasKey object from datastore- %#v != %#v", hi, hi4)
+		t.Errorf("Could not fetch HasId object from datastore- %#v != %#v", hi, hi4)
 	}
 
 	dad := &HasParent{Name: "dad"}
@@ -248,6 +248,9 @@ func TestMain(t *testing.T) {
 	}
 	if sonCopy.Name != "son" {
 		t.Errorf("Name not fetched for son")
+	}
+	if !sonCopy.Parent.Equal(n.Key(dad)) {
+		t.Errorf("did not properly populate the Parent() key for son - %#v", sonCopy)
 	}
 
 	var sons []HasParent
