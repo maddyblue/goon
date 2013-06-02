@@ -136,7 +136,7 @@ func TestMain(t *testing.T) {
 	}
 
 	hkm := []HasKey{
-		{Name: "one"},
+		{Name: "one", Parent: hkp.Key},
 		{Name: "two", Parent: hkp.Key},
 	}
 	err = n.PutMulti(hkm)
@@ -149,8 +149,17 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Errorf("getmulti: unexpected error - %v", err)
 	}
-	if len(hks) <= 0 || hks[0].Name != "two" {
+	if len(hks) != 1 || hks[0].Name != "two" {
 		t.Errorf("getmulti: could not fetch resource - fetched %#v", hks[0])
+	}
+
+	query = datastore.NewQuery("HasKey").Ancestor(hkp.Key).Filter("Name =", "one")
+	_, err = n.GetAll(query, &hks)
+	if err != nil {
+		t.Errorf("getmulti: unexpected error - %v", err)
+	}
+	if len(hks) != 2 {
+		t.Errorf("getmulti: could not fetch additional resource - fetched %#v", hks)
 	}
 
 	hk := &HasKey{Name: "haskey"}
