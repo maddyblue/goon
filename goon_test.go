@@ -24,8 +24,8 @@ import (
 )
 
 func TestMain(t *testing.T) {
-	c, err := appenginetesting.NewContext(&appenginetesting.Options{Debug: "debug"})
-	//c, err := appenginetesting.NewContext(nil)
+	//c, err := appenginetesting.NewContext(&appenginetesting.Options{Debug: "debug"})
+	c, err := appenginetesting.NewContext(nil)
 	if err != nil {
 		t.Fatalf("Could not create testing context")
 	}
@@ -162,7 +162,7 @@ func TestMain(t *testing.T) {
 		t.Errorf("getmulti: could not fetch additional resource - fetched %#v", hks)
 	}
 
-	hk := &HasKey{Name: "haskey"}
+	hk := &HasKey{Name: "haskey", Parent: hkp.Key}
 	if err := n.Put(hk); err != nil {
 		t.Errorf("put: unexpected error - %v", err)
 	}
@@ -172,12 +172,18 @@ func TestMain(t *testing.T) {
 		t.Errorf("key should no longer be incomplete")
 	}
 
+	n.C().Debugf("Clear the incache memory")
+	n.cache = make(map[string]interface{})
+
 	hk2 := &HasKey{Key: hk.Key}
 	if err := n.Get(hk2); err != nil {
 		t.Errorf("get: unexpected error - %v", err)
 	}
 	if hk2.Name != hk.Name {
 		t.Errorf("Could not fetch HasKey object from memory - %#v != %#v", hk, hk2)
+	}
+	if !hk2.Parent.Equal(hkp.Key) {
+		t.Errorf("Parent not loaded for %#v", hk2)
 	}
 
 	hk3 := &HasKey{Key: hk.Key}

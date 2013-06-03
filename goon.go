@@ -223,6 +223,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			return err
 		}
 		key, err := g.getStructKey(src)
+		setStructKey(src, key)
 
 		items[i] = &memcache.Item{
 			Key:   memkey(key),
