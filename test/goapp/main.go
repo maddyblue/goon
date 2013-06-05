@@ -31,6 +31,10 @@ func init() {
 }
 
 func Main(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		return
+	}
+
 	c := appengine.NewContext(r)
 	n := goon.NewGoon(r)
 
