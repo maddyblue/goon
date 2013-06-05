@@ -68,6 +68,10 @@ func Main(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if _, err := n.KeyError(TwoId{IntId: 1, StringId: "1"}); err == nil {
+		fmt.Fprintln(w, "expected key error")
+	}
+
 	// datastore tests
 
 	initTest(c)
@@ -168,4 +172,9 @@ type HasDefaultKind struct {
 	Id   int64  `datastore:"-" goon:"id"`
 	Kind string `datastore:"-" goon:"kind,DefaultKind"`
 	Name string
+}
+
+type TwoId struct {
+	IntId    int64  `goon:"id"`
+	StringId string `goon:"id"`
 }
