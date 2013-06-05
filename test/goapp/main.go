@@ -85,6 +85,10 @@ func Main(w http.ResponseWriter, r *http.Request) {
 		{Id: 1, Name: "one"},
 		{Id: 2, Name: "two"},
 	}
+	var esk []*datastore.Key
+	for _, e := range es {
+		esk = append(esk, n.Key(e))
+	}
 	nes := []*HasId{
 		{Id: 1},
 		{Id: 2},
@@ -98,8 +102,16 @@ func Main(w http.ResponseWriter, r *http.Request) {
 	} else if goon.NotFound(err, 2) {
 		fmt.Fprintln(w, "ds: not found error 2")
 	}
-	if err := n.PutMulti(es); err != nil {
+	if keys, err := n.PutMulti(es); err != nil {
 		fmt.Fprintln(w, "put: unexpected error")
+	} else if len(keys) != len(esk) {
+		fmt.Fprintln(w, "put: got unexpected number of keys")
+	} else {
+		for i, k := range keys {
+			if !k.Equal(esk[i]) {
+				fmt.Fprintln(w, "put: got unexpected keys")
+			}
+		}
 	}
 	if err := n.GetMulti(nes); err != nil {
 		fmt.Fprintln(w, "put: unexpected error")
