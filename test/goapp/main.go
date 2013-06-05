@@ -131,6 +131,9 @@ func Main(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintln(w, "put: bad key")
 		}
 	}
+	if _, err := n.Put(HasId{Id: 3}); err == nil {
+		fmt.Fprintln(w, "put: expected error")
+	}
 	// force partial fetch from memcache and then datastore
 	memcache.Flush(c)
 	if err := n.Get(nes[0]); err != nil {
