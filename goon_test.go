@@ -102,7 +102,7 @@ func TestMain(t *testing.T) {
 	if err := n.GetMulti(es); err == nil {
 		t.Errorf("ds: expected error")
 	}
-	if err := n.PutMulti(es); err != nil {
+	if _, err := n.PutMulti(es); err != nil {
 		t.Errorf("put: unexpected error")
 	}
 	if err := n.GetMulti(es); err != nil {
@@ -131,7 +131,7 @@ func TestMain(t *testing.T) {
 		t.Errorf("get: unexpected error")
 	}
 	hkp := &HasKey{}
-	if err := n.Put(hkp); err != nil {
+	if _, err := n.Put(hkp); err != nil {
 		t.Errorf("put: unexpected error - %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestMain(t *testing.T) {
 		{Name: "one", Parent: hkp.Key},
 		{Name: "two", Parent: hkp.Key},
 	}
-	err = n.PutMulti(hkm)
+	_, err = n.PutMulti(hkm)
 	if err != nil {
 		t.Errorf("putmulti: unexpected error")
 	}
@@ -163,7 +163,7 @@ func TestMain(t *testing.T) {
 	}
 
 	hk := &HasKey{Name: "haskey", Parent: hkp.Key}
-	if err := n.Put(hk); err != nil {
+	if _, err := n.Put(hk); err != nil {
 		t.Errorf("put: unexpected error - %v", err)
 	}
 	if hk.Key == nil {
@@ -209,7 +209,7 @@ func TestMain(t *testing.T) {
 
 	// put a HasId resource, then test pulling it from memory, memcache, and datastore
 	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
-	if err := n.Put(hi); err != nil {
+	if _, err := n.Put(hi); err != nil {
 		t.Errorf("put: unexpected error - %v", err)
 	}
 	if n.Key(hi) == nil {
@@ -248,12 +248,12 @@ func TestMain(t *testing.T) {
 	}
 
 	dad := &HasParent{Name: "dad"}
-	if err := n.Put(dad); err != nil {
+	if _, err := n.Put(dad); err != nil {
 		t.Errorf("dad not able to be stored")
 	}
 
 	son := &HasParent{Name: "son", Parent: n.Key(dad)}
-	if err := n.Put(son); err != nil {
+	if _, err := n.Put(son); err != nil {
 		t.Errorf("son not able to be stored")
 	}
 
