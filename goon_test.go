@@ -331,6 +331,68 @@ func TestMain(t *testing.T) {
 		GoonTest{&HasString{Name: "bah", Id: "hasstringid"}, false},
 	}
 
+	multiPut := make([]GoonStore, 0)
+	multiMemoryResult := make([]GoonStore, 0)
+	multiMemcacheResult := make([]GoonStore, 0)
+	multiDatastoreResult := make([]GoonStore, 0)
+	for _, gt := range goontests {
+		if gt.putErr {
+			continue
+		}
+		// should make a copy of each valid put GoonScore object
+		multiPut = append(multiPut, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
+		multiMemoryResult = append(multiMemoryResult, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
+		multiMemcacheResult = append(multiMemcacheResult, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
+		multiDatastoreResult = append(multiDatastoreResult, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
+	}
+
+	multiKeys, err := n.PutMulti(multiPut)
+	if err != nil {
+		t.Fatalf("PutMulti failed for []GoonScore - %v", err)
+	}
+	multiKeysCopy, err := n.extractKeys(multiPut, false)
+	if err != nil {
+		t.Fatalf("extractKeys failed for []GoonScore - %v", err)
+	}
+	if !reflect.DeepEqual(multiKeys, multiKeysCopy) {
+		t.Errorf("Keys returned from PutMulti != extractKeys")
+	}
+	multiStrings := make([]string, len(multiPut))
+	for x := range multiStrings {
+		tk, err := n.getStructKey(multiPut[x])
+		if err != nil {
+			t.Errorf("Could not get key from %v - %s", multiPut[x], err)
+		}
+		multiStrings[x] = tk.Encode()
+	}
+	err = n.GetMulti(multiMemoryResult)
+	if err != nil {
+		t.Fatalf("memory - GetMultii failed for []GoonScore - %v", err)
+	}
+	n.cache = make(map[string]interface{}) // delete memory
+	err = n.GetMulti(multiMemcacheResult)
+	if err != nil {
+		t.Fatalf("memcache - GetMultii failed for []GoonScore - %v", err)
+	}
+	n.cache = make(map[string]interface{})      // delete memory
+	err = memcache.DeleteMulti(c, multiStrings) // delete all memcache
+	if err != nil {
+		t.Fatalf("Error clearing memcache for %#v", multiStrings)
+	}
+	err = n.GetMulti(multiDatastoreResult)
+	if err != nil {
+		t.Fatalf("datastore - GetMultii failed for []GoonScore - %v", err)
+	}
+	if !reflect.DeepEqual(multiPut, multiDatastoreResult) {
+		t.Errorf("PutMulti != GetMulti for datastore")
+	}
+	if !reflect.DeepEqual(multiPut, multiMemcacheResult) {
+		t.Errorf("PutMulti != GetMulti for memcache")
+	}
+	if !reflect.DeepEqual(multiPut, multiMemoryResult) {
+		t.Errorf("PutMulti != GetMulti for memory")
+	}
+
 	for _, gt := range goontests {
 		key, err := n.Put(gt.orig)
 		if (err == nil) && gt.putErr {
