@@ -89,6 +89,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 					}
 					key := vf.Interface().(*datastore.Key)
 					if key != nil {
+						setStructKey(src, key)
 						return key, nil
 					}
 				}

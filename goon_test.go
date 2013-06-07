@@ -20,6 +20,7 @@ import (
 	"appengine/datastore"
 	"appengine/memcache"
 	"github.com/icub3d/appenginetesting"
+	"reflect"
 	"testing"
 )
 
@@ -136,8 +137,8 @@ func TestMain(t *testing.T) {
 	}
 
 	hkm := []HasKey{
-		{Name: "one", Parent: hkp.Key},
-		{Name: "two", Parent: hkp.Key},
+		{Name: "one", P: hkp.Key},
+		{Name: "two", P: hkp.Key},
 	}
 	_, err = n.PutMulti(hkm)
 	if err != nil {
@@ -162,7 +163,7 @@ func TestMain(t *testing.T) {
 		t.Errorf("getmulti: could not fetch additional resource - fetched %#v", hks)
 	}
 
-	hk := &HasKey{Name: "haskey", Parent: hkp.Key}
+	hk := &HasKey{Name: "haskey", P: hkp.Key}
 	if _, err := n.Put(hk); err != nil {
 		t.Errorf("put: unexpected error - %v", err)
 	}
@@ -182,7 +183,7 @@ func TestMain(t *testing.T) {
 	if hk2.Name != hk.Name {
 		t.Errorf("Could not fetch HasKey object from memory - %#v != %#v", hk, hk2)
 	}
-	if !hk2.Parent.Equal(hkp.Key) {
+	if !hk2.P.Equal(hkp.Key) {
 		t.Errorf("Parent not loaded for %#v", hk2)
 	}
 
@@ -252,19 +253,19 @@ func TestMain(t *testing.T) {
 		t.Errorf("dad not able to be stored")
 	}
 
-	son := &HasParent{Name: "son", Parent: n.Key(dad)}
+	son := &HasParent{Name: "son", P: n.Key(dad)}
 	if _, err := n.Put(son); err != nil {
 		t.Errorf("son not able to be stored")
 	}
 
-	sonCopy := &HasParent{Id: son.Id, Parent: son.Parent}
+	sonCopy := &HasParent{Id: son.Id, P: son.P}
 	if err := n.Get(sonCopy); err != nil {
 		t.Errorf("son not able to be fetched - %v", err)
 	}
 	if sonCopy.Name != "son" {
 		t.Errorf("Name not fetched for son")
 	}
-	if !sonCopy.Parent.Equal(n.Key(dad)) {
+	if !sonCopy.P.Equal(n.Key(dad)) {
 		t.Errorf("did not properly populate the Parent() key for son - %#v", sonCopy)
 	}
 
@@ -278,7 +279,7 @@ func TestMain(t *testing.T) {
 		if child.Name == "" {
 			t.Errorf("did not properly fetch sons with GetAll")
 		}
-		if child.Name == "son" && !child.Parent.Equal(n.Key(dad)) {
+		if child.Name == "son" && !child.P.Equal(n.Key(dad)) {
 			t.Errorf("did not properly populate the Parent() key for son - %#v", child)
 		}
 	}
@@ -293,7 +294,7 @@ func TestMain(t *testing.T) {
 	if hasParentTest.Id != 2 {
 		t.Errorf("setStructKey not setting stringid properly")
 	}
-	if hasParentTest.Parent != fakeParent {
+	if hasParentTest.P != fakeParent {
 		t.Errorf("setStructKey not setting parent properly")
 	}
 	hps := []HasParent{HasParent{}}
@@ -301,13 +302,79 @@ func TestMain(t *testing.T) {
 	if hps[0].Id != 2 {
 		t.Errorf("setStructKey not setting stringid properly when src is a slice of structs")
 	}
-	if hps[0].Parent != fakeParent {
+	if hps[0].P != fakeParent {
 		t.Errorf("setStructKey not setting parent properly when src is a slice of structs")
 	}
 
 	hs := HasString{Id: "hasstringid"}
 	if err := n.Get(hs); err == nil {
 		t.Errorf("Should have received an error because didn't pass a pointer to a struct")
+	}
+	father := &HasId{}
+	fatherkey, err := n.Put(father)
+	if err != nil {
+		t.Fatalf("Could not put father")
+	}
+	if !fatherkey.Equal(father.Self(n)) {
+		t.Fatalf("Father key not populated")
+	}
+
+	goontests := []GoonTest{
+		GoonTest{&HasDefaultKind{Name: "bah"}, false},
+		GoonTest{&HasId{Name: "bah"}, false},
+		GoonTest{&HasKey{Name: "bah"}, false},
+		GoonTest{&HasKey{Name: "bah", P: father.Self(n)}, false},
+		GoonTest{&HasKind{Name: "bah", Kind: "other"}, false},
+		GoonTest{&HasParent{Name: "bah"}, false},
+		GoonTest{&HasParent{Name: "bah", P: father.Self(n)}, false},
+		GoonTest{HasString{Id: "bah"}, true},
+		GoonTest{&HasString{Name: "bah", Id: "hasstringid"}, false},
+	}
+
+	for _, gt := range goontests {
+		key, err := n.Put(gt.orig)
+		if (err == nil) && gt.putErr {
+			t.Errorf("Put request for %#v should have errored but didn't", gt.orig)
+			continue
+		} else if err != nil {
+			if !gt.putErr {
+				t.Errorf("Put request had unexpected error %v for %#v", err, gt.orig)
+			}
+			// put error'd, nothing else to test
+			continue
+		}
+		if !key.Equal(gt.orig.Self(n)) {
+			t.Errorf("Key not equal for object %#v ***** %v != %v", gt.orig, key, gt.orig.Self(n))
+			continue
+		}
+		if key.Parent() != nil && gt.orig.Self(n) != nil && !key.Parent().Equal(gt.orig.Parent(n)) {
+			t.Errorf("Parent not equal for object %#v ***** %v != %v", gt.orig, key.Parent(), gt.orig.Parent(n))
+		}
+		for _, fetchType := range []string{"memory", "memcache", "datastore"} {
+			switch fetchType {
+			case "datastore":
+				err = memcache.Delete(c, gt.orig.Self(n).Encode())
+				if err != nil {
+					t.Fatalf("Error clearing memcache for %#v", gt.orig)
+				}
+				fallthrough
+			case "memcache":
+				n.cache = make(map[string]interface{})
+			}
+
+			putDest := reflect.New(reflect.TypeOf(gt.orig).Elem()).Interface().(GoonStore)
+			setStructKey(putDest, key)
+			if hk, ok := putDest.(*HasKey); ok {
+				hk.P = nil
+			}
+			err = n.Get(putDest)
+			if err != nil {
+				t.Errorf("%s - Get failed on object %#v", fetchType, putDest)
+			}
+			if putDest.Data() != gt.orig.Data() {
+				t.Errorf("%s - Get request failed to populate data of %#v to %#v", fetchType, gt.orig, putDest)
+			}
+		}
 	}
 }
 
@@ -324,16 +391,64 @@ type HasId struct {
 	Name string
 }
 
+func (src *HasId) Parent(g *Goon) *datastore.Key {
+	return src.Self(g).Parent()
+}
+
+func (src *HasId) Self(g *Goon) *datastore.Key {
+	key, err := g.getStructKey(src)
+	if err == nil {
+		return key
+	}
+	panic("err - " + err.Error())
+}
+
+func (src *HasId) Data() string {
+	return src.Name
+}
+
 type HasKind struct {
 	Id   int64  `datastore:"-" goon:"id"`
 	Kind string `datastore:"-" goon:"kind"`
 	Name string
 }
 
+func (src *HasKind) Parent(g *Goon) *datastore.Key {
+	return src.Self(g).Parent()
+}
+
+func (src *HasKind) Self(g *Goon) *datastore.Key {
+	key, err := g.getStructKey(src)
+	if err == nil {
+		return key
+	}
+	panic("err - " + err.Error())
+}
+
+func (src *HasKind) Data() string {
+	return src.Name
+}
+
 type HasKey struct {
-	Key    *datastore.Key `datastore:"-" goon:"id"`
-	Parent *datastore.Key `datastore:"-" goon:"parent"`
-	Name   string
+	Key  *datastore.Key `datastore:"-" goon:"id"`
+	P    *datastore.Key `datastore:"-" goon:"parent"`
+	Name string
+}
+
+func (src *HasKey) Parent(g *Goon) *datastore.Key {
+	return src.P
+}
+
+func (src *HasKey) Self(g *Goon) *datastore.Key {
+	key, err := g.getStructKey(src)
+	if err == nil {
+		return key
+	}
+	panic("err - " + err.Error())
+}
+
+func (src *HasKey) Data() string {
+	return src.Name
 }
 
 type HasDefaultKind struct {
@@ -342,12 +457,72 @@ type HasDefaultKind struct {
 	Name string
 }
 
+func (src *HasDefaultKind) Parent(g *Goon) *datastore.Key {
+	return src.Self(g).Parent()
+}
+
+func (src *HasDefaultKind) Self(g *Goon) *datastore.Key {
+	key, err := g.getStructKey(src)
+	if err == nil {
+		return key
+	}
+	panic("err - " + err.Error())
+}
+
+func (src *HasDefaultKind) Data() string {
+	return src.Name
+}
+
 type HasString struct {
-	Id string `datastore:"-" goon:"id"`
+	Name string
+	Id   string `datastore:"-" goon:"id"`
+}
+
+func (src HasString) Parent(g *Goon) *datastore.Key {
+	return src.Self(g).Parent()
+}
+
+func (src HasString) Self(g *Goon) *datastore.Key {
+	key, err := g.getStructKey(src)
+	if err == nil {
+		return key
+	}
+	panic("err - " + err.Error())
+}
+
+func (src HasString) Data() string {
+	return src.Name
 }
 
 type HasParent struct {
-	Id     int64          `datastore:"-" goon:"id"`
-	Parent *datastore.Key `datastore:"-" goon:"parent"`
-	Name   string
+	Id   int64          `datastore:"-" goon:"id"`
+	P    *datastore.Key `datastore:"-" goon:"parent"`
+	Name string
+}
+
+func (src *HasParent) Parent(g *Goon) *datastore.Key {
+	return src.P
+}
+
+func (src *HasParent) Self(g *Goon) *datastore.Key {
+	key, err := g.getStructKey(src)
+	if err == nil {
+		return key
+	}
+	panic("err - " + err.Error())
+}
+
+func (src *HasParent) Data() string {
+	return src.Name
+}
+
+type GoonStore interface {
+	Data() string
+	Parent(*Goon) *datastore.Key
+	Self(*Goon) *datastore.Key
+}
+
+type GoonTest struct {
+	orig   GoonStore
+	putErr bool
 }

@@ -228,7 +228,6 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			return err
 		}
 		key, err := g.getStructKey(src)
-		setStructKey(src, key)
 
 		items[i] = &memcache.Item{
 			Key:   memkey(key),
@@ -249,6 +248,10 @@ func (g *Goon) Get(dst interface{}) error {
 	if set.Kind() != reflect.Ptr {
 		return errors.New(fmt.Sprintf("goon: expected pointer to a struct, got %#v", dst))
 	}
+	set = set.Elem()
+	if !set.CanSet() {
+		return errors.New(fmt.Sprintf("goon: provided %#v, which cannot be changed", dst))
+	}
 	dsts := []interface{}{dst}
 	if err := g.GetMulti(dsts); err != nil {
 		// Look for an embedded error if it's multi
@@ -262,7 +265,7 @@ func (g *Goon) Get(dst interface{}) error {
 		// Not multi, normal error
 		return err
 	}
-	set.Elem().Set(reflect.ValueOf(dsts[0]).Elem())
+	set.Set(reflect.ValueOf(dsts[0]).Elem())
 	return nil
 }
 
