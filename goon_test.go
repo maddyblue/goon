@@ -25,8 +25,8 @@ import (
 )
 
 func TestMain(t *testing.T) {
-	//c, err := appenginetesting.NewContext(&appenginetesting.Options{Debug: "debug"})
-	c, err := appenginetesting.NewContext(nil)
+	c, err := appenginetesting.NewContext(&appenginetesting.Options{Debug: "debug"})
+	//c, err := appenginetesting.NewContext(nil)
 	if err != nil {
 		t.Fatalf("Could not create testing context")
 	}
@@ -86,11 +86,11 @@ func TestMain(t *testing.T) {
 		t.Errorf("ds: expected error, we're fetching from the datastore on an incomplete key!")
 	}
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
-		t.Errorf("ds: expected no such entity")
+		t.Errorf("ds: expected no such entity, got %s", err)
 	}
 	// run twice to make sure autocaching works correctly
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
-		t.Errorf("ds: expected no such entity")
+		t.Errorf("ds: expected no such entity, got %s", err)
 	}
 	es := []*HasId{
 		{Id: 1, Name: "one"},
@@ -100,19 +100,17 @@ func TestMain(t *testing.T) {
 		{Id: 1},
 		{Id: 2},
 	}
-	if err := n.GetMulti(es); err == nil {
+	if err := n.GetMulti(&es); err == nil {
 		t.Errorf("ds: expected error")
 	}
-	if _, err := n.PutMulti(es); err != nil {
+	if _, err := n.PutMulti(&es); err != nil {
 		t.Errorf("put: unexpected error")
 	}
-	if err := n.GetMulti(es); err != nil {
+	if err := n.GetMulti(&es); err != nil {
 		t.Errorf("ds: unexpected error")
 	}
-	if err := n.GetMulti(nes); err != nil {
+	if err := n.GetMulti(&nes); err != nil {
 		t.Errorf("put: unexpected error")
-	} else if es[0] != nes[0] || es[1] != nes[1] {
-		t.Errorf("put: bad results")
 	} else {
 		nesk0 := n.Key(nes[0])
 		if !nesk0.Equal(datastore.NewKey(c, "HasId", "", 1, nil)) {
@@ -128,7 +126,7 @@ func TestMain(t *testing.T) {
 	if err := n.Get(nes[0]); err != nil {
 		t.Errorf("get: unexpected error")
 	}
-	if err := n.GetMulti(nes); err != nil {
+	if err := n.GetMulti(&nes); err != nil {
 		t.Errorf("get: unexpected error")
 	}
 	hkp := &HasKey{}
@@ -136,11 +134,11 @@ func TestMain(t *testing.T) {
 		t.Errorf("put: unexpected error - %v", err)
 	}
 
-	hkm := []HasKey{
+	hkm := []*HasKey{
 		{Name: "one", P: hkp.Key},
 		{Name: "two", P: hkp.Key},
 	}
-	_, err = n.PutMulti(hkm)
+	_, err = n.PutMulti(&hkm)
 	if err != nil {
 		t.Errorf("putmulti: unexpected error")
 	}
@@ -172,8 +170,6 @@ func TestMain(t *testing.T) {
 	} else if hk.Key.Incomplete() {
 		t.Errorf("key should no longer be incomplete")
 	}
-
-	n.C().Debugf("Clear the incache memory")
 	n.cache = make(map[string]interface{})
 
 	hk2 := &HasKey{Key: hk.Key}
@@ -269,7 +265,7 @@ func TestMain(t *testing.T) {
 		t.Errorf("did not properly populate the Parent() key for son - %#v", sonCopy)
 	}
 
-	var sons []HasParent
+	var sons []*HasParent
 	allSonsQuery := datastore.NewQuery("HasParent").Ancestor(n.Key(dad))
 	if _, err := n.GetAll(allSonsQuery, &sons); err != nil {
 		t.Errorf("sons not able to be fetched")
@@ -280,7 +276,7 @@ func TestMain(t *testing.T) {
 			t.Errorf("did not properly fetch sons with GetAll")
 		}
 		if child.Name == "son" && !child.P.Equal(n.Key(dad)) {
-			t.Errorf("did not properly populate the Parent() key for son - %#v", child)
+			t.Errorf("did not properly populate the Parent() key for son - %#v to %#v", child, dad)
 		}
 	}
 	if len(sons) != 2 {
@@ -320,15 +316,15 @@ func TestMain(t *testing.T) {
 	}
 
 	goontests := []GoonTest{
-		GoonTest{&HasDefaultKind{Name: "bah"}, false},
-		GoonTest{&HasId{Name: "bah"}, false},
-		GoonTest{&HasKey{Name: "bah"}, false},
-		GoonTest{&HasKey{Name: "bah", P: father.Self(n)}, false},
-		GoonTest{&HasKind{Name: "bah", Kind: "other"}, false},
-		GoonTest{&HasParent{Name: "bah"}, false},
-		GoonTest{&HasParent{Name: "bah", P: father.Self(n)}, false},
-		GoonTest{HasString{Id: "bah"}, true},
-		GoonTest{&HasString{Name: "bah", Id: "hasstringid"}, false},
+		GoonTest{&HasDefaultKind{Name: "orphan"}, false},
+		GoonTest{&HasId{Name: "orphan"}, false},
+		GoonTest{&HasKey{Name: "orphan"}, false},
+		GoonTest{&HasKey{Name: "child", P: father.Self(n)}, false},
+		GoonTest{&HasKind{Name: "orphan", Kind: "other"}, false},
+		GoonTest{&HasParent{Name: "orphan"}, false},
+		GoonTest{&HasParent{Name: "child", P: father.Self(n)}, false},
+		GoonTest{HasString{Id: "orphan"}, true},
+		GoonTest{&HasString{Name: "orphan", Id: "hasstringid"}, false},
 	}
 
 	multiPut := make([]GoonStore, 0)
@@ -346,7 +342,7 @@ func TestMain(t *testing.T) {
 		multiDatastoreResult = append(multiDatastoreResult, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
 	}
 
-	multiKeys, err := n.PutMulti(multiPut)
+	multiKeys, err := n.PutMulti(&multiPut)
 	if err != nil {
 		t.Fatalf("PutMulti failed for []GoonScore - %v", err)
 	}
@@ -365,12 +361,12 @@ func TestMain(t *testing.T) {
 		}
 		multiStrings[x] = tk.Encode()
 	}
-	err = n.GetMulti(multiMemoryResult)
+	err = n.GetMulti(&multiMemoryResult)
 	if err != nil {
 		t.Fatalf("memory - GetMultii failed for []GoonScore - %v", err)
 	}
 	n.cache = make(map[string]interface{}) // delete memory
-	err = n.GetMulti(multiMemcacheResult)
+	err = n.GetMulti(&multiMemcacheResult)
 	if err != nil {
 		t.Fatalf("memcache - GetMultii failed for []GoonScore - %v", err)
 	}
@@ -379,7 +375,7 @@ func TestMain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error clearing memcache for %#v", multiStrings)
 	}
-	err = n.GetMulti(multiDatastoreResult)
+	err = n.GetMulti(&multiDatastoreResult)
 	if err != nil {
 		t.Fatalf("datastore - GetMultii failed for []GoonScore - %v", err)
 	}
@@ -431,10 +427,42 @@ func TestMain(t *testing.T) {
 			}
 			err = n.Get(putDest)
 			if err != nil {
-				t.Errorf("%s - Get failed on object %#v", fetchType, putDest)
+				t.Fatalf("%s - Get failed on object %#v", fetchType, putDest)
 			}
 			if putDest.Data() != gt.orig.Data() {
-				t.Errorf("%s - Get request failed to populate data of %#v to %#v", fetchType, gt.orig, putDest)
+				t.Fatalf("%s - Get request failed to populate data of %#v to %#v", fetchType, gt.orig, putDest)
+			}
+		}
+	}
+	for _, gt := range goontests {
+		if gt.putErr {
+			continue // can't test GetAll on a struct that can't be put!
+		}
+		name := typeName(gt.orig)
+		if hk, ok := gt.orig.(*HasKind); ok {
+			name = hk.Kind
+		}
+		query := datastore.NewQuery(name)
+		if gt.orig.Parent(n) == nil {
+			query = query.Filter("Name =", "orphan")
+		} else {
+			query = query.Filter("Name =", "child")
+		}
+		temp := reflect.Indirect(reflect.New(reflect.TypeOf(gt.orig))).Interface()
+		slicePtr := reflect.New(reflect.SliceOf(reflect.TypeOf(temp)))
+		slice := slicePtr.Elem()
+		_, err = n.GetAll(query, slicePtr.Interface())
+		len := slice.Len()
+		for x := 0; x < len; x++ {
+			gs := slice.Index(x).Interface().(GoonStore)
+			if !gs.Self(n).Equal(gs.Self(n)) {
+				t.Errorf("Self key information not being set properly for %#v to %#v", gt.orig, gs)
+			}
+			if (gs.Parent(n) == nil && gt.orig.Parent(n) != nil) || (gs.Parent(n) != nil && gt.orig.Parent(n) == nil) || !gs.Parent(n).Equal(gs.Parent(n)) {
+				t.Errorf("Self key information not being set properly for %#v to %#v", gt.orig, gs)
+			}
+			if gs.Data() != gt.orig.Data() {
+				t.Errorf("GetAll request failed to populate data of %#v to %#v", gt.orig, gs)
 			}
 		}
 	}
