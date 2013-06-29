@@ -249,6 +249,8 @@ func (g *Goon) Get(dst interface{}) error {
 	return nil
 }
 
+const getMultiLimit = 1000
+
 // GetMulti is a batch version of Get.
 //
 // dst has similar constraints as datastore.GetMulti.
@@ -259,6 +261,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	}
 
 	if g.inTransaction {
+		// todo: support getMultiLimit in transactions
 		return datastore.GetMulti(g.context, keys, dst)
 	}
 
@@ -305,29 +308,35 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		}
 	}
 
-	gmerr := datastore.GetMulti(g.context, dskeys, dsdst)
-	var ret error
-	var multiErr appengine.MultiError
+	multiErr := make(appengine.MultiError, len(keys))
 	var toCache []interface{}
-	if gmerr != nil {
-		merr, ok := gmerr.(appengine.MultiError)
-		if !ok {
-			g.error(gmerr)
-			return gmerr
+	var ret error
+	for i := 0; i <= len(dskeys)/getMultiLimit; i++ {
+		lo := i * getMultiLimit
+		hi := (i + 1) * getMultiLimit
+		if hi > len(dskeys) {
+			hi = len(dskeys)
 		}
-		multiErr = make(appengine.MultiError, len(keys))
-		for i, idx := range dixs {
-			multiErr[idx] = merr[i]
-			if merr[i] == nil {
-				toCache = append(toCache, dsdst[i])
+		gmerr := datastore.GetMulti(g.context, dskeys[lo:hi], dsdst[lo:hi])
+		if gmerr != nil {
+			merr, ok := gmerr.(appengine.MultiError)
+			if !ok {
+				g.error(gmerr)
+				return gmerr
 			}
+			for i, idx := range dixs[lo:hi] {
+				multiErr[idx] = merr[i]
+				if merr[i] == nil {
+					toCache = append(toCache, dsdst[lo+i])
+				}
+			}
+			ret = multiErr
+		} else {
+			toCache = append(toCache, dsdst[lo:hi]...)
 		}
-		ret = multiErr
-	} else {
-		toCache = dsdst
 	}
 
-	if len(dskeys) > 0 {
+	if len(toCache) > 0 {
 		if err := g.putMemcache(toCache); err != nil {
 			g.error(err)
 			return err
