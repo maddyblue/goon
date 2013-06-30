@@ -352,6 +352,8 @@ func (g *Goon) Delete(key *datastore.Key) error {
 	return g.DeleteMulti(keys)
 }
 
+const deleteMultiLimit = 500
+
 // DeleteMulti is a batch version of Delete.
 func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	memkeys := make([]string, len(keys))
@@ -369,7 +371,17 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	// Memcache needs to be updated after the datastore to prevent a common race condition
 	defer memcache.DeleteMulti(g.context, memkeys)
 
-	return datastore.DeleteMulti(g.context, keys)
+	for i := 0; i <= len(keys)/deleteMultiLimit; i++ {
+		lo := i * deleteMultiLimit
+		hi := (i+1) * deleteMultiLimit
+		if hi > len(keys) {
+			hi = len(keys)
+		}
+		if err := datastore.DeleteMulti(g.context, keys[lo:hi]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // NotFound returns true if err is an appengine.MultiError and err[idx] is a datastore.ErrNoSuchEntity.
