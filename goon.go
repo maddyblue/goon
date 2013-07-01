@@ -21,6 +21,7 @@ import (
 	"appengine/datastore"
 	"appengine/memcache"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 )
@@ -193,6 +194,36 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	}
 
 	return keys, nil
+}
+
+// PutComplete is like Put, but errors if a key is incomplete.
+func (g *Goon) PutComplete(src interface{}) (*datastore.Key, error) {
+	k, err := g.getStructKey(src)
+	if err != nil {
+		return nil, err
+	}
+	if k.Incomplete() {
+		err := fmt.Errorf("goon: incomplete key: %v", k)
+		g.error(err)
+		return nil, err
+	}
+	return g.Put(src)
+}
+
+// PutMultiComplete is like PutMulti, but errors if a key is incomplete.
+func (g *Goon) PutMultiComplete(src interface{}) ([]*datastore.Key, error) {
+	keys, err := g.extractKeys(src)
+	if err != nil {
+		return nil, err
+	}
+	for i, k := range keys {
+		if k.Incomplete() {
+			err := fmt.Errorf("goon: incomplete key (%dth index): %v", i, k)
+			g.error(err)
+			return nil, err
+		}
+	}
+	return g.PutMulti(src)
 }
 
 func (g *Goon) putMemoryMulti(src interface{}) {
