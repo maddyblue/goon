@@ -373,7 +373,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 
 	for i := 0; i <= len(keys)/deleteMultiLimit; i++ {
 		lo := i * deleteMultiLimit
-		hi := (i+1) * deleteMultiLimit
+		hi := (i + 1) * deleteMultiLimit
 		if hi > len(keys) {
 			hi = len(keys)
 		}
