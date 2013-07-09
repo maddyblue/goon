@@ -83,6 +83,14 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 						return nil, errors.New("goon: Only one field may be marked id")
 					}
 					stringID = vf.String()
+				case reflect.TypeOf(&datastore.Key{}).Kind():
+					if stringID != "" || intID != 0 {
+						return nil, errors.New("goon: Only one field may be marked id")
+					}
+					key := vf.Interface().(*datastore.Key)
+					if key != nil {
+						return key, nil
+					}
 				}
 			} else if tagValue == "kind" {
 				if vf.Kind() == reflect.String {
@@ -109,7 +117,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 	if kind == "" {
 		kind = typeName(src)
 	}
-
+	// can be an incomplete Key
 	return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
 }
 
@@ -121,9 +129,17 @@ func typeName(src interface{}) string {
 }
 
 func setStructKey(src interface{}, key *datastore.Key) error {
-	v := reflect.Indirect(reflect.ValueOf(src))
+	v := reflect.ValueOf(src)
 	t := v.Type()
 	k := t.Kind()
+
+	if k != reflect.Ptr {
+		return errors.New(fmt.Sprintf("goon: Expected pointer to a struct, got instead: %v", k))
+	}
+
+	v = reflect.Indirect(v)
+	t = v.Type()
+	k = t.Kind()
 
 	if k != reflect.Struct {
 		return errors.New(fmt.Sprintf("goon: Expected struct, got instead: %v", k))
@@ -148,14 +164,17 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 				if idSet {
 					return errors.New("goon: Only one field may be marked id")
 				}
+
 				switch vf.Kind() {
 				case reflect.Int64:
 					vf.SetInt(key.IntID())
-					idSet = true
 				case reflect.String:
 					vf.SetString(key.StringID())
-					idSet = true
+				case reflect.TypeOf(&datastore.Key{}).Kind():
+					vf.Set(reflect.ValueOf(key))
+
 				}
+				idSet = true
 			} else if tagValue == "kind" {
 				if kindSet {
 					return errors.New("goon: Only one field may be marked kind")

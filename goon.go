@@ -40,6 +40,11 @@ type Goon struct {
 	toDelete      []string
 }
 
+// Returns the internal appengine.Context in use
+func (g *Goon) C() appengine.Context {
+	return g.context
+}
+
 func memkey(k *datastore.Key) string {
 	return k.Encode()
 }
@@ -63,7 +68,7 @@ func (g *Goon) error(err error) {
 	}
 }
 
-func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
+func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	if v.Kind() != reflect.Slice {
 		return nil, errors.New("goon: value must be a slice or pointer-to-slice")
@@ -77,6 +82,9 @@ func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
 		if err != nil {
 			return nil, err
 		}
+		if !allowIncomplete && key.Incomplete() {
+			return nil, errors.New("goon: cannot find a key for struct")
+		}
 		keys[i] = key
 	}
 	return keys, nil
@@ -85,7 +93,9 @@ func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
 // Key is the same as KeyError, except nil is returned on error.
 func (g *Goon) Key(src interface{}) *datastore.Key {
 	if k, err := g.KeyError(src); err == nil {
-		return k
+		if !k.Incomplete() {
+			return k
+		}
 	}
 	return nil
 }
@@ -149,7 +159,7 @@ const putMultiLimit = 500
 //
 // src must satisfy the same conditions as the dst argument to GetMulti.
 func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
-	keys, err := g.extractKeys(src)
+	keys, err := g.extractKeys(src, true) // allow incompletes on a Put request as the datastore will create the key
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +222,7 @@ func (g *Goon) PutComplete(src interface{}) (*datastore.Key, error) {
 
 // PutMultiComplete is like PutMulti, but errors if a key is incomplete.
 func (g *Goon) PutMultiComplete(src interface{}) ([]*datastore.Key, error) {
-	keys, err := g.extractKeys(src)
+	keys, err := g.extractKeys(src, false)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +258,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			return err
 		}
 		key, err := g.getStructKey(src)
+		setStructKey(src, key)
 
 		items[i] = &memcache.Item{
 			Key:   memkey(key),
@@ -264,6 +275,10 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 // If there is no such entity for the key, Get returns
 // datastore.ErrNoSuchEntity.
 func (g *Goon) Get(dst interface{}) error {
+	set := reflect.ValueOf(dst)
+	if set.Kind() != reflect.Ptr {
+		return errors.New(fmt.Sprintf("goon: expected pointer to a struct, got %#v", dst))
+	}
 	dsts := []interface{}{dst}
 	if err := g.GetMulti(dsts); err != nil {
 		// Look for an embedded error if it's multi
@@ -277,6 +292,7 @@ func (g *Goon) Get(dst interface{}) error {
 		// Not multi, normal error
 		return err
 	}
+	set.Elem().Set(reflect.ValueOf(dsts[0]).Elem())
 	return nil
 }
 
@@ -286,7 +302,7 @@ const getMultiLimit = 1000
 //
 // dst has similar constraints as datastore.GetMulti.
 func (g *Goon) GetMulti(dst interface{}) error {
-	keys, err := g.extractKeys(dst)
+	keys, err := g.extractKeys(dst, false) // don't allow incomplete keys on a Get request
 	if err != nil {
 		return err
 	}
@@ -325,7 +341,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				g.error(err)
 				return err
 			}
-
 			g.putMemory(d)
 		} else {
 			key, err := g.getStructKey(d)
@@ -338,7 +353,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			dixs = append(dixs, mixs[i])
 		}
 	}
-
 	multiErr := make(appengine.MultiError, len(keys))
 	var toCache []interface{}
 	var ret error

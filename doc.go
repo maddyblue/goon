@@ -29,8 +29,8 @@ Key Specifications
 
 For both the Key and KeyError functions, src must be a S or *S for some
 struct type S. The key is extracted based on various fields of S. If a field
-of type int64 or string has a struct tag named goon with value "id", it is
-used as the key's id. If a field of type *datastore.Key has a struct tag
+of type int64, string, or *datastore.Key and has a struct tag named goon with value "id", it is
+used as the key's id or key itself. If a field of type *datastore.Key has a struct tag
 named goon with value "parent", it is used as the key's parent. If a field
 of type string has a struct tag named goon with value "kind", it is used
 as the key's kind. The "kind" field supports an optional second parameter
@@ -55,7 +55,7 @@ To override kind of a single entity to UserKind:
 
 An example with both parent and kind:
 	type UserData struct {
-		Id     string         `datastore:"-" goon:"id"`
+		Id     *datastore.Key `datastore:"-" goon:"id"`
 		_kind  string         `goon:"kind,UD"`
 		Parent *datastore.Key `datastore:"-" goon:"parent"`
 		Data   []byte
