@@ -147,6 +147,13 @@ func Main(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "get: unexpected error")
 	}
 
+	if _, err := n.PutComplete(&HasId{}); err == nil {
+		fmt.Fprintln(w, "put complete: expected error")
+	}
+	if _, err := n.PutComplete(&HasId{Id: 1}); err != nil {
+		fmt.Fprintln(w, "put complete: unexpected error")
+	}
+
 	fmt.Fprintln(w, "done", time.Now())
 }
 
