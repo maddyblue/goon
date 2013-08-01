@@ -83,6 +83,8 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 						return nil, errors.New("goon: Only one field may be marked id")
 					}
 					stringID = vf.String()
+				default:
+					return nil, fmt.Errorf("goon: ID field must be int64 or string in %v", t.Name())
 				}
 			} else if tagValue == "kind" {
 				if vf.Kind() == reflect.String {
