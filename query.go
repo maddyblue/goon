@@ -59,8 +59,8 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 	}
 
 	for i, k := range keys {
-		e := v.Index(i).Interface()
-		if err := setStructKey(&e, k); err != nil {
+		e := v.Index(i).Addr().Interface()
+		if err := setStructKey(e, k); err != nil {
 			return nil, err
 		}
 
