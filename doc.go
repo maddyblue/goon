@@ -2,10 +2,10 @@
 Package goon provides an autocaching interface to the app engine datastore
 similar to the python NDB package.
 
-Goon differs from the datastore package in varios ways: it remembers the
+Goon differs from the datastore package in various ways: it remembers the
 appengine Context, which need only be specified once at creation time; kinds
 need not be specified as they are computed, by default, from a type's name;
-keys are inferred from specially named fields on types, removing the need to
+keys are inferred from specially-tagged fields on types, removing the need to
 pass key objects around.
 
 In general, the difference is that Goon's API is identical to the datastore API,
