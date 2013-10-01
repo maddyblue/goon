@@ -338,6 +338,9 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			dixs = append(dixs, mixs[i])
 		}
 	}
+	if len(dskeys) == 0 {
+		return nil
+	}
 
 	multiErr := make(appengine.MultiError, len(keys))
 	var toCache []interface{}
