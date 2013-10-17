@@ -14,35 +14,28 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-package goapp
+package goon_test
 
 import (
+	"testing"
+
 	"appengine"
+	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
-	"fmt"
+
 	"github.com/mjibson/goon"
-	"net/http"
-	"time"
 )
 
-func init() {
-	http.HandleFunc("/", Main)
-}
-
-func Main(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		return
-	}
-
-	c := appengine.NewContext(r)
-	n := goon.NewGoon(r)
+func TestGoon(t *testing.T) {
+	c, _ := aetest.NewContext(nil)
+	n := goon.FromContext(c)
 
 	// key tests
 
 	noid := NoId{}
 	if k, err := n.KeyError(noid); err != nil || !k.Incomplete() {
-		fmt.Fprintln(w, "expected incomplete on noid")
+		t.Errorf("expected incomplete on noid")
 	}
 
 	var keyTests = []keyTest{
@@ -66,28 +59,28 @@ func Main(w http.ResponseWriter, r *http.Request) {
 
 	for _, kt := range keyTests {
 		if k, err := n.KeyError(kt.obj); err != nil {
-			fmt.Fprintln(w, "error:", err.Error())
+			t.Errorf("error:", err.Error())
 		} else if !k.Equal(kt.key) {
-			fmt.Fprintln(w, "keys not equal")
+			t.Errorf("keys not equal")
 		}
 	}
 
 	if _, err := n.KeyError(TwoId{IntId: 1, StringId: "1"}); err == nil {
-		fmt.Fprintln(w, "expected key error")
+		t.Errorf("expected key error")
 	}
 
 	// datastore tests
 
 	initTest(c)
 	if err := n.Get(&HasId{Id: 0}); err == nil {
-		fmt.Fprintln(w, "ds: expected error")
+		t.Errorf("ds: expected error")
 	}
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
-		fmt.Fprintln(w, "ds: expected no such entity")
+		t.Errorf("ds: expected no such entity")
 	}
 	// run twice to make sure autocaching works correctly
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
-		fmt.Fprintln(w, "ds: expected no such entity")
+		t.Errorf("ds: expected no such entity")
 	}
 	es := []*HasId{
 		{Id: 1, Name: "one"},
@@ -102,59 +95,57 @@ func Main(w http.ResponseWriter, r *http.Request) {
 		{Id: 2},
 	}
 	if err := n.GetMulti(es); err == nil {
-		fmt.Fprintln(w, "ds: expected error")
+		t.Errorf("ds: expected error")
 	} else if !goon.NotFound(err, 0) {
-		fmt.Fprintln(w, "ds: not found error 0")
+		t.Errorf("ds: not found error 0")
 	} else if !goon.NotFound(err, 1) {
-		fmt.Fprintln(w, "ds: not found error 1")
+		t.Errorf("ds: not found error 1")
 	} else if goon.NotFound(err, 2) {
-		fmt.Fprintln(w, "ds: not found error 2")
+		t.Errorf("ds: not found error 2")
 	}
 	if keys, err := n.PutMulti(es); err != nil {
-		fmt.Fprintln(w, "put: unexpected error")
+		t.Errorf("put: unexpected error")
 	} else if len(keys) != len(esk) {
-		fmt.Fprintln(w, "put: got unexpected number of keys")
+		t.Errorf("put: got unexpected number of keys")
 	} else {
 		for i, k := range keys {
 			if !k.Equal(esk[i]) {
-				fmt.Fprintln(w, "put: got unexpected keys")
+				t.Errorf("put: got unexpected keys")
 			}
 		}
 	}
 	if err := n.GetMulti(nes); err != nil {
-		fmt.Fprintln(w, "put: unexpected error")
+		t.Errorf("put: unexpected error")
 	} else if es[0] != nes[0] || es[1] != nes[1] {
-		fmt.Fprintln(w, "put: bad results")
+		t.Errorf("put: bad results")
 	} else {
 		nesk0 := n.Key(nes[0])
 		if !nesk0.Equal(datastore.NewKey(c, "HasId", "", 1, nil)) {
-			fmt.Fprintln(w, "put: bad key")
+			t.Errorf("put: bad key")
 		}
 		nesk1 := n.Key(nes[1])
 		if !nesk1.Equal(datastore.NewKey(c, "HasId", "", 2, nil)) {
-			fmt.Fprintln(w, "put: bad key")
+			t.Errorf("put: bad key")
 		}
 	}
 	if _, err := n.Put(HasId{Id: 3}); err == nil {
-		fmt.Fprintln(w, "put: expected error")
+		t.Errorf("put: expected error")
 	}
 	// force partial fetch from memcache and then datastore
 	memcache.Flush(c)
 	if err := n.Get(nes[0]); err != nil {
-		fmt.Fprintln(w, "get: unexpected error")
+		t.Errorf("get: unexpected error")
 	}
 	if err := n.GetMulti(nes); err != nil {
-		fmt.Fprintln(w, "get: unexpected error")
+		t.Errorf("get: unexpected error")
 	}
 
 	if _, err := n.PutComplete(&HasId{}); err == nil {
-		fmt.Fprintln(w, "put complete: expected error")
+		t.Errorf("put complete: expected error")
 	}
 	if _, err := n.PutComplete(&HasId{Id: 1}); err != nil {
-		fmt.Fprintln(w, "put complete: unexpected error")
+		t.Errorf("put complete: unexpected error")
 	}
-
-	fmt.Fprintln(w, "done", time.Now())
 }
 
 func initTest(c appengine.Context) {
