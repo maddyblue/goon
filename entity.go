@@ -30,20 +30,17 @@ func toGob(src interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	gob.Register(src)
-	err := enc.Encode(src)
-	if err != nil {
+	if err := enc.Encode(src); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
 func fromGob(src interface{}, b []byte) error {
-	var buf bytes.Buffer
-	_, _ = buf.Write(b)
+	buf := bytes.NewBuffer(b)
 	gob.Register(src)
-	dec := gob.NewDecoder(&buf)
-	err := dec.Decode(src)
-	if err != nil {
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(src); err != nil {
 		return err
 	}
 	return nil
