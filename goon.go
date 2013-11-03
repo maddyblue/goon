@@ -307,7 +307,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	v := reflect.Indirect(reflect.ValueOf(dst))
 	for i, key := range keys {
 		m := memkey(key)
-		if s, present := g.cache[m]; present {
+		if s, present := g.cache[m]; present && false {
 			vi := v.Index(i)
 			vi.Set(reflect.ValueOf(s))
 		} else {
