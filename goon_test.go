@@ -183,3 +183,52 @@ type TwoId struct {
 	IntId    int64  `goon:"id"`
 	StringId string `goon:"id"`
 }
+
+type PutGet struct {
+	ID    int64 `datastore:"-" goon:"id"`
+	Value int32
+}
+
+func TestPutGet(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	g := goon.FromContext(c)
+	key, err := g.Put(&PutGet{ID: 12, Value: 15})
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if key.IntID() != 12 {
+		t.Fatal("ID should be 12 but is", key.IntID())
+	}
+
+	// Datastore Get
+	dsPutGet := &PutGet{}
+	err = datastore.Get(c,
+		datastore.NewKey(c, "PutGet", "", 12, nil), dsPutGet)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if dsPutGet.Value != 15 {
+		t.Fatal("dsPutGet.Value should be 15 but is",
+			dsPutGet.Value)
+	}
+
+	// Goon Get
+	goonPutGet := &PutGet{ID: 12}
+	v := []interface{}{goonPutGet}
+	err = g.GetMulti(v)
+	t.Log("v0", v[0])
+	t.Log("gpg", goonPutGet)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	if goonPutGet.ID != 12 {
+		t.Fatal("goonPutGet.ID should be 12 but is", goonPutGet.ID)
+	}
+	if goonPutGet.Value != 15 {
+		t.Fatal("goonPutGet.Value should be 15 but is",
+			goonPutGet.Value)
+	}
+}
