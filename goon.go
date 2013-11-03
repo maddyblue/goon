@@ -17,13 +17,14 @@
 package goon
 
 import (
-	"appengine"
-	"appengine/datastore"
-	"appengine/memcache"
 	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
+
+	"appengine"
+	"appengine/datastore"
+	"appengine/memcache"
 )
 
 var (
