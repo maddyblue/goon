@@ -116,7 +116,7 @@ func TestGoon(t *testing.T) {
 	}
 	if err := n.GetMulti(nes); err != nil {
 		t.Errorf("put: unexpected error")
-	} else if es[0] != nes[0] || es[1] != nes[1] {
+	} else if *es[0] != *nes[0] || *es[1] != *nes[1] {
 		t.Errorf("put: bad results")
 	} else {
 		nesk0 := n.Key(nes[0])
