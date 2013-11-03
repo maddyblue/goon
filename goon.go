@@ -315,9 +315,11 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			mixs = append(mixs, i)
 		}
 	}
+	if len(memkeys) == 0 {
+		return nil
+	}
 
 	memvalues, _ := memcache.GetMulti(g.context, memkeys)
-
 	for i, m := range memkeys {
 		d := v.Index(mixs[i]).Interface()
 		if s, present := memvalues[m]; present {
