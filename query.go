@@ -26,20 +26,14 @@ func (g *Goon) Count(q *datastore.Query) (int, error) {
 	return q.Count(g.context)
 }
 
-// GetAll returns the entities in the given query. Returned entities (but not
-// the query itself) are cached in local memory (but not memcache).
+// GetAll runs the query in the given context and returns all keys that match
+// that query, as well as appending the values to dst.
 //
-// Returns nil if q is a keys-only query or dst is not a slice.
+// If q is not a "keys-only" query, GetAll sets the goon key fields of dst and
+// caches returned data in memory.
 //
-// Refer to appengine/datastore.Query.Count:
-// https://developers.google.com/appengine/docs/go/datastore/reference#Query.GetAll
-//
-// Example usage:
-//   g := goon.NewGoon(r)
-//   q := datastore.NewQuery("Group")
-//   var gg []Group // (or []*Group)
-//   es, err := g.GetAll(q, &gg)
-func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*Entity, error) {
+// See: https://developers.google.com/appengine/docs/go/datastore/reference#Query.GetAll
+func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, error) {
 	keys, err := q.GetAll(g.context, dst)
 	if err != nil {
 		g.error(err)
@@ -60,35 +54,25 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*Entity, error) {
 		}
 	}
 
-	es := make([]*Entity, len(keys))
+	if keysOnly {
+		return keys, err
+	}
 
 	for i, k := range keys {
-		var e *Entity
-		if keysOnly {
-			e = NewEntity(k, nil)
-		} else {
-			e = NewEntity(k, v.Index(i).Interface())
+		e := v.Index(i).Addr().Interface()
+		if err := setStructKey(e, k); err != nil {
+			return nil, err
 		}
-		es[i] = e
 
-		// Do not pollute the cache with empty results from keys-only queries
-		if !g.inTransaction && !keysOnly {
-			g.cache[e.memkey()] = e
+		if !g.inTransaction {
+			g.cache[memkey(k)] = &e
 		}
 	}
 
-	// Before returning, update the structs to have correct key info
-	if !keysOnly {
-		for _, e := range es {
-			if e.Src != nil {
-				setStructKey(e.Src, e.Key)
-			}
-		}
-	}
-
-	return es, nil
+	return keys, err
 }
 
+// Run runs the query.
 func (g *Goon) Run(q *datastore.Query) *Iterator {
 	return &Iterator{
 		g: g,
@@ -113,8 +97,7 @@ func (t *Iterator) Cursor() (datastore.Cursor, error) {
 //
 // If the query is not keys only and dst is non-nil, it also loads the entity
 // stored for that key into the struct pointer dst, with the same semantics
-// and possible errors as for the Get function. This is returned as an Entity
-// and cached in memory.
+// and possible errors as for the Get function. This result is cached in memory.
 //
 // If the query is keys only, dst must be passed as nil. Otherwise the cache
 // will be populated with empty entities since there is no way to detect the
@@ -122,24 +105,20 @@ func (t *Iterator) Cursor() (datastore.Cursor, error) {
 //
 // Refer to appengine/datastore.Iterator.Next:
 // https://developers.google.com/appengine/docs/go/datastore/reference#Iterator.Next
-func (t *Iterator) Next(dst interface{}) (*Entity, error) {
+func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
 	k, err := t.i.Next(dst)
 	if err != nil {
-		return nil, err
+		return k, err
 	}
 
-	if dst == nil {
-		return nil, nil
-	}
-
-	e := NewEntity(k, dst)
-
-	if !t.g.inTransaction {
-		t.g.cache[e.memkey()] = e
+	if !t.g.inTransaction && dst != nil {
+		t.g.cache[memkey(k)] = dst
 	}
 
 	// Before returning, update the struct to have correct key info
-	setStructKey(e.Src, e.Key)
+	if dst != nil {
+		setStructKey(dst, k)
+	}
 
-	return e, nil
+	return k, err
 }

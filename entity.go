@@ -20,71 +20,174 @@ import (
 	"appengine/datastore"
 	"bytes"
 	"encoding/gob"
+	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 )
 
-// Entity contains data to fetch and store datastore entities.
-// The internal fields are designed to be used in a readonly fashion.
-type Entity struct {
-	Key *datastore.Key
-	Src interface{}
-
-	NotFound bool
-}
-
-func (e *Entity) memkey() string {
-	return memkey(e.Key)
-}
-
-type partialEntity struct {
-	Src      interface{}
-	NotFound bool
-}
-
-func (e *Entity) gob() ([]byte, error) {
+func toGob(src interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	gob.Register(e.Src)
-	p := &partialEntity{
-		Src:      e.Src,
-		NotFound: e.NotFound,
-	}
-	err := enc.Encode(p)
-	if err != nil {
+	gob.Register(src)
+	if err := enc.Encode(src); err != nil {
 		return nil, err
 	}
-
 	return buf.Bytes(), nil
 }
 
-func (e *Entity) String() string {
-	return fmt.Sprintf("%v: %v", e.Key, e.Src)
-}
-
-// NewEntity returns a new Entity from key and src.
-func NewEntity(key *datastore.Key, src interface{}) *Entity {
-	e := &Entity{
-		Src: src,
+func fromGob(src interface{}, b []byte) error {
+	buf := bytes.NewBuffer(b)
+	gob.Register(src)
+	dec := gob.NewDecoder(buf)
+	if err := dec.Decode(src); err != nil {
+		return err
 	}
-	e.setKey(key)
-	return e
+	return nil
 }
 
-func (e *Entity) setKey(key *datastore.Key) {
-	e.Key = key
+func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
+	v := reflect.Indirect(reflect.ValueOf(src))
+	t := v.Type()
+	k := t.Kind()
+
+	if k != reflect.Struct {
+		return nil, errors.New(fmt.Sprintf("goon: Expected struct, got instead: %v", k))
+	}
+
+	var parent *datastore.Key
+	var stringID string
+	var intID int64
+	var kind string
+
+	for i := 0; i < v.NumField(); i++ {
+		tf := t.Field(i)
+		vf := v.Field(i)
+
+		tag := tf.Tag.Get("goon")
+		tagValues := strings.Split(tag, ",")
+		if len(tagValues) > 0 {
+			tagValue := tagValues[0]
+			if tagValue == "id" {
+				switch vf.Kind() {
+				case reflect.Int64:
+					if intID != 0 || stringID != "" {
+						return nil, errors.New("goon: Only one field may be marked id")
+					}
+					intID = vf.Int()
+				case reflect.String:
+					if intID != 0 || stringID != "" {
+						return nil, errors.New("goon: Only one field may be marked id")
+					}
+					stringID = vf.String()
+				default:
+					return nil, fmt.Errorf("goon: ID field must be int64 or string in %v", t.Name())
+				}
+			} else if tagValue == "kind" {
+				if vf.Kind() == reflect.String {
+					if kind != "" {
+						return nil, errors.New("goon: Only one field may be marked kind")
+					}
+					kind = vf.String()
+					if kind == "" && len(tagValues) > 1 && tagValues[1] != "" {
+						kind = tagValues[1]
+					}
+				}
+			} else if tagValue == "parent" {
+				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
+					if parent != nil {
+						return nil, errors.New("goon: Only one field may be marked parent")
+					}
+					parent = vf.Interface().(*datastore.Key)
+				}
+			}
+		}
+	}
+
+	// if kind has not been manually set, fetch it from src's type
+	if kind == "" {
+		kind = typeName(src)
+	}
+
+	return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
 }
 
-// NewEntity returns a new Entity from src with an incomplete key of kind src.
-func (g *Goon) NewEntity(parent *datastore.Key, src interface{}) (*Entity, error) {
-	return g.NewEntityKind(parent, src, Kind(src))
+func typeName(src interface{}) string {
+	v := reflect.ValueOf(src)
+	v = reflect.Indirect(v)
+	t := v.Type()
+	return t.Name()
 }
 
-// NewEntity returns a new Entity from src with an incomplete key of specified kind.
-func (g *Goon) NewEntityKind(parent *datastore.Key, src interface{}, kind string) (*Entity, error) {
-	return NewEntity(datastore.NewIncompleteKey(g.context, kind, parent), src), nil
-}
+func setStructKey(src interface{}, key *datastore.Key) error {
+	v := reflect.ValueOf(src)
+	t := v.Type()
+	k := t.Kind()
 
-// NewEntityById returns a new Entity from src with a key made from given IDs.
-func (g *Goon) NewEntityById(stringID string, intID int64, parent *datastore.Key, src interface{}) (*Entity, error) {
-	return NewEntity(datastore.NewKey(g.context, Kind(src), stringID, intID, parent), src), nil
+	if k != reflect.Ptr {
+		return fmt.Errorf("goon: Expected pointer to struct, got instead: %v", k)
+	}
+
+	v = reflect.Indirect(v)
+	t = v.Type()
+	k = t.Kind()
+
+	if k != reflect.Struct {
+		return errors.New(fmt.Sprintf("goon: Expected struct, got instead: %v", k))
+	}
+
+	idSet := false
+	kindSet := false
+	parentSet := false
+	for i := 0; i < v.NumField(); i++ {
+		tf := t.Field(i)
+		vf := v.Field(i)
+
+		if !vf.CanSet() {
+			continue
+		}
+
+		tag := tf.Tag.Get("goon")
+		tagValues := strings.Split(tag, ",")
+		if len(tagValues) > 0 {
+			tagValue := tagValues[0]
+			if tagValue == "id" {
+				if idSet {
+					return errors.New("goon: Only one field may be marked id")
+				}
+				switch vf.Kind() {
+				case reflect.Int64:
+					vf.SetInt(key.IntID())
+					idSet = true
+				case reflect.String:
+					vf.SetString(key.StringID())
+					idSet = true
+				}
+			} else if tagValue == "kind" {
+				if kindSet {
+					return errors.New("goon: Only one field may be marked kind")
+				}
+				if vf.Kind() == reflect.String {
+					if (len(tagValues) <= 1 || key.Kind() != tagValues[1]) && typeName(src) != key.Kind() {
+						vf.Set(reflect.ValueOf(key.Kind()))
+					}
+					kindSet = true
+				}
+			} else if tagValue == "parent" {
+				if parentSet {
+					return errors.New("goon: Only one field may be marked parent")
+				}
+				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
+					vf.Set(reflect.ValueOf(key.Parent()))
+					parentSet = true
+				}
+			}
+		}
+	}
+
+	if !idSet {
+		return errors.New("goon: Could not set id field")
+	}
+
+	return nil
 }
