@@ -236,19 +236,19 @@ func TestPutGet(t *testing.T) {
 	// First, put our race victim
 	// Since no memcache is written on Put, Race does not exist in memcache until Get puts it there
 	// Since there's nothing inside Goon to synchronize on
-	fetchMe := &HasString{Id: "Race"}
+	fetchMe := &HasId{Id: 100}
 	_, err = g.Put(fetchMe)
 	if err != nil {
 		t.Fatalf("Error putting Race object - %v", err)
 	}
 	errc := make(chan error)
-	f := func(g *Goon) {
+	f := func(g *goon.Goon) {
 		errc <- g.Get(fetchMe)
 	}
 	failTestNum := 2
 	for i := 0; i < failTestNum; i++ {
-		tg := FromContext(c)
-		tg.testing = true
+		tg := goon.FromContext(c)
+		tg.Testing = true
 		go f(tg)
 	}
 	errored := false

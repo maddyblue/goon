@@ -36,7 +36,7 @@ var (
 
 // Goon holds the app engine context and request memory cache.
 type Goon struct {
-	testing       bool // if Goon should simulate leggy responses on RPCs
+	Testing       bool // if Goon should simulate leggy responses on RPCs
 	context       appengine.Context
 	cache         map[string]interface{}
 	inTransaction bool
@@ -46,7 +46,7 @@ type Goon struct {
 
 // Used for testing to simulate laggy responses to RPCs
 func (g *Goon) fakeDelay(max time.Duration) {
-	if !g.testing { // if we're in production, just move along
+	if !g.Testing { // if we're in production, just move along
 		return
 	}
 	time.Sleep(time.Duration(rand.Int63n(int64(max))))
