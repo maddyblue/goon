@@ -17,8 +17,10 @@
 package goon
 
 import (
-	"appengine/datastore"
 	"reflect"
+	"time"
+
+	"appengine/datastore"
 )
 
 // Count returns the number of results for the query.
@@ -35,6 +37,7 @@ func (g *Goon) Count(q *datastore.Query) (int, error) {
 // See: https://developers.google.com/appengine/docs/go/datastore/reference#Query.GetAll
 func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, error) {
 	keys, err := q.GetAll(g.context, dst)
+	g.fakeDelay(time.Millisecond * 15)
 	if err != nil {
 		g.error(err)
 		return nil, err
@@ -107,6 +110,7 @@ func (t *Iterator) Cursor() (datastore.Cursor, error) {
 // https://developers.google.com/appengine/docs/go/datastore/reference#Iterator.Next
 func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
 	k, err := t.i.Next(dst)
+	t.g.fakeDelay(time.Millisecond * 5)
 	if err != nil {
 		return k, err
 	}

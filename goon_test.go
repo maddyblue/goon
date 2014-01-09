@@ -231,4 +231,33 @@ func TestPutGet(t *testing.T) {
 		t.Fatal("goonPutGet.Value should be 15 but is",
 			goonPutGet.Value)
 	}
+
+	// Race condition in GetMulti
+	// First, put our race victim
+	// Since no memcache is written on Put, Race does not exist in memcache until Get puts it there
+	// Since there's nothing inside Goon to synchronize on
+	fetchMe := &HasId{Id: 100}
+	_, err = g.Put(fetchMe)
+	if err != nil {
+		t.Fatalf("Error putting Race object - %v", err)
+	}
+	errc := make(chan error)
+	f := func(g *goon.Goon) {
+		errc <- g.Get(fetchMe)
+	}
+	failTestNum := 2
+	for i := 0; i < failTestNum; i++ {
+		tg := goon.FromContext(c)
+		tg.Testing = true
+		go f(tg)
+	}
+	errored := false
+	for i := 0; i < failTestNum; i++ {
+		if <-errc != nil {
+			errored = true
+		}
+	}
+	if !errored {
+		t.Fatal("Concurrent Get requests should fail due to entry already being in the memcache")
+	}
 }
