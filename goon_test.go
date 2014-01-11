@@ -192,6 +192,29 @@ type PutGet struct {
 	Value int32
 }
 
+// This test won't fail but if run with -race flag, it will show known race conditions
+// Using multiple goroutines per http request is recommended here:
+// http://talks.golang.org/2013/highperf.slide#22
+func TestRace(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := goon.FromContext(c)
+
+	hasid := &HasId{Id: 1, Name: "Race"}
+	_, err = g.Put(hasid)
+	if err != nil {
+		t.Fatalf("Could not put Race entity - %v", err)
+	}
+	for x := 0; x < 5; x++ {
+		go func() {
+			g.Get(hasid)
+		}()
+	}
+}
+
 func TestPutGet(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
