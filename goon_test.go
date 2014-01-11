@@ -28,11 +28,14 @@ import (
 )
 
 func TestGoon(t *testing.T) {
-	c, _ := aetest.NewContext(nil)
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
 	n := goon.FromContext(c)
 
 	// key tests
-
 	noid := NoId{}
 	if k, err := n.KeyError(noid); err != nil || !k.Incomplete() {
 		t.Errorf("expected incomplete on noid")
@@ -192,9 +195,11 @@ type PutGet struct {
 func TestPutGet(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatalf("Could not start aetest - %v", err)
 	}
+	defer c.Close()
 	g := goon.FromContext(c)
+
 	key, err := g.Put(&PutGet{ID: 12, Value: 15})
 	if err != nil {
 		t.Fatal(err.Error())
