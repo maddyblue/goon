@@ -331,12 +331,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 			g.putMemory(d)
 		} else {
-			key, err := g.getStructKey(d)
-			if err != nil {
-				g.error(err)
-				return err
-			}
-			dskeys = append(dskeys, key)
+			dskeys = append(dskeys, keys[mixs[i]])
 			dsdst = append(dsdst, d)
 			dixs = append(dixs, mixs[i])
 		}
