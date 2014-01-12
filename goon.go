@@ -40,7 +40,7 @@ type Goon struct {
 	cacheLock     sync.RWMutex // protect the cache from concurrent goroutines to speed up RPC access
 	inTransaction bool
 	toSet         map[string]interface{}
-	toDelete      []string
+	toDelete      map[string]bool
 }
 
 func memkey(k *datastore.Key) string {
@@ -111,6 +111,7 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			context:       tc,
 			inTransaction: true,
 			toSet:         make(map[string]interface{}),
+			toDelete:      make(map[string]bool),
 		}
 		return f(ng)
 	}, opts)
@@ -122,7 +123,7 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			g.cache[k] = v
 		}
 
-		for _, k := range ng.toDelete {
+		for k, _ := range ng.toDelete {
 			delete(g.cache, k)
 		}
 	} else {
@@ -189,7 +190,9 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 				keys[i] = rkeys[i]
 			}
 			if g.inTransaction {
-				g.toSet[memkey(rkeys[i])] = vi
+				mk := memkey(rkeys[i])
+				delete(g.toDelete, mk)
+				g.toSet[mk] = vi
 			}
 		}
 	}
@@ -345,12 +348,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 			g.putMemory(d)
 		} else {
-			key, err := g.getStructKey(d)
-			if err != nil {
-				g.error(err)
-				return err
-			}
-			dskeys = append(dskeys, key)
+			dskeys = append(dskeys, keys[mixs[i]])
 			dsdst = append(dsdst, d)
 			dixs = append(dixs, mixs[i])
 		}
@@ -415,7 +413,8 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 		memkeys[i] = mk
 
 		if g.inTransaction {
-			g.toDelete = append(g.toDelete, mk)
+			delete(g.toSet, mk)
+			g.toDelete[mk] = true
 		} else {
 			delete(g.cache, mk)
 		}
