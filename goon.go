@@ -271,6 +271,10 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 // If there is no such entity for the key, Get returns
 // datastore.ErrNoSuchEntity.
 func (g *Goon) Get(dst interface{}) error {
+	set := reflect.ValueOf(dst)
+	if set.Kind() != reflect.Ptr {
+		return errors.New(fmt.Sprintf("goon: expected pointer to a struct, got %#v", dst))
+	}
 	dsts := []interface{}{dst}
 	if err := g.GetMulti(dsts); err != nil {
 		// Look for an embedded error if it's multi
@@ -284,6 +288,7 @@ func (g *Goon) Get(dst interface{}) error {
 		// Not multi, normal error
 		return err
 	}
+	set.Elem().Set(reflect.ValueOf(dsts[0]).Elem())
 	return nil
 }
 
@@ -314,7 +319,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	g.cacheLock.RLock()
 	for i, key := range keys {
 		m := memkey(key)
-		if s, present := g.cache[m]; present && false {
+		if s, present := g.cache[m]; present {
 			vi := v.Index(i)
 			vi.Set(reflect.ValueOf(s))
 		} else {

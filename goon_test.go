@@ -245,10 +245,7 @@ func TestPutGet(t *testing.T) {
 
 	// Goon Get
 	goonPutGet := &PutGet{ID: 12}
-	v := []interface{}{goonPutGet}
-	err = g.GetMulti(v)
-	t.Log("v0", v[0])
-	t.Log("gpg", goonPutGet)
+	err = g.Get(goonPutGet)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
