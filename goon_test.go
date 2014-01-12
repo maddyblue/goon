@@ -28,11 +28,14 @@ import (
 )
 
 func TestGoon(t *testing.T) {
-	c, _ := aetest.NewContext(nil)
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
 	n := goon.FromContext(c)
 
 	// key tests
-
 	noid := NoId{}
 	if k, err := n.KeyError(noid); err != nil || !k.Incomplete() {
 		t.Errorf("expected incomplete on noid")
@@ -189,12 +192,37 @@ type PutGet struct {
 	Value int32
 }
 
+// This test won't fail but if run with -race flag, it will show known race conditions
+// Using multiple goroutines per http request is recommended here:
+// http://talks.golang.org/2013/highperf.slide#22
+func TestRace(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := goon.FromContext(c)
+
+	hasid := &HasId{Id: 1, Name: "Race"}
+	_, err = g.Put(hasid)
+	if err != nil {
+		t.Fatalf("Could not put Race entity - %v", err)
+	}
+	for x := 0; x < 5; x++ {
+		go func() {
+			g.Get(hasid)
+		}()
+	}
+}
+
 func TestPutGet(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatalf("Could not start aetest - %v", err)
 	}
+	defer c.Close()
 	g := goon.FromContext(c)
+
 	key, err := g.Put(&PutGet{ID: 12, Value: 15})
 	if err != nil {
 		t.Fatal(err.Error())
@@ -217,10 +245,7 @@ func TestPutGet(t *testing.T) {
 
 	// Goon Get
 	goonPutGet := &PutGet{ID: 12}
-	v := []interface{}{goonPutGet}
-	err = g.GetMulti(v)
-	t.Log("v0", v[0])
-	t.Log("gpg", goonPutGet)
+	err = g.Get(goonPutGet)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
