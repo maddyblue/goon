@@ -123,7 +123,7 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			g.cache[k] = v
 		}
 
-		for k, _ := range ng.toDelete {
+		for k := range ng.toDelete {
 			delete(g.cache, k)
 		}
 	} else {
