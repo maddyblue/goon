@@ -17,9 +17,7 @@
 package goon
 
 import (
-	"reflect"
 	"testing"
-	"time"
 
 	"appengine/aetest"
 	"appengine/datastore"
@@ -257,137 +255,6 @@ type TwoId struct {
 type PutGet struct {
 	ID    int64 `datastore:"-" goon:"id"`
 	Value int32
-}
-
-func TestVariance(t *testing.T) {
-	c, err := aetest.NewContext(nil)
-	if err != nil {
-		t.Fatalf("Could not start aetest - %v", err)
-	}
-	defer c.Close()
-	g := FromContext(c)
-	timeouts := []string{"none", "memcache", "datastore", "both"} // what services will timeout
-	for _, timeout := range timeouts {
-		switch timeout {
-		case "none":
-			// do nothing, use defaults already set
-		case "memcache":
-			g.MemcacheTimeout = 0
-		case "datastore":
-			g.MemcacheTimeout = time.Millisecond * 2
-			// can't timeout before memcache as memcache doesn't have a chance to return
-			// but the datastore request needs to actually timeout... These times work on my machine consistently
-			// I wasn't sure of a way to write this test any better - @mzimmerman
-			g.DatastoreTimeout = time.Millisecond * 2
-		case "both":
-			g.MemcacheTimeout = 0
-			g.DatastoreTimeout = 0
-		}
-		objects := []*HasId{
-			&HasId{Id: 1, Name: "1"}, // stored in cache, memcache, and datastore
-			&HasId{Id: 2, Name: "2"}, // stored in memcache and datastore
-			&HasId{Id: 3, Name: "3"}, // stored only in datastore
-		}
-		// flush all locations
-		keys, _ := datastore.NewQuery("HasId").KeysOnly().GetAll(c, nil)
-		datastore.DeleteMulti(c, keys)
-		memcache.Flush(c)
-		g.cacheLock.Lock()
-		g.cache = make(map[string]interface{})
-		g.cacheLock.Unlock()
-
-		// add test data to proper locations only
-		for _, obj := range objects {
-			key, _ := g.getStructKey(obj)
-			if _, err := datastore.Put(g.context, key, obj); err != nil {
-				t.Errorf("Error putting object %v", obj)
-			}
-			if obj.Id == 3 {
-				continue
-			}
-			gob, err := toGob(obj)
-			if err != nil {
-				t.Errorf("Unable to gob object - %v", err)
-			}
-			item := &memcache.Item{
-				Key:   memkey(key),
-				Value: gob,
-			}
-			if err = memcache.Set(g.context, item); err != nil {
-				t.Errorf("Error putting object in memcache %v", obj)
-			}
-			if obj.Id == 2 {
-				continue
-			}
-			g.putMemory(obj)
-		}
-
-		datastoreObjects := []*HasId{
-			&HasId{Id: 1, Name: ""}, // stored in cache, memcache, and datastore
-			&HasId{Id: 2, Name: ""}, // stored in memcache and datastore
-			&HasId{Id: 3, Name: ""}, // stored only in datastore
-		}
-		memcacheObjects := []*HasId{
-			&HasId{Id: 1, Name: ""}, // stored in cache, memcache, and datastore
-			&HasId{Id: 2, Name: ""}, // stored in memcache and datastore
-		}
-		cacheObjects := []*HasId{
-			&HasId{Id: 1, Name: ""}, // stored in cache, memcache, and datastore
-		}
-		resultObjects := map[string][]*HasId{
-			"none": []*HasId{
-				&HasId{Id: 1, Name: "1"},
-				&HasId{Id: 2, Name: "2"},
-				&HasId{Id: 3, Name: "3"},
-			},
-			"memcache": []*HasId{
-				&HasId{Id: 1, Name: "1"},
-				&HasId{Id: 2, Name: "2"},
-				&HasId{Id: 3, Name: "3"},
-			},
-			"datastore": []*HasId{
-				&HasId{Id: 1, Name: "1"},
-				&HasId{Id: 2, Name: "2"},
-				&HasId{Id: 3, Name: ""},
-			},
-			"both": []*HasId{
-				&HasId{Id: 1, Name: "1"},
-				&HasId{Id: 2, Name: ""},
-				&HasId{Id: 3, Name: ""},
-			},
-		}
-		cacheGetErr := g.GetMulti(&cacheObjects)
-		memcacheGetErr := g.GetMulti(&memcacheObjects)
-		datastoreGetErr := g.GetMulti(&datastoreObjects)
-		var fetchedObjects []*HasId
-		switch {
-		case timeout == "none":
-			if cacheGetErr != nil || memcacheGetErr != nil || datastoreGetErr != nil {
-				t.Errorf("There are no timeouts, there should be no errors - cache(%v), memcache(%v), datastore(%v)", cacheGetErr, memcacheGetErr, datastoreGetErr)
-			}
-			fetchedObjects = datastoreObjects
-		case timeout == "memcache":
-			if cacheGetErr != nil || memcacheGetErr != nil || datastoreGetErr != nil {
-				t.Errorf("Memcache timeout, but datastore will cover it - cache(%v), memcache(%v), datastore(%v)", cacheGetErr, memcacheGetErr, datastoreGetErr)
-			}
-			fetchedObjects = datastoreObjects // memcache may timeout, but all objects exist in the datastore
-		case timeout == "datastore":
-			if cacheGetErr != nil || memcacheGetErr != nil || datastoreGetErr == nil {
-				t.Errorf("Datastore should timeout - cache(%v), memcache(%v), datastore(%v)", cacheGetErr, memcacheGetErr, datastoreGetErr)
-			}
-			fetchedObjects = memcacheObjects // since the datastore timed out, only memcache objects should exist
-		case timeout == "both":
-			if cacheGetErr != nil || memcacheGetErr == nil || datastoreGetErr == nil {
-				t.Errorf("Memcache && Datastore should timeout - cache(%v), memcache(%v), datastore(%v)", cacheGetErr, memcacheGetErr, datastoreGetErr)
-			}
-			fetchedObjects = cacheObjects // datastore timed out, but there should be no errors fetching only these results
-		}
-		for i := range fetchedObjects {
-			if !reflect.DeepEqual(resultObjects[timeout][i], fetchedObjects[i]) {
-				t.Errorf("%v does not equal %v", resultObjects[timeout][i], fetchedObjects[i])
-			}
-		}
-	}
 }
 
 // This test won't fail but if run with -race flag, it will show known race conditions
