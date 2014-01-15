@@ -27,10 +27,10 @@ func (g *Goon) Count(q *datastore.Query) (int, error) {
 }
 
 // GetAll runs the query in the given context and returns all keys that match
-// that query, as well as appending the values to dst.
+// that query, as well as appending the values to dst, setting the goon key
+// fields of dst, and caching the returned data in local memory.
 //
-// If q is not a "keys-only" query, GetAll sets the goon key fields of dst and
-// caches returned data in memory.
+// If q is a "keys-only" query, GetAll ignores dst and only returns the keys.
 //
 // See: https://developers.google.com/appengine/docs/go/datastore/reference#Query.GetAll
 func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, error) {
