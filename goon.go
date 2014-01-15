@@ -31,13 +31,10 @@ import (
 
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
-	LogErrors           bool          = true
-	ErrDatastoreTimeout error         = errors.New("goon: operation exceeded datastore timeout value")
-	ErrMemcacheTimeout  error         = errors.New("goon: operation exceeded memcache timeout value")
-	MemcachePutTimeout  time.Duration = time.Millisecond * 3 //  can be set to 0 to enable concurrent fetching from memcache & datastore
-	MemcacheGetTimeout  time.Duration = time.Millisecond * 3
-	DatastorePutTimeout time.Duration = time.Minute * 10 // default this at a very high value so applications are not affected by this unless they want it
-	DatastoreGetTimeout time.Duration = time.Minute * 10
+	LogErrors          bool          = true
+	ErrMemcacheTimeout error         = errors.New("goon: operation exceeded memcache timeout value")
+	MemcachePutTimeout time.Duration = time.Millisecond * 3 //  can be set to 0 to enable concurrent fetching from memcache & datastore
+	MemcacheGetTimeout time.Duration = time.Millisecond * 3
 )
 
 // Goon holds the app engine context and request memory cache.
@@ -367,7 +364,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	datastoreChan := make(chan error, 1)                    // again, buffer so we don't leak go routine
 	datastoreStarted := false
 	memcacheGetTimeoutChan := time.After(MemcacheGetTimeout)
-	allTimeoutChan := time.After(DatastoreGetTimeout)
 	var writeLock sync.Mutex
 	go func() {
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
@@ -419,8 +415,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				datastoreStarted = true
 				go g.startDatastoreGetMulti(&writeLock, datastoreChan, keys, dskeys, dsdst, dixs)
 			}
-		case <-allTimeoutChan:
-			return ErrDatastoreTimeout
 		}
 	}
 }

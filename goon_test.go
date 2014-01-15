@@ -19,7 +19,6 @@ package goon
 import (
 	"reflect"
 	"testing"
-	"time"
 
 	"appengine"
 	"appengine/aetest"
@@ -207,19 +206,6 @@ func TestVariance(t *testing.T) {
 		case "memcache":
 			MemcacheGetTimeout = 0
 			MemcachePutTimeout = 0
-		case "datastore":
-			MemcacheGetTimeout = time.Millisecond * 2
-			MemcachePutTimeout = time.Millisecond * 2
-			// can't timeout before memcache as memcache doesn't have a chance to return
-			// but the datastore request needs to actually timeout... These times work on my machine consistently
-			// I wasn't sure of a way to write this test any better - @mzimmerman
-			DatastoreGetTimeout = time.Millisecond * 2
-			DatastorePutTimeout = time.Millisecond * 2
-		case "both":
-			MemcacheGetTimeout = 0
-			MemcachePutTimeout = 0
-			DatastoreGetTimeout = 0
-			DatastorePutTimeout = 0
 		}
 		objects := []*HasId{
 			&HasId{Id: 1, Name: "1"}, // stored in cache, memcache, and datastore
@@ -283,16 +269,6 @@ func TestVariance(t *testing.T) {
 				&HasId{Id: 2, Name: "2"},
 				&HasId{Id: 3, Name: "3"},
 			},
-			"datastore": []*HasId{
-				&HasId{Id: 1, Name: "1"},
-				&HasId{Id: 2, Name: "2"},
-				&HasId{Id: 3, Name: ""},
-			},
-			"both": []*HasId{
-				&HasId{Id: 1, Name: "1"},
-				&HasId{Id: 2, Name: ""},
-				&HasId{Id: 3, Name: ""},
-			},
 		}
 		cacheGetErr := g.GetMulti(&cacheObjects)
 		memcacheGetErr := g.GetMulti(&memcacheObjects)
@@ -309,16 +285,6 @@ func TestVariance(t *testing.T) {
 				t.Errorf("Memcache timeout, but datastore will cover it - cache(%v), memcache(%v), datastore(%v)", cacheGetErr, memcacheGetErr, datastoreGetErr)
 			}
 			fetchedObjects = datastoreObjects // memcache may timeout, but all objects exist in the datastore
-		case timeout == "datastore":
-			if cacheGetErr != nil || memcacheGetErr != nil || datastoreGetErr == nil {
-				t.Errorf("Datastore should timeout - cache(%v), memcache(%v), datastore(%v)", cacheGetErr, memcacheGetErr, datastoreGetErr)
-			}
-			fetchedObjects = memcacheObjects // since the datastore timed out, only memcache objects should exist
-		case timeout == "both":
-			if cacheGetErr != nil || memcacheGetErr == nil || datastoreGetErr == nil {
-				t.Errorf("Memcache && Datastore should timeout - cache(%v), memcache(%v), datastore(%v)", cacheGetErr, memcacheGetErr, datastoreGetErr)
-			}
-			fetchedObjects = cacheObjects // datastore timed out, but there should be no errors fetching only these results
 		}
 		for i := range fetchedObjects {
 			if !reflect.DeepEqual(resultObjects[timeout][i], fetchedObjects[i]) {
