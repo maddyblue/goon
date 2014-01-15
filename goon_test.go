@@ -14,17 +14,16 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-package goon_test
+package goon
 
 import (
 	"testing"
+	"time"
 
 	"appengine"
 	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
-
-	"github.com/mjibson/goon"
 )
 
 func TestGoon(t *testing.T) {
@@ -33,7 +32,7 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Could not start aetest - %v", err)
 	}
 	defer c.Close()
-	n := goon.FromContext(c)
+	n := FromContext(c)
 
 	// key tests
 	noid := NoId{}
@@ -99,11 +98,11 @@ func TestGoon(t *testing.T) {
 	}
 	if err := n.GetMulti(es); err == nil {
 		t.Errorf("ds: expected error")
-	} else if !goon.NotFound(err, 0) {
+	} else if !NotFound(err, 0) {
 		t.Errorf("ds: not found error 0")
-	} else if !goon.NotFound(err, 1) {
+	} else if !NotFound(err, 1) {
 		t.Errorf("ds: not found error 1")
-	} else if goon.NotFound(err, 2) {
+	} else if NotFound(err, 2) {
 		t.Errorf("ds: not found error 2")
 	}
 	if keys, err := n.PutMulti(es); err != nil {
@@ -149,6 +148,44 @@ func TestGoon(t *testing.T) {
 	if _, err := n.PutComplete(&HasId{Id: 1}); err != nil {
 		t.Errorf("put complete: unexpected error")
 	}
+
+	// Test queries!
+
+	// Create an entity that we will query for
+	if _, err := n.Put(&QueryItem{Id: 1, Data: "foo"}); err != nil {
+		t.Errorf("Put: unexpected error: %v", err.Error())
+	}
+
+	// Sleep a bit to wait for the HRD emulation to get out of our way
+	time.Sleep(1000 * time.Millisecond)
+
+	// Get the entity back using a slice of structs
+	qiSRes := []QueryItem{}
+	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiSRes); err != nil {
+		t.Errorf("GetAll SoS: unexpected error: %v", err.Error())
+	} else if len(dskeys) != 1 {
+		t.Errorf("GetAll SoS: expected 1 key, got %v", len(dskeys))
+	} else if dskeys[0].IntID() != 1 {
+		t.Errorf("GetAll SoS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+	} else if qiSRes[0].Id != 1 {
+		t.Errorf("GetAll SoS: expected entity id to be 1, got %v", qiSRes[0].Id)
+	} else if qiSRes[0].Data != "foo" {
+		t.Errorf("GetAll SoS: expected entity data to be 'foo', got '%v'", qiSRes[0].Data)
+	}
+
+	// Get the entity back using a slice of pointers to struct
+	qiPRes := []*QueryItem{}
+	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiPRes); err != nil {
+		t.Errorf("GetAll SoPtS: unexpected error: %v", err.Error())
+	} else if len(dskeys) != 1 {
+		t.Errorf("GetAll SoPtS: expected 1 key, got %v", len(dskeys))
+	} else if dskeys[0].IntID() != 1 {
+		t.Errorf("GetAll SoPtS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+	} else if qiPRes[0].Id != 1 {
+		t.Errorf("GetAll SoPtS: expected entity id to be 1, got %v", qiPRes[0].Id)
+	} else if qiPRes[0].Data != "foo" {
+		t.Errorf("GetAll SoPtS: expected entity data to be 'foo', got '%v'", qiPRes[0].Data)
+	}
 }
 
 func initTest(c appengine.Context) {
@@ -182,6 +219,11 @@ type HasDefaultKind struct {
 	Name string
 }
 
+type QueryItem struct {
+	Id   int64  `datastore:"-" goon:"id"`
+	Data string `datastore:"data,noindex"`
+}
+
 type TwoId struct {
 	IntId    int64  `goon:"id"`
 	StringId string `goon:"id"`
@@ -201,7 +243,7 @@ func TestRace(t *testing.T) {
 		t.Fatalf("Could not start aetest - %v", err)
 	}
 	defer c.Close()
-	g := goon.FromContext(c)
+	g := FromContext(c)
 
 	hasid := &HasId{Id: 1, Name: "Race"}
 	_, err = g.Put(hasid)
@@ -221,7 +263,7 @@ func TestPutGet(t *testing.T) {
 		t.Fatalf("Could not start aetest - %v", err)
 	}
 	defer c.Close()
-	g := goon.FromContext(c)
+	g := FromContext(c)
 
 	key, err := g.Put(&PutGet{ID: 12, Value: 15})
 	if err != nil {
