@@ -31,19 +31,22 @@ import (
 
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
-	LogErrors bool = true
+	LogErrors           bool  = true
+	ErrDatastoreTimeout error = errors.New("goon: operation exceeded datastore timeout value")
 )
 
 // Goon holds the app engine context and request memory cache.
 type Goon struct {
-	context          appengine.Context
-	cache            map[string]interface{}
-	cacheLock        sync.RWMutex // protect the cache from concurrent goroutines to speed up RPC access
-	inTransaction    bool
-	toSet            map[string]interface{}
-	toDelete         map[string]bool
-	MemcacheTimeout  time.Duration
-	DatastoreTimeout time.Duration
+	context             appengine.Context
+	cache               map[string]interface{}
+	cacheLock           sync.RWMutex // protect the cache from concurrent goroutines to speed up RPC access
+	inTransaction       bool
+	toSet               map[string]interface{}
+	toDelete            map[string]bool
+	MemcachePutTimeout  time.Duration //  can be set to 0 to enable concurrent fetching from memcache & datastore
+	MemcacheGetTimeout  time.Duration
+	DatastorePutTimeout time.Duration
+	DatastoreGetTimeout time.Duration
 }
 
 func memkey(k *datastore.Key) string {
@@ -58,10 +61,12 @@ func NewGoon(r *http.Request) *Goon {
 // FromContext creates a new Goon object from the given appengine Context.
 func FromContext(c appengine.Context) *Goon {
 	return &Goon{
-		context:          c,
-		cache:            make(map[string]interface{}),
-		MemcacheTimeout:  time.Millisecond * 3,
-		DatastoreTimeout: time.Millisecond * 500,
+		context:             c,
+		cache:               make(map[string]interface{}),
+		MemcachePutTimeout:  time.Millisecond * 3,
+		MemcacheGetTimeout:  time.Millisecond * 3,
+		DatastorePutTimeout: time.Millisecond * 500,
+		DatastoreGetTimeout: time.Millisecond * 500,
 	}
 }
 
@@ -279,7 +284,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	select {
 	case err := <-errc:
 		g.error(err)
-	case <-time.After(g.MemcacheTimeout):
+	case <-time.After(g.MemcachePutTimeout):
 		return nil // memcache timeout
 	}
 	return nil
@@ -362,8 +367,8 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	memcacheChan := make(chan map[string]*memcache.Item, 1) // buffer so that we don't leak a goroutine if the request times out
 	datastoreChan := make(chan error, 1)                    // again, buffer so we don't leak go routine
 	datastoreStarted := false
-	memcacheTimeout := time.After(g.MemcacheTimeout)
-	allTimeout := time.After(g.DatastoreTimeout)
+	memcacheGetTimeoutChan := time.After(g.MemcacheGetTimeout)
+	allTimeoutChan := time.After(g.DatastoreGetTimeout)
 	go func() {
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
 		g.error(err)
@@ -402,13 +407,13 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			}
 		case err := <-datastoreChan:
 			return err // datastore found the rest of the results and populated memcache
-		case <-memcacheTimeout: //memcache taking too long, start the datastore request
+		case <-memcacheGetTimeoutChan: //memcache taking too long, start the datastore request
 			if !datastoreStarted { // datastore request may have alredy been started if memcache finished quickly
 				datastoreStarted = true
 				go g.startDatastoreGetMulti(datastoreChan, keys, dskeys, dsdst, dixs)
 			}
-		case <-allTimeout:
-			return fmt.Errorf("goon: timeout - GetMulti took longer than %s to return", g.DatastoreTimeout)
+		case <-allTimeoutChan:
+			return ErrDatastoreTimeout
 		}
 	}
 }

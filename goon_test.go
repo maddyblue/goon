@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-package goon_test
+package goon
 
 import (
 	"reflect"
@@ -25,8 +25,6 @@ import (
 	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
-
-	"github.com/mjibson/goon"
 )
 
 func TestGoon(t *testing.T) {
@@ -35,7 +33,7 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Could not start aetest - %v", err)
 	}
 	defer c.Close()
-	n := goon.FromContext(c)
+	n := FromContext(c)
 
 	// key tests
 	noid := NoId{}
@@ -101,11 +99,11 @@ func TestGoon(t *testing.T) {
 	}
 	if err := n.GetMulti(es); err == nil {
 		t.Errorf("ds: expected error")
-	} else if !goon.NotFound(err, 0) {
+	} else if !NotFound(err, 0) {
 		t.Errorf("ds: not found error 0")
-	} else if !goon.NotFound(err, 1) {
+	} else if !NotFound(err, 1) {
 		t.Errorf("ds: not found error 1")
-	} else if goon.NotFound(err, 2) {
+	} else if NotFound(err, 2) {
 		t.Errorf("ds: not found error 2")
 	}
 	if keys, err := n.PutMulti(es); err != nil {
@@ -207,16 +205,21 @@ func TestVariance(t *testing.T) {
 		case "none":
 			// do nothing, use defaults already set
 		case "memcache":
-			g.MemcacheTimeout = 0
+			g.MemcacheGetTimeout = 0
+			g.MemcachePutTimeout = 0
 		case "datastore":
-			g.MemcacheTimeout = time.Millisecond * 2
+			g.MemcacheGetTimeout = time.Millisecond * 2
+			g.MemcachePutTimeout = time.Millisecond * 2
 			// can't timeout before memcache as memcache doesn't have a chance to return
 			// but the datastore request needs to actually timeout... These times work on my machine consistently
 			// I wasn't sure of a way to write this test any better - @mzimmerman
-			g.DatastoreTimeout = time.Millisecond * 2
+			g.DatastoreGetTimeout = time.Millisecond * 2
+			g.DatastorePutTimeout = time.Millisecond * 2
 		case "both":
-			g.MemcacheTimeout = 0
-			g.DatastoreTimeout = 0
+			g.MemcacheGetTimeout = 0
+			g.MemcachePutTimeout = 0
+			g.DatastoreGetTimeout = 0
+			g.DatastorePutTimeout = 0
 		}
 		objects := []*HasId{
 			&HasId{Id: 1, Name: "1"}, // stored in cache, memcache, and datastore
@@ -334,7 +337,7 @@ func TestRace(t *testing.T) {
 		t.Fatalf("Could not start aetest - %v", err)
 	}
 	defer c.Close()
-	g := goon.FromContext(c)
+	g := FromContext(c)
 
 	hasid := &HasId{Id: 1, Name: "Race"}
 	_, err = g.Put(hasid)
@@ -354,7 +357,7 @@ func TestPutGet(t *testing.T) {
 		t.Fatalf("Could not start aetest - %v", err)
 	}
 	defer c.Close()
-	g := goon.FromContext(c)
+	g := FromContext(c)
 
 	key, err := g.Put(&PutGet{ID: 12, Value: 15})
 	if err != nil {
