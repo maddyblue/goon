@@ -22,8 +22,8 @@ full documentation).
 Thus, to get a User with id 2:
 	userid := 2
 	g := goon.NewGoon(r)
-	u := User{Id: userid}
-	g.Get(&u)
+	u := &User{Id: userid}
+	g.Get(u)
 
 Key Specifications
 
@@ -69,13 +69,13 @@ All key-based operations backed by memory and memcache.
 
 Per-request, in-memory cache: fetch the same key twice, the second request is served from local memory.
 
-Intelligent multi support: running GetMulti on correctly fetches from memory, then memcache, then the datastore; each tier only sends keys off to the next one if they were missing.
+Intelligent multi support: running GetMulti correctly fetches from memory, then memcache, then the datastore; each tier only sends keys off to the next one if they were missing.
 
 Transactions use a separate context, but locally cache any results on success.
 
 Automatic kind naming: struct names are inferred by reflection, removing the need to manually specify key kinds.
 
-Simpler api than appengine/datastore.
+Simpler API than appengine/datastore.
 
 API comparison between goon and datastore
 

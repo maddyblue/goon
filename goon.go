@@ -33,7 +33,7 @@ var (
 	LogErrors bool = true
 )
 
-// Goon holds the app engine context and request memory cache.
+// Goon holds the app engine context and the request memory cache.
 type Goon struct {
 	context       appengine.Context
 	cache         map[string]interface{}
@@ -98,7 +98,7 @@ func (g *Goon) Key(src interface{}) *datastore.Key {
 	return nil
 }
 
-// Key returns the key of src based on its properties.
+// KeyError returns the key of src based on its properties.
 func (g *Goon) KeyError(src interface{}) (*datastore.Key, error) {
 	return g.getStructKey(src)
 }
@@ -244,6 +244,13 @@ func (g *Goon) putMemory(src interface{}) {
 	g.cacheLock.Lock()
 	defer g.cacheLock.Unlock()
 	g.cache[memkey(key)] = src
+}
+
+// FlushLocalCache clears the local memory cache.
+func (g *Goon) FlushLocalCache() {
+	g.cacheLock.Lock()
+	g.cache = make(map[string]interface{})
+	g.cacheLock.Unlock()
 }
 
 func (g *Goon) putMemcache(srcs []interface{}) error {
