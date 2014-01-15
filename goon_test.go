@@ -384,9 +384,7 @@ func TestVariance(t *testing.T) {
 		keys, _ := datastore.NewQuery("HasId").KeysOnly().GetAll(c, nil)
 		datastore.DeleteMulti(c, keys)
 		memcache.Flush(c)
-		g.cacheLock.Lock()
-		g.cache = make(map[string]interface{})
-		g.cacheLock.Unlock()
+		g.FlushLocalCache()
 
 		// add test data to proper locations only
 		for _, obj := range objects {
