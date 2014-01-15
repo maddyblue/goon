@@ -205,21 +205,21 @@ func TestVariance(t *testing.T) {
 		case "none":
 			// do nothing, use defaults already set
 		case "memcache":
-			g.MemcacheGetTimeout = 0
-			g.MemcachePutTimeout = 0
+			MemcacheGetTimeout = 0
+			MemcachePutTimeout = 0
 		case "datastore":
-			g.MemcacheGetTimeout = time.Millisecond * 2
-			g.MemcachePutTimeout = time.Millisecond * 2
+			MemcacheGetTimeout = time.Millisecond * 2
+			MemcachePutTimeout = time.Millisecond * 2
 			// can't timeout before memcache as memcache doesn't have a chance to return
 			// but the datastore request needs to actually timeout... These times work on my machine consistently
 			// I wasn't sure of a way to write this test any better - @mzimmerman
-			g.DatastoreGetTimeout = time.Millisecond * 2
-			g.DatastorePutTimeout = time.Millisecond * 2
+			DatastoreGetTimeout = time.Millisecond * 2
+			DatastorePutTimeout = time.Millisecond * 2
 		case "both":
-			g.MemcacheGetTimeout = 0
-			g.MemcachePutTimeout = 0
-			g.DatastoreGetTimeout = 0
-			g.DatastorePutTimeout = 0
+			MemcacheGetTimeout = 0
+			MemcachePutTimeout = 0
+			DatastoreGetTimeout = 0
+			DatastorePutTimeout = 0
 		}
 		objects := []*HasId{
 			&HasId{Id: 1, Name: "1"}, // stored in cache, memcache, and datastore

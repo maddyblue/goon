@@ -31,22 +31,23 @@ import (
 
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
-	LogErrors           bool  = true
-	ErrDatastoreTimeout error = errors.New("goon: operation exceeded datastore timeout value")
+	LogErrors           bool          = true
+	ErrDatastoreTimeout error         = errors.New("goon: operation exceeded datastore timeout value")
+	ErrMemcacheTimeout  error         = errors.New("goon: operation exceeded memcache timeout value")
+	MemcachePutTimeout  time.Duration = time.Millisecond * 3 //  can be set to 0 to enable concurrent fetching from memcache & datastore
+	MemcacheGetTimeout  time.Duration = time.Millisecond * 3
+	DatastorePutTimeout time.Duration = time.Minute * 10 // default this at a very high value so applications are not affected by this unless they want it
+	DatastoreGetTimeout time.Duration = time.Minute * 10
 )
 
 // Goon holds the app engine context and request memory cache.
 type Goon struct {
-	context             appengine.Context
-	cache               map[string]interface{}
-	cacheLock           sync.RWMutex // protect the cache from concurrent goroutines to speed up RPC access
-	inTransaction       bool
-	toSet               map[string]interface{}
-	toDelete            map[string]bool
-	MemcachePutTimeout  time.Duration //  can be set to 0 to enable concurrent fetching from memcache & datastore
-	MemcacheGetTimeout  time.Duration
-	DatastorePutTimeout time.Duration
-	DatastoreGetTimeout time.Duration
+	context       appengine.Context
+	cache         map[string]interface{}
+	cacheLock     sync.RWMutex // protect the cache from concurrent goroutines to speed up RPC access
+	inTransaction bool
+	toSet         map[string]interface{}
+	toDelete      map[string]bool
 }
 
 func memkey(k *datastore.Key) string {
@@ -61,17 +62,13 @@ func NewGoon(r *http.Request) *Goon {
 // FromContext creates a new Goon object from the given appengine Context.
 func FromContext(c appengine.Context) *Goon {
 	return &Goon{
-		context:             c,
-		cache:               make(map[string]interface{}),
-		MemcachePutTimeout:  time.Millisecond * 3,
-		MemcacheGetTimeout:  time.Millisecond * 3,
-		DatastorePutTimeout: time.Millisecond * 500,
-		DatastoreGetTimeout: time.Millisecond * 500,
+		context: c,
+		cache:   make(map[string]interface{}),
 	}
 }
 
 func (g *Goon) error(err error) {
-	if LogErrors && err != nil {
+	if LogErrors {
 		g.context.Errorf("goon: %v", err.Error())
 	}
 }
@@ -283,9 +280,11 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	g.putMemoryMulti(srcs)
 	select {
 	case err := <-errc:
-		g.error(err)
-	case <-time.After(g.MemcachePutTimeout):
-		return nil // memcache timeout
+		if err != nil {
+			g.error(err)
+		}
+	case <-time.After(MemcachePutTimeout):
+		return ErrMemcacheTimeout
 	}
 	return nil
 }
@@ -367,11 +366,14 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	memcacheChan := make(chan map[string]*memcache.Item, 1) // buffer so that we don't leak a goroutine if the request times out
 	datastoreChan := make(chan error, 1)                    // again, buffer so we don't leak go routine
 	datastoreStarted := false
-	memcacheGetTimeoutChan := time.After(g.MemcacheGetTimeout)
-	allTimeoutChan := time.After(g.DatastoreGetTimeout)
+	memcacheGetTimeoutChan := time.After(MemcacheGetTimeout)
+	allTimeoutChan := time.After(DatastoreGetTimeout)
+	var writeLock sync.Mutex
 	go func() {
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
-		g.error(err)
+		if err != nil {
+			g.error(err)
+		}
 		memcacheChan <- memvalues
 	}()
 	for {
@@ -381,6 +383,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			var dskeys []*datastore.Key
 			var dsdst []interface{}
 			var dixs []int
+			writeLock.Lock()
 			for i, m := range memkeys {
 				d := v.Index(mixs[i]).Interface()
 				if s, present := memvalues[m]; present {
@@ -397,27 +400,31 @@ func (g *Goon) GetMulti(dst interface{}) error {
 					dixs = append(dixs, mixs[i])
 				}
 			}
-
+			writeLock.Unlock()    // need to unlock here as if we wait until after the return, the datastore goroutine will leak and block indefinitely
 			if len(dskeys) == 0 { // everything was fetched from local and memcache, return
 				return nil
 			}
 			if !datastoreStarted { // datastore request may have already been issued if memcache took too long to respond
 				datastoreStarted = true
-				go g.startDatastoreGetMulti(datastoreChan, keys, dskeys, dsdst, dixs)
+				go g.startDatastoreGetMulti(&writeLock, datastoreChan, keys, dskeys, dsdst, dixs)
 			}
 		case err := <-datastoreChan:
+			if err == ErrMemcacheTimeout {
+				g.error(err)
+				return nil // we don't really care if memcache timed out if datastore fetched results
+			}
 			return err // datastore found the rest of the results and populated memcache
 		case <-memcacheGetTimeoutChan: //memcache taking too long, start the datastore request
 			if !datastoreStarted { // datastore request may have alredy been started if memcache finished quickly
 				datastoreStarted = true
-				go g.startDatastoreGetMulti(datastoreChan, keys, dskeys, dsdst, dixs)
+				go g.startDatastoreGetMulti(&writeLock, datastoreChan, keys, dskeys, dsdst, dixs)
 			}
 		case <-allTimeoutChan:
 			return ErrDatastoreTimeout
 		}
 	}
 }
-func (g *Goon) startDatastoreGetMulti(datastoreChan chan error, allKeys, dskeys []*datastore.Key, dsdst []interface{}, dixs []int) {
+func (g *Goon) startDatastoreGetMulti(writeLock *sync.Mutex, datastoreChan chan error, allKeys, dskeys []*datastore.Key, dsdst []interface{}, dixs []int) {
 	multiErr := make(appengine.MultiError, len(allKeys))
 	var toCache []interface{}
 	var ret error
@@ -428,11 +435,14 @@ func (g *Goon) startDatastoreGetMulti(datastoreChan chan error, allKeys, dskeys 
 			hi = len(dskeys)
 		}
 		gmerr := datastore.GetMulti(g.context, dskeys[lo:hi], dsdst[lo:hi])
+		writeLock.Lock()
+		// cannot defer this Unlock so memcache can beat us to the punch between multiple datastore.GetMulti requests
 		if gmerr != nil {
 			merr, ok := gmerr.(appengine.MultiError)
 			if !ok {
 				g.error(gmerr)
 				datastoreChan <- gmerr
+				writeLock.Unlock()
 				return
 			}
 			for i, idx := range dixs[lo:hi] {
@@ -445,6 +455,7 @@ func (g *Goon) startDatastoreGetMulti(datastoreChan chan error, allKeys, dskeys 
 		} else {
 			toCache = append(toCache, dsdst[lo:hi]...)
 		}
+		writeLock.Unlock()
 	}
 
 	if len(toCache) > 0 {
