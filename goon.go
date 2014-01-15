@@ -340,23 +340,16 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	var memkeys []string // a slice of datastore.Key.Encode() that is not in the local cache
 	var mixs []int       // a slice of indexes of dst that represent the memkeys
 
-	var dskeys []*datastore.Key // a slice of datastore.Key that should be fetched by the datastore
-	var dsdst []interface{}     // a slice of pointers to the destination objects to be filled, index lines up with dskeys
-	var dixs []int              // a slice of indexes of dst that represent the dskeys
-
 	v := reflect.Indirect(reflect.ValueOf(dst))
 	g.cacheLock.RLock()
 	for i, key := range keys {
 		m := memkey(key)
-		vi := v.Index(i)
 		if s, present := g.cache[m]; present {
+			vi := v.Index(i)
 			vi.Set(reflect.ValueOf(s))
 		} else {
 			memkeys = append(memkeys, m)
 			mixs = append(mixs, i)
-			dskeys = append(dskeys, key)
-			dsdst = append(dsdst, vi.Interface())
-			dixs = append(dixs, i)
 		}
 	}
 	g.cacheLock.RUnlock()
@@ -367,9 +360,12 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 	memcacheChan := make(chan map[string]*memcache.Item, 1) // buffer so that we don't leak a goroutine if the request times out
 	datastoreChan := make(chan error, 1)                    // again, buffer so we don't leak go routine
-	datastoreStarted := false
+	copyValues := true
 	memcacheGetTimeoutChan := time.After(MemcacheGetTimeout)
-	var writeLock sync.Mutex
+	var dskeys []*datastore.Key // a slice of datastore.Key that should be fetched by the datastore
+	var dsdst []interface{}     // a slice of pointers to the destination objects to be filled, index lines up with dskeys
+	var dixs []int              // a slice of indexes of dst that represent the dskeys
+
 	go func() {
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
 		if err != nil {
@@ -380,50 +376,76 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	for {
 		select {
 		case memvalues := <-memcacheChan: // memcache has returned
-			//reset the dskeys as memcache succeeded
-			var dskeys []*datastore.Key
-			var dsdst []interface{}
-			var dixs []int
-			writeLock.Lock()
+			// write fetched entries to dst
 			for i, m := range memkeys {
-				d := v.Index(mixs[i]).Interface()
 				if s, present := memvalues[m]; present {
+					d := v.Index(mixs[i]).Interface()
 					err := fromGob(d, s.Value)
 					if err != nil {
 						g.error(err)
 						return err
 					}
 					g.putMemory(d) // populate local cache
-				} else {
-					// memcache miss
-					dskeys = append(dskeys, keys[mixs[i]])
-					dsdst = append(dsdst, d)
-					dixs = append(dixs, mixs[i])
 				}
 			}
-			writeLock.Unlock()    // need to unlock here as if we wait until after the return, the datastore goroutine will leak and block indefinitely
-			if len(dskeys) == 0 { // everything was fetched from local and memcache, return
+
+			if len(memkeys) == len(memvalues) { // memcache got a hit on every key
 				return nil
 			}
-			if !datastoreStarted { // datastore request may have already been issued if memcache took too long to respond
-				datastoreStarted = true
-				go g.startDatastoreGetMulti(&writeLock, datastoreChan, keys, dskeys, dsdst, dixs)
+
+			if len(dskeys) == 0 {
+				// datastore hasn't been kicked off yet
+				// populate it and kick off the request
+				copyValues = false
+				// since we're not making copies of the destination structs, datastore.GetMulti() will write in the values
+				for i, m := range memkeys {
+					if _, present := memvalues[m]; !present {
+						// memcache miss
+						d := v.Index(mixs[i]).Interface()
+						dskeys = append(dskeys, keys[mixs[i]])
+						dsdst = append(dsdst, d)
+						dixs = append(dixs, mixs[i])
+					}
+				}
+				go g.startDatastoreGetMulti(datastoreChan, keys, dskeys, dsdst, dixs)
 			}
 		case err := <-datastoreChan:
 			if err == ErrMemcacheTimeout {
 				g.error(err)
-				return nil // we don't really care if memcache timed out if datastore fetched results
+				err = nil // we don't really care if the Put to memcache timed out if datastore fetched results
+			} else if err != nil {
+				return err
 			}
-			return err // datastore found the rest of the results and populated memcache
-		case <-memcacheGetTimeoutChan: //memcache taking too long, start the datastore request
-			if !datastoreStarted { // datastore request may have alredy been started if memcache finished quickly
-				datastoreStarted = true
-				go g.startDatastoreGetMulti(&writeLock, datastoreChan, keys, dskeys, dsdst, dixs)
+			if copyValues { // datastore request was started before memcache
+				for i, dsti := range dixs {
+					err := setStructKey(dsdst[i], dskeys[i])
+					if err != nil {
+						return err
+					}
+					v.Index(dsti).Set(reflect.ValueOf(dsdst[i]))
+				}
 			}
+			return nil
+		case <-memcacheGetTimeoutChan:
+			if len(dskeys) == 0 { //memcache took too long, start the datastore request
+				// memcache.GetMulti() could potentially be writing to the dst objects
+				// to address a race condition, we need to make copies
+				g.cacheLock.RLock()
+				for i, key := range keys {
+					if _, present := g.cache[memkey(key)]; !present {
+						dskeys = append(dskeys, key)
+						dixs = append(dixs, i)
+						dsdst = append(dsdst, reflect.New(reflect.TypeOf(v.Index(i).Elem().Interface())).Interface())
+					}
+				}
+				g.cacheLock.RUnlock()
+
+				go g.startDatastoreGetMulti(datastoreChan, keys, dskeys, dsdst, dixs)
+			} // else - do nothing, datastore request already started
 		}
 	}
 }
-func (g *Goon) startDatastoreGetMulti(writeLock *sync.Mutex, datastoreChan chan error, allKeys, dskeys []*datastore.Key, dsdst []interface{}, dixs []int) {
+func (g *Goon) startDatastoreGetMulti(datastoreChan chan error, allKeys, dskeys []*datastore.Key, dsdst []interface{}, dixs []int) {
 	multiErr := make(appengine.MultiError, len(allKeys))
 	var toCache []interface{}
 	var ret error
@@ -434,14 +456,11 @@ func (g *Goon) startDatastoreGetMulti(writeLock *sync.Mutex, datastoreChan chan 
 			hi = len(dskeys)
 		}
 		gmerr := datastore.GetMulti(g.context, dskeys[lo:hi], dsdst[lo:hi])
-		writeLock.Lock()
-		// cannot defer this Unlock so memcache can beat us to the punch between multiple datastore.GetMulti requests
 		if gmerr != nil {
 			merr, ok := gmerr.(appengine.MultiError)
 			if !ok {
 				g.error(gmerr)
 				datastoreChan <- gmerr
-				writeLock.Unlock()
 				return
 			}
 			for i, idx := range dixs[lo:hi] {
@@ -454,7 +473,6 @@ func (g *Goon) startDatastoreGetMulti(writeLock *sync.Mutex, datastoreChan chan 
 		} else {
 			toCache = append(toCache, dsdst[lo:hi]...)
 		}
-		writeLock.Unlock()
 	}
 
 	if len(toCache) > 0 {
