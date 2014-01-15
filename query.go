@@ -124,13 +124,15 @@ func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
 		return k, err
 	}
 
-	if !t.g.inTransaction && dst != nil {
-		t.g.cache[memkey(k)] = dst
-	}
-
-	// Before returning, update the struct to have correct key info
 	if dst != nil {
+		// Update the struct to have correct key info
 		setStructKey(dst, k)
+
+		if !t.g.inTransaction {
+			t.g.cacheLock.Lock()
+			t.g.cache[memkey(k)] = dst
+			t.g.cacheLock.Unlock()
+		}
 	}
 
 	return k, err

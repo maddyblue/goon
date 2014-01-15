@@ -162,7 +162,7 @@ func TestGoon(t *testing.T) {
 	// Clear the local memory cache, because we want to test it being filled correctly by GetAll
 	n.FlushLocalCache()
 
-	// Get the entity back using a slice of structs
+	// Get the entity using a slice of structs
 	qiSRes := []QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiSRes); err != nil {
 		t.Errorf("GetAll SoS: unexpected error: %v", err.Error())
@@ -180,6 +180,8 @@ func TestGoon(t *testing.T) {
 	qiS := &QueryItem{Id: 1}
 	if err := n.Get(qiS); err != nil {
 		t.Errorf("Get SoS: unexpected error: %v", err.Error())
+	} else if qiS.Id != 1 {
+		t.Errorf("Get SoS: expected entity id to be 1, got %v", qiS.Id)
 	} else if qiS.Data != "foo" {
 		t.Errorf("Get SoS: expected entity data to be 'foo', got '%v'", qiS.Data)
 	}
@@ -187,7 +189,7 @@ func TestGoon(t *testing.T) {
 	// Clear the local memory cache, because we want to test it being filled correctly by GetAll
 	n.FlushLocalCache()
 
-	// Get the entity back using a slice of pointers to struct
+	// Get the entity using a slice of pointers to struct
 	qiPRes := []*QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiPRes); err != nil {
 		t.Errorf("GetAll SoPtS: unexpected error: %v", err.Error())
@@ -205,8 +207,42 @@ func TestGoon(t *testing.T) {
 	qiP := &QueryItem{Id: 1}
 	if err := n.Get(qiP); err != nil {
 		t.Errorf("Get SoPtS: unexpected error: %v", err.Error())
+	} else if qiP.Id != 1 {
+		t.Errorf("Get SoPtS: expected entity id to be 1, got %v", qiP.Id)
 	} else if qiP.Data != "foo" {
 		t.Errorf("Get SoPtS: expected entity data to be 'foo', got '%v'", qiP.Data)
+	}
+
+	// Clear the local memory cache, because we want to test it being filled correctly by Next
+	n.FlushLocalCache()
+
+	// Get the entity using an iterator
+	qiIt := n.Run(datastore.NewQuery("QueryItem"))
+
+	qiItRes := &QueryItem{}
+	if dskey, err := qiIt.Next(qiItRes); err != nil {
+		t.Errorf("Next: unexpected error: %v", err.Error())
+	} else if dskey.IntID() != 1 {
+		t.Errorf("Next: expected key IntID to be 1, got %v", dskey.IntID())
+	} else if qiItRes.Id != 1 {
+		t.Errorf("Next: expected entity id to be 1, got %v", qiItRes.Id)
+	} else if qiItRes.Data != "foo" {
+		t.Errorf("Next: expected entity data to be 'foo', got '%v'", qiItRes.Data)
+	}
+
+	// Make sure the iterator ends correctly
+	if _, err := qiIt.Next(&QueryItem{}); err != datastore.Done {
+		t.Errorf("Next: expected iterator to end with the error datastore.Done, got %v", err.Error())
+	}
+
+	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
+	qiI := &QueryItem{Id: 1}
+	if err := n.Get(qiI); err != nil {
+		t.Errorf("Get Iterator: unexpected error: %v", err.Error())
+	} else if qiI.Id != 1 {
+		t.Errorf("Get Iterator: expected entity id to be 1, got %v", qiI.Id)
+	} else if qiI.Data != "foo" {
+		t.Errorf("Get Iterator: expected entity data to be 'foo', got '%v'", qiI.Data)
 	}
 }
 
