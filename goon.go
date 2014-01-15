@@ -248,6 +248,13 @@ func (g *Goon) putMemory(src interface{}) {
 	g.cache[memkey(key)] = src
 }
 
+// FlushLocalCache clears the local memory cache.
+func (g *Goon) FlushLocalCache() {
+	g.cacheLock.Lock()
+	g.cache = make(map[string]interface{})
+	g.cacheLock.Unlock()
+}
+
 func (g *Goon) putMemcache(srcs []interface{}) error {
 	items := make([]*memcache.Item, len(srcs))
 
