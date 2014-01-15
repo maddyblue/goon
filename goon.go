@@ -291,11 +291,6 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	return nil
 }
 
-type DatastoreResult struct {
-	Keys   []*datastore.Key
-	Values []interface{}
-}
-
 // Get loads the entity based on dst's key into dst
 // If there is no such entity for the key, Get returns
 // datastore.ErrNoSuchEntity.
