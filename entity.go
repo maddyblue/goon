@@ -53,7 +53,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 	k := t.Kind()
 
 	if k != reflect.Struct {
-		return nil, errors.New(fmt.Sprintf("goon: Expected struct, got instead: %v", k))
+		return nil, fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
 	var parent *datastore.Key
@@ -82,7 +82,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 					}
 					stringID = vf.String()
 					if stringID == "" {
-						return nil, fmt.Errorf("goon: String id field must be populated in %v", src)
+						return nil, errors.New("goon: Cannot have a blank Id a String Id object")
 					}
 				default:
 					return nil, fmt.Errorf("goon: ID field must be int64 or string in %v", t.Name())
@@ -112,7 +112,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 	if kind == "" {
 		kind = typeName(src)
 	}
-
+	// can be an incomplete Key but not for String Id objects
 	return datastore.NewKey(g.context, kind, stringID, intID, parent), nil
 }
 
@@ -159,6 +159,7 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 				if idSet {
 					return errors.New("goon: Only one field may be marked id")
 				}
+
 				switch vf.Kind() {
 				case reflect.Int64:
 					vf.SetInt(key.IntID())

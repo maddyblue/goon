@@ -37,7 +37,7 @@ var (
 	MemcacheGetTimeout time.Duration = time.Millisecond * 3
 )
 
-// Goon holds the app engine context and request memory cache.
+// Goon holds the app engine context and the request memory cache.
 type Goon struct {
 	context       appengine.Context
 	cache         map[string]interface{}
@@ -70,7 +70,7 @@ func (g *Goon) error(err error) {
 	}
 }
 
-func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
+func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	if v.Kind() != reflect.Slice {
 		return nil, errors.New("goon: value must be a slice or pointer-to-slice")
@@ -84,6 +84,9 @@ func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
 		if err != nil {
 			return nil, err
 		}
+		if !allowIncomplete && key.Incomplete() {
+			return nil, fmt.Errorf("goon: cannot find a key for struct - %v", vi.Interface())
+		}
 		keys[i] = key
 	}
 	return keys, nil
@@ -92,12 +95,14 @@ func (g *Goon) extractKeys(src interface{}) ([]*datastore.Key, error) {
 // Key is the same as KeyError, except nil is returned on error.
 func (g *Goon) Key(src interface{}) *datastore.Key {
 	if k, err := g.KeyError(src); err == nil {
-		return k
+		if !k.Incomplete() {
+			return k
+		}
 	}
 	return nil
 }
 
-// Key returns the key of src based on its properties.
+// KeyError returns the key of src based on its properties.
 func (g *Goon) KeyError(src interface{}) (*datastore.Key, error) {
 	return g.getStructKey(src)
 }
@@ -159,7 +164,7 @@ const putMultiLimit = 500
 //
 // src must satisfy the same conditions as the dst argument to GetMulti.
 func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
-	keys, err := g.extractKeys(src)
+	keys, err := g.extractKeys(src, true) // allow incomplete keys on a Put request
 	if err != nil {
 		return nil, err
 	}
@@ -224,16 +229,9 @@ func (g *Goon) PutComplete(src interface{}) (*datastore.Key, error) {
 
 // PutMultiComplete is like PutMulti, but errors if a key is incomplete.
 func (g *Goon) PutMultiComplete(src interface{}) ([]*datastore.Key, error) {
-	keys, err := g.extractKeys(src)
+	_, err := g.extractKeys(src, false)
 	if err != nil {
 		return nil, err
-	}
-	for i, k := range keys {
-		if k.Incomplete() {
-			err := fmt.Errorf("goon: incomplete key (%dth index): %v", i, k)
-			g.error(err)
-			return nil, err
-		}
 	}
 	return g.PutMulti(src)
 }
@@ -250,6 +248,13 @@ func (g *Goon) putMemory(src interface{}) {
 	g.cacheLock.Lock()
 	defer g.cacheLock.Unlock()
 	g.cache[memkey(key)] = src
+}
+
+// FlushLocalCache clears the local memory cache.
+func (g *Goon) FlushLocalCache() {
+	g.cacheLock.Lock()
+	g.cache = make(map[string]interface{})
+	g.cacheLock.Unlock()
 }
 
 func (g *Goon) putMemcache(srcs []interface{}) error {
@@ -322,7 +327,7 @@ const getMultiLimit = 1000
 //
 // dst has similar constraints as datastore.GetMulti.
 func (g *Goon) GetMulti(dst interface{}) error {
-	keys, err := g.extractKeys(dst)
+	keys, err := g.extractKeys(dst, false) // don't allow incomplete keys on a Get request
 	if err != nil {
 		return err
 	}
