@@ -58,6 +58,11 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 		return keys, err
 	}
 
+	if !g.inTransaction {
+		g.cacheLock.Lock()
+		defer g.cacheLock.Unlock()
+	}
+
 	for i, k := range keys {
 		var e interface{}
 		vi := v.Index(i)
@@ -72,7 +77,8 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 		}
 
 		if !g.inTransaction {
-			g.cache[memkey(k)] = &e
+			// Cache lock is handled before the for loop
+			g.cache[memkey(k)] = e
 		}
 	}
 

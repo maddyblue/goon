@@ -159,6 +159,9 @@ func TestGoon(t *testing.T) {
 	// Sleep a bit to wait for the HRD emulation to get out of our way
 	time.Sleep(1000 * time.Millisecond)
 
+	// Clear the local memory cache, because we want to test it being filled correctly by GetAll
+	n.FlushLocalCache()
+
 	// Get the entity back using a slice of structs
 	qiSRes := []QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiSRes); err != nil {
@@ -173,6 +176,17 @@ func TestGoon(t *testing.T) {
 		t.Errorf("GetAll SoS: expected entity data to be 'foo', got '%v'", qiSRes[0].Data)
 	}
 
+	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
+	qiS := &QueryItem{Id: 1}
+	if err := n.Get(qiS); err != nil {
+		t.Errorf("Get SoS: unexpected error: %v", err.Error())
+	} else if qiS.Data != "foo" {
+		t.Errorf("Get SoS: expected entity data to be 'foo', got '%v'", qiS.Data)
+	}
+
+	// Clear the local memory cache, because we want to test it being filled correctly by GetAll
+	n.FlushLocalCache()
+
 	// Get the entity back using a slice of pointers to struct
 	qiPRes := []*QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiPRes); err != nil {
@@ -185,6 +199,14 @@ func TestGoon(t *testing.T) {
 		t.Errorf("GetAll SoPtS: expected entity id to be 1, got %v", qiPRes[0].Id)
 	} else if qiPRes[0].Data != "foo" {
 		t.Errorf("GetAll SoPtS: expected entity data to be 'foo', got '%v'", qiPRes[0].Data)
+	}
+
+	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
+	qiP := &QueryItem{Id: 1}
+	if err := n.Get(qiP); err != nil {
+		t.Errorf("Get SoPtS: unexpected error: %v", err.Error())
+	} else if qiP.Data != "foo" {
+		t.Errorf("Get SoPtS: expected entity data to be 'foo', got '%v'", qiP.Data)
 	}
 }
 
