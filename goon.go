@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"reflect"
 	"sync"
+	"time"
 
 	"appengine"
 	"appengine/datastore"
@@ -30,7 +31,9 @@ import (
 
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
-	LogErrors bool = true
+	LogErrors          bool          = true
+	ErrMemcacheTimeout error         = errors.New("operation exceeded memcache timeout value")
+	MemcachePutTimeout time.Duration = time.Millisecond * 3
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -270,8 +273,21 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 		}
 	}
 
-	memcache.SetMulti(g.context, items)
+	errc := make(chan error, 1) // need to buffer so as to not leak a goroutine
+	go func() {
+		errc <- memcache.SetMulti(g.context, items)
+	}()
 	g.putMemoryMulti(srcs)
+	select {
+	case err := <-errc:
+		if err != nil {
+			g.error(err)
+		}
+		// since putMemcache() gives no guarantee it will actually store the data in memcache
+		// we log and swallow this error
+	case <-time.After(MemcachePutTimeout):
+		return ErrMemcacheTimeout
+	}
 	return nil
 }
 
@@ -393,6 +409,10 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	if len(toCache) > 0 {
 		if err := g.putMemcache(toCache); err != nil {
 			g.error(err)
+			if err == ErrMemcacheTimeout {
+				// log it, but we don't need to fail here, getting the entities from the datastore was successful
+				return nil
+			}
 			return err
 		}
 	}

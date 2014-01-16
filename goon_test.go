@@ -358,6 +358,22 @@ type PutGet struct {
 	Value int32
 }
 
+func TestMemcacheTimeout(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+
+	MemcachePutTimeout = 0
+	// put a HasId resource, then test pulling it from memory, memcache, and datastore
+	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
+	if _, err := g.Put(hi); err != nil {
+		t.Errorf("put: unexpected error - %v", err)
+	}
+}
+
 // This test won't fail but if run with -race flag, it will show known race conditions
 // Using multiple goroutines per http request is recommended here:
 // http://talks.golang.org/2013/highperf.slide#22
