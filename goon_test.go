@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"appengine"
 	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
@@ -358,7 +359,7 @@ type PutGet struct {
 	Value int32
 }
 
-func TestMemcacheTimeout(t *testing.T) {
+func TestMemcachePutTimeout(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
 		t.Fatalf("Could not start aetest - %v", err)
@@ -366,11 +367,20 @@ func TestMemcacheTimeout(t *testing.T) {
 	defer c.Close()
 	g := FromContext(c)
 
-	MemcachePutTimeout = 0
 	// put a HasId resource, then test pulling it from memory, memcache, and datastore
 	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
 	if _, err := g.Put(hi); err != nil {
 		t.Errorf("put: unexpected error - %v", err)
+	}
+
+	MemcachePutTimeout = 0
+	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
+		t.Errorf("Request should timeout - err = %v", err)
+	}
+
+	MemcachePutTimeout = time.Second
+	if err := g.putMemcache([]interface{}{hi}); err != nil {
+		t.Errorf("putMemcache: unexpected error - %v", err)
 	}
 }
 

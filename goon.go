@@ -32,7 +32,6 @@ import (
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
 	LogErrors          bool          = true
-	ErrMemcacheTimeout error         = errors.New("operation exceeded memcache timeout value")
 	MemcachePutTimeout time.Duration = time.Millisecond * 3
 )
 
@@ -266,29 +265,21 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			return err
 		}
 		key, err := g.getStructKey(src)
-
+		if err != nil {
+			return err
+		}
 		items[i] = &memcache.Item{
 			Key:   memkey(key),
 			Value: gob,
 		}
 	}
 
-	errc := make(chan error, 1) // need to buffer so as to not leak a goroutine
-	go func() {
-		errc <- memcache.SetMulti(g.context, items)
-	}()
+	err := memcache.SetMulti(appengine.Timeout(g.context, MemcachePutTimeout), items)
 	g.putMemoryMulti(srcs)
-	select {
-	case err := <-errc:
-		if err != nil {
-			g.error(err)
-		}
-		// since putMemcache() gives no guarantee it will actually store the data in memcache
-		// we log and swallow this error
-	case <-time.After(MemcachePutTimeout):
-		return ErrMemcacheTimeout
+	if err != nil {
+		g.error(err)
 	}
-	return nil
+	return err
 }
 
 // Get loads the entity based on dst's key into dst
@@ -409,8 +400,9 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	if len(toCache) > 0 {
 		if err := g.putMemcache(toCache); err != nil {
 			g.error(err)
-			if err == ErrMemcacheTimeout {
-				// log it, but we don't need to fail here, getting the entities from the datastore was successful
+			if appengine.IsTimeoutError(err) {
+				// since putMemcache() gives no guarantee it will actually store the data in memcache
+				// we log and swallow this error
 				return nil
 			}
 			return err
