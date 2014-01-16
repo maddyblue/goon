@@ -281,7 +281,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	if payloadSize >= MemcacheTimeoutThreshold {
 		memcacheTimeout = MemcachePutTimeoutLarge
 	}
-	err := memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
+	err := memcache.SetMulti(g.timeout(memcacheTimeout), items)
 	g.putMemoryMulti(srcs)
 	if err != nil {
 		g.error(err)
