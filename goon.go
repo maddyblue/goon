@@ -285,6 +285,8 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 		if err != nil {
 			g.error(err)
 		}
+		// since putMemcache() gives no guarantee it will actually store the data in memcache
+		// we log and swallow this error
 	case <-time.After(MemcachePutTimeout):
 		return ErrMemcacheTimeout
 	}
