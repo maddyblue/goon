@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"appengine"
 	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
@@ -358,31 +359,30 @@ type PutGet struct {
 	Value int32
 }
 
-// Commenting out for issue https://code.google.com/p/googleappengine/issues/detail?id=10493
-//func TestMemcachePutTimeout(t *testing.T) {
-//	c, err := aetest.NewContext(nil)
-//	if err != nil {
-//		t.Fatalf("Could not start aetest - %v", err)
-//	}
-//	defer c.Close()
-//	g := FromContext(c)
+func TestMemcachePutTimeout(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
 
-//	// put a HasId resource, then test pulling it from memory, memcache, and datastore
-//	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
-//	if _, err := g.Put(hi); err != nil {
-//		t.Errorf("put: unexpected error - %v", err)
-//	}
+	// put a HasId resource, then test pulling it from memory, memcache, and datastore
+	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
+	if _, err := g.Put(hi); err != nil {
+		t.Errorf("put: unexpected error - %v", err)
+	}
 
-//	MemcachePutTimeout = 0
-//	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
-//		t.Errorf("Request should timeout - err = %v", err)
-//	}
+	MemcachePutTimeout = 0
+	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
+		t.Errorf("Request should timeout - err = %v", err)
+	}
 
-//	MemcachePutTimeout = time.Second
-//	if err := g.putMemcache([]interface{}{hi}); err != nil {
-//		t.Errorf("putMemcache: unexpected error - %v", err)
-//	}
-//}
+	MemcachePutTimeout = time.Second
+	if err := g.putMemcache([]interface{}{hi}); err != nil {
+		t.Errorf("putMemcache: unexpected error - %v", err)
+	}
+}
 
 // This test won't fail but if run with -race flag, it will show known race conditions
 // Using multiple goroutines per http request is recommended here:
