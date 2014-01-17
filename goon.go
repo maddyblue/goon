@@ -274,7 +274,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 		}
 	}
 
-	err := memcache.SetMulti(g.timeout(MemcachePutTimeout), items)
+	err := memcache.SetMulti(appengine.Timeout(g.context, MemcachePutTimeout), items)
 	g.putMemoryMulti(srcs)
 	if err != nil {
 		g.error(err)
