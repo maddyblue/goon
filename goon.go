@@ -362,16 +362,12 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		return nil
 	}
 
-	multiErr := make(appengine.MultiError, len(keys))
-	goroutines := len(dskeys)/getMultiLimit + 1
-	errc := make(chan error, goroutines) // buffer all responses till they're all done
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
+	multiErr, any := make(appengine.MultiError, len(keys)), false
+	goroutines := (len(dskeys)-1)/getMultiLimit + 1
+	errc := make(chan error, goroutines) // buffer responses so we don't leak a goroutine if we return early
 	for i := 0; i < goroutines; i++ {
 		go func(i int) {
-			defer wg.Done()
 			var toCache []interface{}
-			var ret error
 			lo := i * getMultiLimit
 			hi := (i + 1) * getMultiLimit
 			if hi > len(dskeys) {
@@ -382,9 +378,10 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				merr, ok := gmerr.(appengine.MultiError)
 				if !ok {
 					g.error(gmerr)
-					errc <- err
+					errc <- gmerr
 					return
 				}
+				any = true // this flag tells GetMulti to return multiErr later
 				for i, idx := range dixs[lo:hi] {
 					if merr[i] == nil {
 						toCache = append(toCache, dsdst[lo+i])
@@ -392,7 +389,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 						multiErr[idx] = merr[i]
 					}
 				}
-				ret = multiErr
 			} else {
 				toCache = append(toCache, dsdst[lo:hi]...)
 			}
@@ -403,20 +399,19 @@ func (g *Goon) GetMulti(dst interface{}) error {
 					return
 				}
 			}
-			errc <- ret
+			errc <- nil
 		}(i)
 	}
-	wg.Wait()
-	for {
-		select {
-		case err := <-errc:
-			if err != nil {
-				return err
-			}
-		default:
-			return nil
+	for i := 0; i < goroutines; i++ {
+		err = <-errc
+		if err != nil { // this will not be a multiError since the goroutines don't put that in the channel
+			return err
 		}
 	}
+	if any {
+		return multiErr
+	}
+	return nil
 }
 
 // Delete deletes the entity for the given key.

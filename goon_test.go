@@ -458,7 +458,9 @@ func TestMultis(t *testing.T) {
 		for y := 0; y < x; y++ {
 			keys[y] = datastore.NewKey(c, "HasId", "", int64(y+1), nil)
 		}
-		n.DeleteMulti(keys)
+		if err := n.DeleteMulti(keys); err != nil {
+			t.Fatalf("Error deleting keys - %v", err)
+		}
 		for y := 0; y < x; y++ {
 			getobjects = append(getobjects, &HasId{Id: int64(y + 1)})
 			if y%2 == 0 {
