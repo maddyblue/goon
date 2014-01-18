@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"reflect"
 	"sync"
+	"time"
 
 	"appengine"
 	"appengine/datastore"
@@ -30,7 +31,10 @@ import (
 
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
-	LogErrors bool = true
+	LogErrors                bool          = true
+	MemcacheTimeoutThreshold int           = 1024 * 50 // 50K bytes
+	MemcachePutTimeoutSmall  time.Duration = time.Millisecond * 5
+	MemcachePutTimeoutLarge  time.Duration = time.Millisecond * 15
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -255,7 +259,7 @@ func (g *Goon) FlushLocalCache() {
 
 func (g *Goon) putMemcache(srcs []interface{}) error {
 	items := make([]*memcache.Item, len(srcs))
-
+	payloadSize := 0
 	for i, src := range srcs {
 		gob, err := toGob(src)
 		if err != nil {
@@ -263,16 +267,26 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			return err
 		}
 		key, err := g.getStructKey(src)
-
+		if err != nil {
+			return err
+		}
+		// payloadSize will overflow if we push 2+ gigs on a 32bit machine
+		payloadSize += len(gob)
 		items[i] = &memcache.Item{
 			Key:   memkey(key),
 			Value: gob,
 		}
 	}
-
-	memcache.SetMulti(g.context, items)
+	memcacheTimeout := MemcachePutTimeoutSmall
+	if payloadSize >= MemcacheTimeoutThreshold {
+		memcacheTimeout = MemcachePutTimeoutLarge
+	}
+	err := memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
 	g.putMemoryMulti(srcs)
-	return nil
+	if err != nil {
+		g.error(err)
+	}
+	return err
 }
 
 // Get loads the entity based on dst's key into dst
@@ -393,6 +407,11 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	if len(toCache) > 0 {
 		if err := g.putMemcache(toCache); err != nil {
 			g.error(err)
+			if appengine.IsTimeoutError(err) {
+				// since putMemcache() gives no guarantee it will actually store the data in memcache
+				// we log and swallow this error
+				return nil
+			}
 			return err
 		}
 	}
