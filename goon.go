@@ -363,41 +363,60 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	}
 
 	multiErr := make(appengine.MultiError, len(keys))
-	var toCache []interface{}
-	var ret error
-	for i := 0; i <= len(dskeys)/getMultiLimit; i++ {
-		lo := i * getMultiLimit
-		hi := (i + 1) * getMultiLimit
-		if hi > len(dskeys) {
-			hi = len(dskeys)
-		}
-		gmerr := datastore.GetMulti(g.context, dskeys[lo:hi], dsdst[lo:hi])
-		if gmerr != nil {
-			merr, ok := gmerr.(appengine.MultiError)
-			if !ok {
-				g.error(gmerr)
-				return gmerr
+	goroutines := len(dskeys)/getMultiLimit + 1
+	errc := make(chan error, goroutines) // buffer all responses till they're all done
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(i int) {
+			defer wg.Done()
+			var toCache []interface{}
+			var ret error
+			lo := i * getMultiLimit
+			hi := (i + 1) * getMultiLimit
+			if hi > len(dskeys) {
+				hi = len(dskeys)
 			}
-			for i, idx := range dixs[lo:hi] {
-				multiErr[idx] = merr[i]
-				if merr[i] == nil {
-					toCache = append(toCache, dsdst[lo+i])
+			gmerr := datastore.GetMulti(g.context, dskeys[lo:hi], dsdst[lo:hi])
+			if gmerr != nil {
+				merr, ok := gmerr.(appengine.MultiError)
+				if !ok {
+					g.error(gmerr)
+					errc <- err
+					return
+				}
+				for i, idx := range dixs[lo:hi] {
+					if merr[i] == nil {
+						toCache = append(toCache, dsdst[lo+i])
+					} else {
+						multiErr[idx] = merr[i]
+					}
+				}
+				ret = multiErr
+			} else {
+				toCache = append(toCache, dsdst[lo:hi]...)
+			}
+			if len(toCache) > 0 {
+				if err := g.putMemcache(toCache); err != nil {
+					g.error(err)
+					errc <- err
+					return
 				}
 			}
-			ret = multiErr
-		} else {
-			toCache = append(toCache, dsdst[lo:hi]...)
+			errc <- ret
+		}(i)
+	}
+	wg.Wait()
+	for {
+		select {
+		case err := <-errc:
+			if err != nil {
+				return err
+			}
+		default:
+			return nil
 		}
 	}
-
-	if len(toCache) > 0 {
-		if err := g.putMemcache(toCache); err != nil {
-			g.error(err)
-			return err
-		}
-	}
-
-	return ret
 }
 
 // Delete deletes the entity for the given key.

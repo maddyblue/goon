@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"appengine"
 	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
@@ -421,5 +422,75 @@ func TestPutGet(t *testing.T) {
 	if goonPutGet.Value != 15 {
 		t.Fatal("goonPutGet.Value should be 15 but is",
 			goonPutGet.Value)
+	}
+}
+
+func TestMultis(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	n := FromContext(c)
+
+	testAmounts := []int{250, 499, 500, 501, 999, 1000, 1001, 2510}
+	for _, x := range testAmounts {
+		memcache.Flush(c)
+		objects := make([]*HasId, x)
+		for y := 0; y < x; y++ {
+			objects[y] = &HasId{Id: int64(y + 1)}
+		}
+		if _, err := n.PutMulti(objects); err != nil {
+			t.Fatalf("Error in PutMulti for %d objects - %v", x, err)
+		}
+		n.FlushLocalCache() // Put just put them in the local cache, get rid of it before doing the Get
+		if err := n.GetMulti(objects); err != nil {
+			t.Fatalf("Error in GetMulti - %v", err)
+		}
+	}
+
+	// do it again, but skip all odd numbers
+	for _, x := range testAmounts {
+		memcache.Flush(c)
+		getobjects := make([]*HasId, 0, x)
+		putobjects := make([]*HasId, 0, x/2+1)
+		keys := make([]*datastore.Key, x)
+		for y := 0; y < x; y++ {
+			keys[y] = datastore.NewKey(c, "HasId", "", int64(y+1), nil)
+		}
+		n.DeleteMulti(keys)
+		for y := 0; y < x; y++ {
+			getobjects = append(getobjects, &HasId{Id: int64(y + 1)})
+			if y%2 == 0 {
+				putobjects = append(putobjects, &HasId{Id: int64(y + 1)})
+			}
+		}
+
+		_, err := n.PutMulti(putobjects)
+		if err != nil {
+			t.Fatalf("Error in PutMulti for %d objects - %v", x, err)
+		}
+		n.FlushLocalCache() // Put just put them in the local cache, get rid of it before doing the Get
+		err = n.GetMulti(getobjects)
+		if err == nil {
+			t.Fatalf("Should be receiving a multiError on %d objects, but got no errors", x)
+		}
+
+		merr, ok := err.(appengine.MultiError)
+		if ok {
+			if len(merr) != len(getobjects) {
+				t.Fatalf("Should have received a MultiError object of length %d but got length %d instead", len(getobjects), len(merr))
+			}
+			for x := range merr {
+				switch { // record good conditions, fail in other conditions
+				case merr[x] == nil && x%2 == 0:
+				case merr[x] != nil && x%2 != 0:
+				default:
+					t.Fatalf("Found bad condition on object[%d] and error %v", x+1, merr[x])
+				}
+			}
+		} else {
+			t.Fatalf("Did not return a multierror on fetch but received - %v", merr)
+		}
 	}
 }
