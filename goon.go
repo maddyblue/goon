@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"reflect"
 	"sync"
+	"time"
 
 	"appengine"
 	"appengine/datastore"
@@ -30,7 +31,16 @@ import (
 
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
-	LogErrors bool = true
+	LogErrors = true
+	// MemcacheTimeoutThreshold is the number of bytes at which the memcache
+	// timeout uses the large setting.
+	MemcacheTimeoutThreshold = 1024 * 50 // 50K bytes
+	// MemcachePutTimeoutSmall is the amount of time to wait during memcache
+	// operations before aborting them and using the datastore.
+	MemcachePutTimeoutSmall = time.Millisecond * 5
+	// MemcachePutTimeoutLarge is the amount of time to wait for large memcache
+	// requests.
+	MemcachePutTimeoutLarge = time.Millisecond * 15
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -277,7 +287,7 @@ func (g *Goon) FlushLocalCache() {
 
 func (g *Goon) putMemcache(srcs []interface{}) error {
 	items := make([]*memcache.Item, len(srcs))
-
+	payloadSize := 0
 	for i, src := range srcs {
 		gob, err := toGob(src)
 		if err != nil {
@@ -285,21 +295,32 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			return err
 		}
 		key, err := g.getStructKey(src)
-
+		if err != nil {
+			return err
+		}
+		// payloadSize will overflow if we push 2+ gigs on a 32bit machine
+		payloadSize += len(gob)
 		items[i] = &memcache.Item{
 			Key:   memkey(key),
 			Value: gob,
 		}
 	}
+	memcacheTimeout := MemcachePutTimeoutSmall
+	if payloadSize >= MemcacheTimeoutThreshold {
+		memcacheTimeout = MemcachePutTimeoutLarge
+	}
+	var err error
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
-		memcache.SetMulti(g.context, items)
+		err = memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
 		wg.Done()
 	}()
 	g.putMemoryMulti(srcs)
-	wg.Wait()
-	return nil
+	if err != nil {
+		g.error(err)
+	}
+	return err
 }
 
 // Get loads the entity based on dst's key into dst
@@ -422,9 +443,10 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			if len(toCache) > 0 {
 				if err := g.putMemcache(toCache); err != nil {
 					g.error(err)
-					errc <- err
-					return
+					// since putMemcache() gives no guarantee it will actually store the data in memcache
+					// we log and swallow this error
 				}
+
 			}
 			errc <- nil
 		}(i)
