@@ -71,6 +71,12 @@ Per-request, in-memory cache: fetch the same key twice, the second request is se
 
 Intelligent multi support: running GetMulti correctly fetches from memory, then memcache, then the datastore; each tier only sends keys off to the next one if they were missing.
 
+Memcache request variance: Since requests to memcache (Put & Get) are not mandatory for goon, goon will limit the length of the memcache requests to minimize outliers
+	MemcachePutTimeoutThreshold = the payload size when we'll wait the Large duration on a memcache.Put
+	MemcachePutTimeoutSmall = the Duration that we'll wait for memcache.Put on transactions with payload size < Threshold
+	MemcachePutTimeoutLarge = the Duration that we'll wait for memcache.Put on transactions with payload size >= Threshold'
+	MemcacheGetTimeout = the Duration that we'll wait for memcache.Get
+
 Transactions use a separate context, but locally cache any results on success.
 
 Automatic kind naming: struct names are inferred by reflection, removing the need to manually specify key kinds.
