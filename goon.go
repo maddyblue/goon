@@ -364,7 +364,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		return nil
 	}
 
-	memvalues, err := memcache.GetMulti(appengine.Timeout(g.context, MemcacheGetTimeout), memkeys)
+	memvalues, err := memcache.GetMulti(g.timeout(MemcacheGetTimeout), memkeys)
 	if err != nil {
 		if err != memcache.ErrCacheMiss {
 			// CacheMiss should be ignored

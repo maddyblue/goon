@@ -375,13 +375,39 @@ func TestMemcachePutTimeout(t *testing.T) {
 	}
 
 	MemcachePutTimeoutSmall = 0
+	MemcacheGetTimeout = 0
+	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
+		t.Errorf("Request should timeout - err = %v", err)
+	}
+	MemcachePutTimeoutSmall = time.Second
+	MemcachePutTimeoutThreshold = 0
+	MemcachePutTimeoutLarge = 0
 	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
 		t.Errorf("Request should timeout - err = %v", err)
 	}
 
-	MemcachePutTimeoutSmall = time.Second
+	MemcachePutTimeoutLarge = time.Second
 	if err := g.putMemcache([]interface{}{hi}); err != nil {
 		t.Errorf("putMemcache: unexpected error - %v", err)
+	}
+
+	g.FlushLocalCache()
+	memcache.Flush(c)
+	// time out Get
+	MemcacheGetTimeout = 0
+	// time out Put too
+	MemcachePutTimeoutSmall = 0
+	MemcachePutTimeoutThreshold = 0
+	MemcachePutTimeoutLarge = 0
+	if err := g.Get(hi); err != nil {
+		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
+		// Put timing out should also error, but it won't be returned here, just logged
+	}
+
+	g.FlushLocalCache()
+	MemcacheGetTimeout = time.Second
+	if err := g.Get(hi); err != nil {
+		t.Errorf("Request should not timeout cause we'll fetch from memcache successfully but got error %v", err)
 	}
 }
 

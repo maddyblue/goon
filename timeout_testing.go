@@ -57,7 +57,7 @@ func (tc *TimeoutContext) Call(service, method string, in, out appengine_interna
 	}()
 	select {
 	case <-timeoutChan:
-		return TimeoutError{}
+		return TimeoutError{service, method}
 	case err := <-responseChan:
 		return err
 	}
@@ -75,10 +75,12 @@ func (tc *TimeoutContext) Request() interface{} {
 
 // CallError is the type returned by goon.TimeoutContext's Call method when an
 // API call times out
-type TimeoutError struct{}
+type TimeoutError struct {
+	service, method string
+}
 
 func (e TimeoutError) Error() string {
-	return "Request timed out"
+	return e.service + "." + e.method + " - Request timed out"
 }
 
 func (e TimeoutError) IsTimeout() bool {
