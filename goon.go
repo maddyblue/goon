@@ -365,11 +365,17 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	}
 
 	memvalues, err := memcache.GetMulti(g.timeout(MemcacheGetTimeout), memkeys)
-	if err != nil {
-		if err != memcache.ErrCacheMiss {
-			// CacheMiss should be ignored
+	if len(memvalues) == 0 || err != nil {
+		if err != nil {
 			g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
 		}
+		// No memvalues found, prepare the datastore section to fetch them all
+		dskeys = keys
+		dsdst = make([]interface{}, len(keys))
+		for i := 0; i < len(keys); i++ {
+			dsdst[i] = v.Index(i).Interface()
+		}
+		dixs = mixs
 	} else {
 		// we only want to check the returned map if there weren't any errors
 		// unlike the datastore, memcache will return a smaller map with no error if some of the keys were missed
@@ -389,9 +395,9 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				dixs = append(dixs, mixs[i])
 			}
 		}
-	}
-	if len(dskeys) == 0 {
-		return nil
+		if len(dskeys) == 0 {
+			return nil
+		}
 	}
 
 	multiErr := make(appengine.MultiError, len(keys))

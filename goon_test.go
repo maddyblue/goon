@@ -17,6 +17,7 @@
 package goon
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -399,15 +400,23 @@ func TestMemcachePutTimeout(t *testing.T) {
 	MemcachePutTimeoutSmall = 0
 	MemcachePutTimeoutThreshold = 0
 	MemcachePutTimeoutLarge = 0
-	if err := g.Get(hi); err != nil {
+	hiResult := &HasId{Id: hi.Id}
+	if err := g.Get(hiResult); err != nil {
 		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
 		// Put timing out should also error, but it won't be returned here, just logged
 	}
+	if !reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
+	}
 
+	hiResult = &HasId{Id: hi.Id}
 	g.FlushLocalCache()
 	MemcacheGetTimeout = time.Second
-	if err := g.Get(hi); err != nil {
+	if err := g.Get(hiResult); err != nil {
 		t.Errorf("Request should not timeout cause we'll fetch from memcache successfully but got error %v", err)
+	}
+	if !reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
 	}
 }
 
