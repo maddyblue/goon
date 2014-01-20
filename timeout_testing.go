@@ -57,10 +57,7 @@ func (tc *TimeoutContext) Call(service, method string, in, out appengine_interna
 	}()
 	select {
 	case <-timeoutChan:
-		return &appengine_internal.CallError{
-			Detail:  "DevAppserver timed out",
-			Timeout: true,
-		}
+		return TimeoutError{}
 	case err := <-responseChan:
 		return err
 	}
@@ -68,10 +65,22 @@ func (tc *TimeoutContext) Call(service, method string, in, out appengine_interna
 
 // Internal use only. Use AppID instead.
 func (tc *TimeoutContext) FullyQualifiedAppID() string {
-	return tc.FullyQualifiedAppID()
+	return tc.c.FullyQualifiedAppID()
 }
 
 // Internal use only.
 func (tc *TimeoutContext) Request() interface{} {
-	return tc.Request()
+	return tc.c.Request()
+}
+
+// CallError is the type returned by goon.TimeoutContext's Call method when an
+// API call times out
+type TimeoutError struct{}
+
+func (e TimeoutError) Error() string {
+	return "Request timed out"
+}
+
+func (e TimeoutError) IsTimeout() bool {
+	return true
 }
