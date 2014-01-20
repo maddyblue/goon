@@ -290,7 +290,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	if payloadSize >= MemcachePutTimeoutThreshold {
 		memcacheTimeout = MemcachePutTimeoutLarge
 	}
-	err := memcache.SetMulti(g.timeout(memcacheTimeout), items)
+	err := memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
 	g.putMemoryMulti(srcs)
 	if err != nil {
 		g.error(err)
@@ -364,7 +364,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		return nil
 	}
 
-	memvalues, err := memcache.GetMulti(g.timeout(MemcacheGetTimeout), memkeys)
+	memvalues, err := memcache.GetMulti(appengine.Timeout(g.context, MemcacheGetTimeout), memkeys)
 	if len(memvalues) == 0 || err != nil {
 		if err != nil {
 			g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
