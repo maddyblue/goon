@@ -350,12 +350,15 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	g.cacheLock.RLock()
 	for i, key := range keys {
 		m := memkey(key)
+		vi := v.Index(i)
 		if s, present := g.cache[m]; present {
-			vi := v.Index(i)
 			vi.Set(reflect.ValueOf(s))
 		} else {
 			memkeys = append(memkeys, m)
 			mixs = append(mixs, i)
+			dskeys = append(dskeys, key)
+			dsdst = append(dsdst, vi.Interface())
+			dixs = append(dixs, i)
 		}
 	}
 	g.cacheLock.RUnlock()
@@ -369,16 +372,15 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		if err != nil {
 			g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
 		}
-		// No memvalues found, prepare the datastore section to fetch them all
-		dskeys = keys
-		dsdst = make([]interface{}, len(keys))
-		for i := 0; i < len(keys); i++ {
-			dsdst[i] = v.Index(i).Interface()
-		}
-		dixs = mixs
+		// No memvalues found, prepare the datastore fetch list already prepared above
 	} else {
+		// since memcache fetch was successful, reset the datastore fetch list and repopulate it
+		dskeys = dskeys[:0]
+		dsdst = dsdst[:0]
+		dixs = dixs[:0]
 		// we only want to check the returned map if there weren't any errors
 		// unlike the datastore, memcache will return a smaller map with no error if some of the keys were missed
+
 		for i, m := range memkeys {
 			d := v.Index(mixs[i]).Interface()
 			if s, present := memvalues[m]; present {
