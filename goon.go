@@ -207,6 +207,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 				any = true // this flag tells PutMulti to return multiErr later
 				copy(multiErr[lo:hi], merr)
 			}
+
 			for i, key := range keys[lo:hi] {
 				if multiErr[lo+i] != nil {
 					continue // there was an error writing this value, go to next
@@ -220,6 +221,8 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 					mk := memkey(rkeys[i])
 					delete(g.toDelete, mk)
 					g.toSet[mk] = vi
+				} else {
+					g.putMemory(vi)
 				}
 			}
 			errc <- nil
@@ -233,10 +236,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	}
 	if any {
 		return keys, multiErr
-	}
-	// can't use putMemoryMulti if there's a multiError because src may contain incomplete keys
-	if !g.inTransaction {
-		g.putMemoryMulti(src)
+
 	}
 	return keys, nil
 }
@@ -309,14 +309,12 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	if payloadSize >= MemcacheTimeoutThreshold {
 		memcacheTimeout = MemcachePutTimeoutLarge
 	}
-	var err error
-	var wg sync.WaitGroup
-	wg.Add(1)
+	errc := make(chan error)
 	go func() {
-		err = memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
-		wg.Done()
+		errc <- memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
 	}()
 	g.putMemoryMulti(srcs)
+	err := <-errc
 	if err != nil {
 		g.error(err)
 	}
