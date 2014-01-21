@@ -17,6 +17,7 @@
 package goon
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -219,9 +220,17 @@ func TestGoon(t *testing.T) {
 
 	// Test queries!
 
+	// Test that zero result queries work properly
+	qiZRes := []QueryItem{}
+	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiZRes); err != nil {
+		t.Errorf("GetAll Zero: unexpected error: %v", err)
+	} else if len(dskeys) != 0 {
+		t.Errorf("GetAll Zero: expected 0 keys, got %v", len(dskeys))
+	}
+
 	// Create an entity that we will query for
 	if _, err := n.Put(&QueryItem{Id: 1, Data: "foo"}); err != nil {
-		t.Errorf("Put: unexpected error: %v", err.Error())
+		t.Errorf("Put: unexpected error: %v", err)
 	}
 
 	// Sleep a bit to wait for the HRD emulation to get out of our way
@@ -233,11 +242,13 @@ func TestGoon(t *testing.T) {
 	// Get the entity using a slice of structs
 	qiSRes := []QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiSRes); err != nil {
-		t.Errorf("GetAll SoS: unexpected error: %v", err.Error())
+		t.Errorf("GetAll SoS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
 		t.Errorf("GetAll SoS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 1 {
 		t.Errorf("GetAll SoS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+	} else if len(qiSRes) != 1 {
+		t.Errorf("GetAll SoS: expected 1 result, got %v", len(qiSRes))
 	} else if qiSRes[0].Id != 1 {
 		t.Errorf("GetAll SoS: expected entity id to be 1, got %v", qiSRes[0].Id)
 	} else if qiSRes[0].Data != "foo" {
@@ -247,7 +258,7 @@ func TestGoon(t *testing.T) {
 	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
 	qiS := &QueryItem{Id: 1}
 	if err := n.Get(qiS); err != nil {
-		t.Errorf("Get SoS: unexpected error: %v", err.Error())
+		t.Errorf("Get SoS: unexpected error: %v", err)
 	} else if qiS.Id != 1 {
 		t.Errorf("Get SoS: expected entity id to be 1, got %v", qiS.Id)
 	} else if qiS.Data != "foo" {
@@ -260,11 +271,13 @@ func TestGoon(t *testing.T) {
 	// Get the entity using a slice of pointers to struct
 	qiPRes := []*QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiPRes); err != nil {
-		t.Errorf("GetAll SoPtS: unexpected error: %v", err.Error())
+		t.Errorf("GetAll SoPtS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
 		t.Errorf("GetAll SoPtS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 1 {
 		t.Errorf("GetAll SoPtS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+	} else if len(qiPRes) != 1 {
+		t.Errorf("GetAll SoPtS: expected 1 result, got %v", len(qiPRes))
 	} else if qiPRes[0].Id != 1 {
 		t.Errorf("GetAll SoPtS: expected entity id to be 1, got %v", qiPRes[0].Id)
 	} else if qiPRes[0].Data != "foo" {
@@ -274,7 +287,7 @@ func TestGoon(t *testing.T) {
 	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
 	qiP := &QueryItem{Id: 1}
 	if err := n.Get(qiP); err != nil {
-		t.Errorf("Get SoPtS: unexpected error: %v", err.Error())
+		t.Errorf("Get SoPtS: unexpected error: %v", err)
 	} else if qiP.Id != 1 {
 		t.Errorf("Get SoPtS: expected entity id to be 1, got %v", qiP.Id)
 	} else if qiP.Data != "foo" {
@@ -289,7 +302,7 @@ func TestGoon(t *testing.T) {
 
 	qiItRes := &QueryItem{}
 	if dskey, err := qiIt.Next(qiItRes); err != nil {
-		t.Errorf("Next: unexpected error: %v", err.Error())
+		t.Errorf("Next: unexpected error: %v", err)
 	} else if dskey.IntID() != 1 {
 		t.Errorf("Next: expected key IntID to be 1, got %v", dskey.IntID())
 	} else if qiItRes.Id != 1 {
@@ -300,17 +313,101 @@ func TestGoon(t *testing.T) {
 
 	// Make sure the iterator ends correctly
 	if _, err := qiIt.Next(&QueryItem{}); err != datastore.Done {
-		t.Errorf("Next: expected iterator to end with the error datastore.Done, got %v", err.Error())
+		t.Errorf("Next: expected iterator to end with the error datastore.Done, got %v", err)
 	}
 
 	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
 	qiI := &QueryItem{Id: 1}
 	if err := n.Get(qiI); err != nil {
-		t.Errorf("Get Iterator: unexpected error: %v", err.Error())
+		t.Errorf("Get Iterator: unexpected error: %v", err)
 	} else if qiI.Id != 1 {
 		t.Errorf("Get Iterator: expected entity id to be 1, got %v", qiI.Id)
 	} else if qiI.Data != "foo" {
 		t.Errorf("Get Iterator: expected entity data to be 'foo', got '%v'", qiI.Data)
+	}
+
+	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
+	n.FlushLocalCache()
+
+	// Test the simplest keys-only query
+	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").KeysOnly(), nil); err != nil {
+		t.Errorf("GetAll KeysOnly: unexpected error: %v", err)
+	} else if len(dskeys) != 1 {
+		t.Errorf("GetAll KeysOnly: expected 1 key, got %v", len(dskeys))
+	} else if dskeys[0].IntID() != 1 {
+		t.Errorf("GetAll KeysOnly: expected key IntID to be 1, got %v", dskeys[0].IntID())
+	}
+
+	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
+	qiKO := &QueryItem{Id: 1}
+	if err := n.Get(qiKO); err != nil {
+		t.Errorf("Get KeysOnly: unexpected error: %v", err)
+	} else if qiKO.Id != 1 {
+		t.Errorf("Get KeysOnly: expected entity id to be 1, got %v", qiKO.Id)
+	} else if qiKO.Data != "foo" {
+		t.Errorf("Get KeysOnly: expected entity data to be 'foo', got '%v'", qiKO.Data)
+	}
+
+	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
+	n.FlushLocalCache()
+
+	// Test the keys-only query with slice of structs
+	qiKOSRes := []QueryItem{}
+	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").KeysOnly(), &qiKOSRes); err != nil {
+		t.Errorf("GetAll KeysOnly SoS: unexpected error: %v", err)
+	} else if len(dskeys) != 1 {
+		t.Errorf("GetAll KeysOnly SoS: expected 1 key, got %v", len(dskeys))
+	} else if dskeys[0].IntID() != 1 {
+		t.Errorf("GetAll KeysOnly SoS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+	} else if len(qiKOSRes) != 1 {
+		t.Errorf("GetAll KeysOnly SoS: expected 1 result, got %v", len(qiKOSRes))
+	} else if k := reflect.TypeOf(qiKOSRes[0]).Kind(); k != reflect.Struct {
+		t.Errorf("GetAll KeysOnly SoS: expected struct, got %v", k)
+	} else if qiKOSRes[0].Id != 1 {
+		t.Errorf("GetAll KeysOnly SoS: expected entity id to be 1, got %v", qiKOSRes[0].Id)
+	} else if qiKOSRes[0].Data != "" {
+		t.Errorf("GetAll KeysOnly SoS: expected entity data to be empty, got '%v'", qiKOSRes[0].Data)
+	}
+
+	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
+	qiKOS := &QueryItem{Id: 1}
+	if err := n.Get(qiKOS); err != nil {
+		t.Errorf("Get KeysOnly SoS: unexpected error: %v", err)
+	} else if qiKOS.Id != 1 {
+		t.Errorf("Get KeysOnly SoS: expected entity id to be 1, got %v", qiKOS.Id)
+	} else if qiKOS.Data != "foo" {
+		t.Errorf("Get KeysOnly SoS: expected entity data to be 'foo', got '%v'", qiKOS.Data)
+	}
+
+	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
+	n.FlushLocalCache()
+
+	// Test the keys-only query with slice of pointers to struct
+	qiKOPRes := []*QueryItem{}
+	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").KeysOnly(), &qiKOPRes); err != nil {
+		t.Errorf("GetAll KeysOnly SoPtS: unexpected error: %v", err)
+	} else if len(dskeys) != 1 {
+		t.Errorf("GetAll KeysOnly SoPtS: expected 1 key, got %v", len(dskeys))
+	} else if dskeys[0].IntID() != 1 {
+		t.Errorf("GetAll KeysOnly SoPtS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+	} else if len(qiKOPRes) != 1 {
+		t.Errorf("GetAll KeysOnly SoPtS: expected 1 result, got %v", len(qiKOPRes))
+	} else if k := reflect.TypeOf(qiKOPRes[0]).Kind(); k != reflect.Ptr {
+		t.Errorf("GetAll KeysOnly SoPtS: expected pointer, got %v", k)
+	} else if qiKOPRes[0].Id != 1 {
+		t.Errorf("GetAll KeysOnly SoPtS: expected entity id to be 1, got %v", qiKOPRes[0].Id)
+	} else if qiKOPRes[0].Data != "" {
+		t.Errorf("GetAll KeysOnly SoPtS: expected entity data to be empty, got '%v'", qiKOPRes[0].Data)
+	}
+
+	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
+	qiKOP := &QueryItem{Id: 1}
+	if err := n.Get(qiKOP); err != nil {
+		t.Errorf("Get KeysOnly SoPtS: unexpected error: %v", err)
+	} else if qiKOP.Id != 1 {
+		t.Errorf("Get KeysOnly SoPtS: expected entity id to be 1, got %v", qiKOP.Id)
+	} else if qiKOP.Data != "foo" {
+		t.Errorf("Get KeysOnly SoPtS: expected entity data to be 'foo', got '%v'", qiKOP.Data)
 	}
 }
 
