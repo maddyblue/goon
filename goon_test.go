@@ -370,13 +370,12 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
-	qiKOS := &QueryItem{Id: 1}
-	if err := n.Get(qiKOS); err != nil {
+	if err := n.Get(&qiKOSRes[0]); err != nil { // TODO: Change this to n.GetMulti(qiKOSRes) once GetMulti gets []S support
 		t.Errorf("Get KeysOnly SoS: unexpected error: %v", err)
-	} else if qiKOS.Id != 1 {
-		t.Errorf("Get KeysOnly SoS: expected entity id to be 1, got %v", qiKOS.Id)
-	} else if qiKOS.Data != "foo" {
-		t.Errorf("Get KeysOnly SoS: expected entity data to be 'foo', got '%v'", qiKOS.Data)
+	} else if qiKOSRes[0].Id != 1 {
+		t.Errorf("Get KeysOnly SoS: expected entity id to be 1, got %v", qiKOSRes[0].Id)
+	} else if qiKOSRes[0].Data != "foo" {
+		t.Errorf("Get KeysOnly SoS: expected entity data to be 'foo', got '%v'", qiKOSRes[0].Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
@@ -401,13 +400,12 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
-	qiKOP := &QueryItem{Id: 1}
-	if err := n.Get(qiKOP); err != nil {
+	if err := n.GetMulti(qiKOPRes); err != nil {
 		t.Errorf("Get KeysOnly SoPtS: unexpected error: %v", err)
-	} else if qiKOP.Id != 1 {
-		t.Errorf("Get KeysOnly SoPtS: expected entity id to be 1, got %v", qiKOP.Id)
-	} else if qiKOP.Data != "foo" {
-		t.Errorf("Get KeysOnly SoPtS: expected entity data to be 'foo', got '%v'", qiKOP.Data)
+	} else if qiKOPRes[0].Id != 1 {
+		t.Errorf("Get KeysOnly SoPtS: expected entity id to be 1, got %v", qiKOPRes[0].Id)
+	} else if qiKOPRes[0].Data != "foo" {
+		t.Errorf("Get KeysOnly SoPtS: expected entity data to be 'foo', got '%v'", qiKOPRes[0].Data)
 	}
 }
 
