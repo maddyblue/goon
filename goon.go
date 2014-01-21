@@ -368,12 +368,10 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	}
 
 	memvalues, err := memcache.GetMulti(appengine.Timeout(g.context, MemcacheGetTimeout), memkeys)
-	if len(memvalues) == 0 || err != nil {
-		if err != nil {
-			g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
-		}
+	if err != nil {
+		g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
 		// No memvalues found, prepare the datastore fetch list already prepared above
-	} else {
+	} else if len(memvalues) > 0 {
 		// since memcache fetch was successful, reset the datastore fetch list and repopulate it
 		dskeys = dskeys[:0]
 		dsdst = dsdst[:0]
