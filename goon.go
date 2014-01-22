@@ -188,9 +188,11 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	multiErr, any := make(appengine.MultiError, len(keys)), false
 	goroutines := (len(keys)-1)/putMultiLimit + 1
-	errc := make(chan error, goroutines) // buffer responses so we don't leak a goroutine if we return early
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
 		go func(i int) {
+			defer wg.Done()
 			lo := i * putMultiLimit
 			hi := (i + 1) * putMultiLimit
 			if hi > len(keys) {
@@ -198,13 +200,15 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 			}
 			rkeys, pmerr := datastore.PutMulti(g.context, keys[lo:hi], v.Slice(lo, hi).Interface())
 			if pmerr != nil {
+				any = true // this flag tells PutMulti to return multiErr later
 				merr, ok := pmerr.(appengine.MultiError)
 				if !ok {
 					g.error(pmerr)
-					errc <- pmerr
+					for j := lo; j < hi; j++ {
+						multiErr[j] = pmerr
+					}
 					return
 				}
-				any = true // this flag tells PutMulti to return multiErr later
 				copy(multiErr[lo:hi], merr)
 			}
 
@@ -225,18 +229,11 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 					g.putMemory(vi)
 				}
 			}
-			errc <- nil
 		}(i)
 	}
-	for i := 0; i < goroutines; i++ {
-		err = <-errc
-		if err != nil { // this will not be a multiError since the goroutines don't put that in the channel
-			return nil, err
-		}
-	}
+	wg.Wait()
 	if any {
 		return keys, multiErr
-
 	}
 	return keys, nil
 }
@@ -396,7 +393,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				g.error(err)
 				return err
 			}
-
 			g.putMemory(d)
 		} else {
 			dskeys = append(dskeys, keys[mixs[i]])
@@ -410,9 +406,11 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 	multiErr, any := make(appengine.MultiError, len(keys)), false
 	goroutines := (len(dskeys)-1)/getMultiLimit + 1
-	errc := make(chan error, goroutines) // buffer responses so we don't leak a goroutine if we return early
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
 		go func(i int) {
+			defer wg.Done()
 			var toCache []interface{}
 			lo := i * getMultiLimit
 			hi := (i + 1) * getMultiLimit
@@ -421,13 +419,15 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			}
 			gmerr := datastore.GetMulti(g.context, dskeys[lo:hi], dsdst[lo:hi])
 			if gmerr != nil {
+				any = true // this flag tells GetMulti to return multiErr later
 				merr, ok := gmerr.(appengine.MultiError)
 				if !ok {
 					g.error(gmerr)
-					errc <- gmerr
+					for j := lo; j < hi; j++ {
+						multiErr[j] = gmerr
+					}
 					return
 				}
-				any = true // this flag tells GetMulti to return multiErr later
 				for i, idx := range dixs[lo:hi] {
 					if merr[i] == nil {
 						toCache = append(toCache, dsdst[lo+i])
@@ -446,15 +446,9 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				}
 
 			}
-			errc <- nil
 		}(i)
 	}
-	for i := 0; i < goroutines; i++ {
-		err = <-errc
-		if err != nil { // this will not be a multiError since the goroutines don't put that in the channel
-			return err
-		}
-	}
+	wg.Wait()
 	if any {
 		return multiErr
 	}
@@ -496,9 +490,11 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 
 	multiErr, any := make(appengine.MultiError, len(keys)), false
 	goroutines := (len(keys)-1)/deleteMultiLimit + 1
-	errc := make(chan error, goroutines) // buffer responses so we don't leak a goroutine if we return early
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
 		go func(i int) {
+			defer wg.Done()
 			lo := i * deleteMultiLimit
 			hi := (i + 1) * deleteMultiLimit
 			if hi > len(keys) {
@@ -506,24 +502,20 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 			}
 			dmerr := datastore.DeleteMulti(g.context, keys[lo:hi])
 			if dmerr != nil {
+				any = true // this flag tells DeleteMulti to return multiErr later
 				merr, ok := dmerr.(appengine.MultiError)
 				if !ok {
 					g.error(dmerr)
-					errc <- dmerr
+					for j := lo; j < hi; j++ {
+						multiErr[j] = dmerr
+					}
 					return
 				}
-				any = true // this flag tells DeleteMulti to return multiErr later
 				copy(multiErr[lo:hi], merr)
 			}
-			errc <- nil
 		}(i)
 	}
-	for i := 0; i < goroutines; i++ {
-		err := <-errc
-		if err != nil { // this will not be a multiError since the goroutines don't put that in the channel
-			return err
-		}
-	}
+	wg.Wait()
 	if any {
 		return multiErr
 	}
