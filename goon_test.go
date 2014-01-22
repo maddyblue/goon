@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"appengine"
 	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
@@ -373,7 +374,8 @@ func TestVariance(t *testing.T) {
 			// do nothing, use defaults already set
 		case "memcache":
 			MemcacheGetTimeout = 0
-			MemcachePutTimeout = 0
+			MemcachePutTimeoutLarge = 0
+			MemcachePutTimeoutSmall = 0
 		}
 		objects := []*HasId{
 			&HasId{Id: 1, Name: "1"}, // stored in cache, memcache, and datastore
@@ -460,6 +462,32 @@ func TestVariance(t *testing.T) {
 	}
 }
 
+// Commenting out for issue https://code.google.com/p/googleappengine/issues/detail?id=10493
+//func TestMemcachePutTimeout(t *testing.T) {
+//	c, err := aetest.NewContext(nil)
+//	if err != nil {
+//		t.Fatalf("Could not start aetest - %v", err)
+//	}
+//	defer c.Close()
+//	g := FromContext(c)
+
+//	// put a HasId resource, then test pulling it from memory, memcache, and datastore
+//	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
+//	if _, err := g.Put(hi); err != nil {
+//		t.Errorf("put: unexpected error - %v", err)
+//	}
+
+//	MemcachePutTimeout = 0
+//	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
+//		t.Errorf("Request should timeout - err = %v", err)
+//	}
+
+//	MemcachePutTimeout = time.Second
+//	if err := g.putMemcache([]interface{}{hi}); err != nil {
+//		t.Errorf("putMemcache: unexpected error - %v", err)
+//	}
+//}
+
 // This test won't fail but if run with -race flag, it will show known race conditions
 // Using multiple goroutines per http request is recommended here:
 // http://talks.golang.org/2013/highperf.slide#22
@@ -523,5 +551,78 @@ func TestPutGet(t *testing.T) {
 	if goonPutGet.Value != 15 {
 		t.Fatal("goonPutGet.Value should be 15 but is",
 			goonPutGet.Value)
+	}
+}
+
+func TestMultis(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	n := FromContext(c)
+
+	testAmounts := []int{1, 999, 1000, 1001, 1999, 2000, 2001, 2510}
+	for _, x := range testAmounts {
+		memcache.Flush(c)
+		objects := make([]*HasId, x)
+		for y := 0; y < x; y++ {
+			objects[y] = &HasId{Id: int64(y + 1)}
+		}
+		if _, err := n.PutMulti(objects); err != nil {
+			t.Fatalf("Error in PutMulti for %d objects - %v", x, err)
+		}
+		n.FlushLocalCache() // Put just put them in the local cache, get rid of it before doing the Get
+		if err := n.GetMulti(objects); err != nil {
+			t.Fatalf("Error in GetMulti - %v", err)
+		}
+	}
+
+	// do it again, but only write numbers divisible by 100
+	for _, x := range testAmounts {
+		memcache.Flush(c)
+		getobjects := make([]*HasId, 0, x)
+		putobjects := make([]*HasId, 0, x/100+1)
+		keys := make([]*datastore.Key, x)
+		for y := 0; y < x; y++ {
+			keys[y] = datastore.NewKey(c, "HasId", "", int64(y+1), nil)
+		}
+		if err := n.DeleteMulti(keys); err != nil {
+			t.Fatalf("Error deleting keys - %v", err)
+		}
+		for y := 0; y < x; y++ {
+			getobjects = append(getobjects, &HasId{Id: int64(y + 1)})
+			if y%100 == 0 {
+				putobjects = append(putobjects, &HasId{Id: int64(y + 1)})
+			}
+		}
+
+		_, err := n.PutMulti(putobjects)
+		if err != nil {
+			t.Fatalf("Error in PutMulti for %d objects - %v", x, err)
+		}
+		n.FlushLocalCache() // Put just put them in the local cache, get rid of it before doing the Get
+		err = n.GetMulti(getobjects)
+		if err == nil && x != 1 { // a test size of 1 has no objects divisible by 100, so there's no cache miss to return
+			t.Errorf("Should be receiving a multiError on %d objects, but got no errors", x)
+			continue
+		}
+
+		merr, ok := err.(appengine.MultiError)
+		if ok {
+			if len(merr) != len(getobjects) {
+				t.Errorf("Should have received a MultiError object of length %d but got length %d instead", len(getobjects), len(merr))
+			}
+			for x := range merr {
+				switch { // record good conditions, fail in other conditions
+				case merr[x] == nil && x%100 == 0:
+				case merr[x] != nil && x%100 != 0:
+				default:
+					t.Errorf("Found bad condition on object[%d] and error %v", x+1, merr[x])
+				}
+			}
+		} else if x != 1 {
+			t.Errorf("Did not return a multierror on fetch but when fetching %d objects, received - %v", x, merr)
+		}
 	}
 }
