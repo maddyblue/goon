@@ -142,7 +142,10 @@ Memcache variance:
 	To change defaults:
 		package myapp
 
-		import "github.com/mjibson/goon"
+		import (
+			"github.com/mjibson/goon"
+			"time"
+		)
 
 		func init() {
 			goon.MemcachePutTimeoutThreshold = 1024 * 50 // 50k
