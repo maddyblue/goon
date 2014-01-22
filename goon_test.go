@@ -35,6 +35,11 @@ func TestGoon(t *testing.T) {
 	defer c.Close()
 	n := FromContext(c)
 
+	// Don't want any of these tests to hit the timeout threshold on the devapp server
+	MemcacheGetTimeout = time.Second
+	MemcachePutTimeoutLarge = time.Second
+	MemcachePutTimeoutSmall = time.Second
+
 	// key tests
 	noid := NoId{}
 	if k, err := n.KeyError(noid); err == nil && !k.Incomplete() {
@@ -227,7 +232,7 @@ func TestGoon(t *testing.T) {
 		t.Errorf("get: unexpected error - %v", err)
 	}
 	if hiPull.Name != "changedinmemcache" {
-		t.Errorf("hiPull.Name should be 'changedincache' but got %s", hiPull.Name)
+		t.Errorf("hiPull.Name should be 'changedinmemcache' but got %s", hiPull.Name)
 	}
 
 	// Since the datastore can't assign a key to a String ID, test to make sure goon stops it from happening
@@ -399,7 +404,7 @@ func TestMemcachePutTimeout(t *testing.T) {
 	}
 	defer c.Close()
 	g := FromContext(c)
-
+	MemcachePutTimeoutSmall = time.Second
 	// put a HasId resource, then test pulling it from memory, memcache, and datastore
 	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
 	if _, err := g.Put(hi); err != nil {
