@@ -35,8 +35,9 @@ func (tc *TimeoutContext) Call(service, method string, in, out appengine_interna
 	}
 }
 
-// CallError is the type returned by goon.TimeoutContext's Call method when an
+// TimeoutError is the type returned by goon.TimeoutContext's Call method when an
 // API call times out
+// When passed to the appengine.IsTimeoutError(err) function it returns true
 type TimeoutError struct {
 	service, method string
 }
