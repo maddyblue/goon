@@ -32,30 +32,41 @@ func (g *Goon) Count(q *datastore.Query) (int, error) {
 // caching the returned data in local memory.
 //
 // For "keys-only" queries dst can be nil, however if it is not, then GetAll
-// appends empty structs to dst, only setting the goon key fields.
+// appends zero value structs to dst, only setting the goon key fields.
 // No data is cached with "keys-only" queries.
 //
 // See: https://developers.google.com/appengine/docs/go/datastore/reference#Query.GetAll
 func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, error) {
+	v := reflect.ValueOf(dst)
+	vLenBefore := 0
+
+	if dst != nil {
+		if v.Kind() != reflect.Ptr {
+			return nil, fmt.Errorf("goon: Expected dst to be a pointer to a slice or nil, got instead: %v", v.Kind())
+		}
+
+		v = v.Elem()
+		if v.Kind() != reflect.Slice {
+			return nil, fmt.Errorf("goon: Expected dst to be a pointer to a slice or nil, got instead: %v", v.Kind())
+		}
+
+		vLenBefore = v.Len()
+	}
+
 	keys, err := q.GetAll(g.context, dst)
 	if err != nil {
 		g.error(err)
 		return nil, err
-	} else if dst == nil || len(keys) == 0 {
+	}
+	if dst == nil || len(keys) == 0 {
 		return keys, nil
 	}
 
-	v := reflect.Indirect(reflect.ValueOf(dst))
-	if v.Kind() != reflect.Slice {
-		return keys, fmt.Errorf("goon: Expected slice, got instead: %v", v.Kind())
-	}
+	keysOnly := ((v.Len() - vLenBefore) != len(keys))
+	updateCache := !g.inTransaction && !keysOnly
 
-	updateCache := !g.inTransaction
-
-	// If this is a keys-only query, we need to fill the slice with empty elements
-	if v.Len() != len(keys) {
-		updateCache = false
-
+	// If this is a keys-only query, we need to fill the slice with zero value elements
+	if keysOnly {
 		elemType := v.Type().Elem()
 		ptr := false
 		if elemType.Kind() == reflect.Ptr {
@@ -84,7 +95,7 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 
 	for i, k := range keys {
 		var e interface{}
-		vi := v.Index(i)
+		vi := v.Index(vLenBefore + i)
 		if vi.Kind() == reflect.Ptr {
 			e = vi.Interface()
 		} else {
@@ -101,7 +112,7 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 		}
 	}
 
-	return keys, err
+	return keys, nil
 }
 
 // Run runs the query.
