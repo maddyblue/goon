@@ -19,6 +19,7 @@ package goon
 import (
 	"testing"
 	"time"
+
 	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
@@ -31,6 +32,11 @@ func TestGoon(t *testing.T) {
 	}
 	defer c.Close()
 	n := FromContext(c)
+
+	// Don't want any of these tests to hit the timeout threshold on the devapp server
+	MemcacheGetTimeout = time.Second
+	MemcachePutTimeoutLarge = time.Second
+	MemcachePutTimeoutSmall = time.Second
 
 	// key tests
 	noid := NoId{}
@@ -224,7 +230,7 @@ func TestGoon(t *testing.T) {
 		t.Errorf("get: unexpected error - %v", err)
 	}
 	if hiPull.Name != "changedinmemcache" {
-		t.Errorf("hiPull.Name should be 'changedincache' but got %s", hiPull.Name)
+		t.Errorf("hiPull.Name should be 'changedinmemcache' but got %s", hiPull.Name)
 	}
 
 	// Since the datastore can't assign a key to a String ID, test to make sure goon stops it from happening
@@ -388,7 +394,7 @@ type PutGet struct {
 	Value int32
 }
 
-//Commenting out for issue https://code.google.com/p/googleappengine/issues/detail?id=10493
+// Commenting out for issue https://code.google.com/p/googleappengine/issues/detail?id=10493
 //func TestMemcachePutTimeout(t *testing.T) {
 //	c, err := aetest.NewContext(nil)
 //	if err != nil {
@@ -396,7 +402,7 @@ type PutGet struct {
 //	}
 //	defer c.Close()
 //	g := FromContext(c)
-
+//	MemcachePutTimeoutSmall = time.Second
 //	// put a HasId resource, then test pulling it from memory, memcache, and datastore
 //	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
 //	if _, err := g.Put(hi); err != nil {

@@ -145,7 +145,8 @@ Memcache variance:
 		import "github.com/mjibson/goon"
 
 		func init() {
-			goon.MemcachePutTimeoutThreshold
+			goon.MemcachePutTimeoutThreshold = 1024 * 50 // 50k
+			goon.MemcachePutTimeoutSmall = time.Millisecond * 10
 		}
 */
 package goon
