@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 	"strings"
 
 	"appengine/datastore"
@@ -53,6 +54,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 	k := t.Kind()
 
 	if k != reflect.Struct {
+		debug.PrintStack()
 		return nil, fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
@@ -137,7 +139,8 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 	k = t.Kind()
 
 	if k != reflect.Struct {
-		return errors.New(fmt.Sprintf("goon: Expected struct, got instead: %v", k))
+		debug.PrintStack()
+		return errors.New(fmt.Sprintf("goon: Expected ptr to struct, got instead ptr to: %v", k))
 	}
 
 	idSet := false

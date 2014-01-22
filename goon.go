@@ -32,17 +32,18 @@ import (
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
 	LogErrors = true
-	// MemcacheTimeoutThreshold is the number of bytes at which the memcache
+	// MemcachePutTimeoutThreshold is the number of bytes at which the memcache
 	// timeout uses the large setting.
-	MemcacheTimeoutThreshold = 1024 * 50 // 50K bytes
+	MemcachePutTimeoutThreshold = 1024 * 50 // 50K bytes
 	// MemcachePutTimeoutSmall is the amount of time to wait during memcache
-	// operations before also issuing a request to the datastore.
+	// Put operations before also issuing a request to the datastore.
 	MemcachePutTimeoutSmall = time.Millisecond * 5
 	// MemcachePutTimeoutLarge is the amount of time to wait for large memcache
-	// requests.
+	// Put requests.
 	MemcachePutTimeoutLarge = time.Millisecond * 15
-	// memcache Get Timeout
-	MemcacheGetTimeout = time.Millisecond * 10
+	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
+	// requests
+	MemcacheGetTimeout = time.Millisecond * 10 // the Duration that we'll wait for memcache.Get
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -305,7 +306,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 		}
 	}
 	memcacheTimeout := MemcachePutTimeoutSmall
-	if payloadSize >= MemcacheTimeoutThreshold {
+	if payloadSize >= MemcachePutTimeoutThreshold {
 		memcacheTimeout = MemcachePutTimeoutLarge
 	}
 	errc := make(chan error, 1) // need to buffer so as to not leak a goroutine
@@ -334,6 +335,10 @@ func (g *Goon) Get(dst interface{}) error {
 	if set.Kind() != reflect.Ptr {
 		return errors.New(fmt.Sprintf("goon: expected pointer to a struct, got %#v", dst))
 	}
+	set = set.Elem()
+	if !set.CanSet() {
+		return errors.New(fmt.Sprintf("goon: provided %#v, which cannot be changed", dst))
+	}
 	dsts := []interface{}{dst}
 	if err := g.GetMulti(dsts); err != nil {
 		// Look for an embedded error if it's multi
@@ -347,7 +352,7 @@ func (g *Goon) Get(dst interface{}) error {
 		// Not multi, normal error
 		return err
 	}
-	set.Elem().Set(reflect.ValueOf(dsts[0]).Elem())
+	set.Set(reflect.ValueOf(dsts[0]).Elem())
 	return nil
 }
 
@@ -370,16 +375,24 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	var memkeys []string // a slice of datastore.Key.Encode() that is not in the local cache
 	var mixs []int       // a slice of indexes of dst that represent the memkeys
 
+	var dskeys []*datastore.Key // a slice of datastore.Key that should be fetched by the datastore
+	var dsdst []interface{}     // a slice of pointers to the destination objects to be filled, index lines up with dskeys
+	var dixs []int              // a slice of indexes of dst that represent the dskeys
+
 	v := reflect.Indirect(reflect.ValueOf(dst))
 	g.cacheLock.RLock()
 	for i, key := range keys {
 		m := memkey(key)
+		vi := v.Index(i)
 		if s, present := g.cache[m]; present {
-			vi := v.Index(i)
+
 			vi.Set(reflect.ValueOf(s))
 		} else {
 			memkeys = append(memkeys, m)
 			mixs = append(mixs, i)
+			dskeys = append(dskeys, key)
+			dsdst = append(dsdst, vi.Interface())
+			dixs = append(dixs, i)
 		}
 	}
 	g.cacheLock.RUnlock()
@@ -390,10 +403,8 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 	memcacheChan := make(chan map[string]*memcache.Item, 1) // buffer so that we don't leak a goroutine if the request times out
 	datastoreChan := make(chan error, 1)                    // again, buffer so we don't leak go routine
+	datastoreStarted := false
 	copyValues := true
-	var dskeys []*datastore.Key // a slice of datastore.Key that should be fetched by the datastore
-	var dsdst []interface{}     // a slice of pointers to the destination objects to be filled, index lines up with dskeys
-	var dixs []int              // a slice of indexes of dst that represent the dskeys
 
 	go func() {
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
@@ -423,30 +434,32 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				return nil
 			}
 
-			if len(dskeys) == 0 {
+			if !datastoreStarted {
+				datastoreStarted = true
 				// datastore hasn't been kicked off yet
-				// populate it and kick off the request
-				copyValues = false
+				// reset it, populate it, and kick off the request
 				// since we're not making copies of the destination structs, datastore.GetMulti() will write in the values
-				for i, m := range memkeys {
-					if _, present := memvalues[m]; !present {
-						// memcache miss
-						d := v.Index(mixs[i]).Interface()
-						dskeys = append(dskeys, keys[mixs[i]])
-						dsdst = append(dsdst, d)
-						dixs = append(dixs, mixs[i])
+				copyValues = false
+				if len(memvalues) != 0 { // no memcache results
+					// ds fields already indexed in initial local cache lookup
+					dskeys = dskeys[:0]
+					dsdst = dsdst[:0]
+					dixs = dixs[:0]
+					for i, m := range memkeys {
+						if _, present := memvalues[m]; !present {
+							// memcache miss
+							d := v.Index(mixs[i]).Interface()
+							dskeys = append(dskeys, keys[mixs[i]])
+							dsdst = append(dsdst, d)
+							dixs = append(dixs, mixs[i])
+						}
 					}
 				}
 				go g.startDatastoreGetMulti(datastoreChan, len(keys), dskeys, dsdst, dixs)
 			}
 		case err := <-datastoreChan:
-			if appengine.IsTimeoutError(err) {
-				g.error(err)
-				err = nil // we don't really care if the Put to memcache timed out if datastore fetched results
-			} else if err != nil {
-				return err
-			}
-			if copyValues { // datastore request was started before memcache
+			// since all errors will be multiError, need to copy partial results before returning
+			if copyValues { // datastore request was started before memcache returned
 				for i, dsti := range dixs {
 					err := setStructKey(dsdst[i], dskeys[i])
 					if err != nil {
@@ -455,12 +468,14 @@ func (g *Goon) GetMulti(dst interface{}) error {
 					v.Index(dsti).Set(reflect.ValueOf(dsdst[i]))
 				}
 			}
-			return nil
+			return err
 		case <-memcacheGetTimeoutChan:
-			if len(dskeys) == 0 { //memcache took too long, start the datastore request
+			if !datastoreStarted { //memcache took too long, start the datastore request
 				// memcache.GetMulti() could potentially be writing to the dst objects
 				// to address a race condition, we need to make copies to send  to
 				// the datastore
+				datastoreStarted = true
+				copyValues = true
 				g.cacheLock.RLock()
 				for i, key := range keys {
 					if _, present := g.cache[memkey(key)]; !present {
@@ -470,7 +485,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 					}
 				}
 				g.cacheLock.RUnlock()
-
 				go g.startDatastoreGetMulti(datastoreChan, len(keys), dskeys, dsdst, dixs)
 			} // else - do nothing, datastore request already started
 		}
