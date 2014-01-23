@@ -349,7 +349,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		m := memkey(key)
 		if s, present := g.cache[m]; present {
 			vi := v.Index(i)
-			vi.Set(reflect.ValueOf(s))
+			reflect.Indirect(vi).Set(reflect.Indirect(reflect.ValueOf(s)))
 		} else {
 			memkeys = append(memkeys, m)
 			mixs = append(mixs, i)
@@ -364,6 +364,9 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	memvalues, _ := memcache.GetMulti(g.context, memkeys)
 	for i, m := range memkeys {
 		d := v.Index(mixs[i]).Interface()
+		if v.Index(mixs[i]).Kind() == reflect.Struct {
+			d = v.Index(mixs[i]).Addr().Interface()
+		}
 		if s, present := memvalues[m]; present {
 			err := fromGob(d, s.Value)
 			if err != nil {
