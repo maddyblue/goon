@@ -303,6 +303,9 @@ func (g *Goon) Get(dst interface{}) error {
 	if set.Kind() != reflect.Ptr {
 		return errors.New(fmt.Sprintf("goon: expected pointer to a struct, got %#v", dst))
 	}
+	if !set.CanSet() {
+		set = set.Elem()
+	}
 	dsts := []interface{}{dst}
 	if err := g.GetMulti(dsts); err != nil {
 		// Look for an embedded error if it's multi
@@ -316,7 +319,7 @@ func (g *Goon) Get(dst interface{}) error {
 		// Not multi, normal error
 		return err
 	}
-	set.Elem().Set(reflect.ValueOf(dsts[0]).Elem())
+	set.Set(reflect.Indirect(reflect.ValueOf(dsts[0])))
 	return nil
 }
 
