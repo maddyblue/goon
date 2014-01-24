@@ -27,6 +27,66 @@ import (
 	"appengine/memcache"
 )
 
+func TestCaches(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+
+	// Put *struct{}
+	phid := &HasId{Name: "cacheFail"}
+	_, err = g.Put(phid)
+	if err != nil {
+		t.Errorf("Unexpected error on put - %v", err)
+	}
+	time.Sleep(1) // sleep so the datastore can catch up
+
+	// fetch *struct{} from cache
+	ghid := &HasId{Id: phid.Id}
+	err = g.Get(ghid)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(phid, ghid) {
+		t.Errorf("Expected - %v, got %v", phid, ghid)
+	}
+
+	// fetch []struct{} from cache
+	ghids := []HasId{{Id: phid.Id}}
+	err = g.GetMulti(&ghids)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(*phid, ghids[0]) {
+		t.Errorf("Expected - %v, got %v", *phid, ghids[0])
+	}
+
+	// Now flush localcache and fetch them again
+	g.FlushLocalCache()
+	// fetch *struct{} from memcache
+	ghid = &HasId{Id: phid.Id}
+	err = g.Get(ghid)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(phid, ghid) {
+		t.Errorf("Expected - %v, got %v", phid, ghid)
+	}
+
+	g.FlushLocalCache()
+	// fetch []struct{} from memcache
+	ghids = []HasId{{Id: phid.Id}}
+	err = g.GetMulti(&ghids)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(*phid, ghids[0]) {
+		t.Errorf("Expected - %v, got %v", *phid, ghids[0])
+	}
+}
+
 func TestGoon(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
@@ -556,14 +616,14 @@ func TestMemcacheTimeout(t *testing.T) {
 		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResults[0])
 	}
 
-	//hiResults2 := &[]HasId{{Id: hi.Id}}
-	//if err := g.GetMulti(hiResults2); err != nil {
-	//	t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
-	//	// Put timing out should also error, but it won't be returned here, just logged
-	//}
-	//if !reflect.DeepEqual(hi, (*hiResults2)[0]) {
-	//	t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, (*hiResults2)[0])
-	//}
+	hiResults2 := &[]HasId{{Id: hi.Id}}
+	if err := g.GetMulti(hiResults2); err != nil {
+		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
+		// Put timing out should also error, but it won't be returned here, just logged
+	}
+	if !reflect.DeepEqual(*hi, (*hiResults2)[0]) {
+		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, (*hiResults2)[0])
+	}
 
 	hiResult = &HasId{Id: hi.Id}
 	if err := g.Get(hiResult); err != nil {

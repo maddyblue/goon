@@ -339,8 +339,9 @@ func (g *Goon) Get(dst interface{}) error {
 	if !set.CanSet() {
 		return errors.New(fmt.Sprintf("goon: provided %#v, which cannot be changed", dst))
 	}
-	dsts := []interface{}{dst}
-	if err := g.GetMulti(dsts); err != nil {
+	dsts := reflect.Indirect(reflect.New(reflect.SliceOf(reflect.TypeOf(dst))))
+	dsts = reflect.Append(dsts, reflect.ValueOf(dst))
+	if err := g.GetMulti(dsts.Interface()); err != nil {
 		// Look for an embedded error if it's multi
 		if me, ok := err.(appengine.MultiError); ok {
 			for i, merr := range me {
@@ -352,7 +353,7 @@ func (g *Goon) Get(dst interface{}) error {
 		// Not multi, normal error
 		return err
 	}
-	set.Set(reflect.ValueOf(dsts[0]).Elem())
+	set.Set(reflect.Indirect(dsts.Index(0)))
 	return nil
 }
 
@@ -385,8 +386,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		m := memkey(key)
 		vi := v.Index(i)
 		if s, present := g.cache[m]; present {
-
-			vi.Set(reflect.ValueOf(s))
+			reflect.Indirect(v.Index(i)).Set(reflect.Indirect(reflect.ValueOf(s)))
 		} else {
 			memkeys = append(memkeys, m)
 			mixs = append(mixs, i)
@@ -420,13 +420,16 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			// write fetched entries to dst
 			for i, m := range memkeys {
 				if s, present := memvalues[m]; present {
-					d := v.Index(mixs[i]).Interface()
-					err := fromGob(d, s.Value)
+					d := v.Index(mixs[i])
+					if d.Kind() == reflect.Struct {
+						d = d.Addr()
+					}
+					err := fromGob(d.Interface(), s.Value)
 					if err != nil {
 						g.error(err)
 						return err
 					}
-					g.putMemory(d) // populate local cache
+					g.putMemory(d.Interface()) // populate local cache
 				}
 			}
 
