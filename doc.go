@@ -71,6 +71,8 @@ Per-request, in-memory cache: fetch the same key twice, the second request is se
 
 Intelligent multi support: running GetMulti correctly fetches from memory, then memcache, then the datastore; each tier only sends keys off to the next one if they were missing.
 
+Memcache variance: Goon limits the length of the memcache requests to minimize outliers
+
 Transactions use a separate context, but locally cache any results on success.
 
 Automatic kind naming: struct names are inferred by reflection, removing the need to manually specify key kinds.
@@ -123,5 +125,31 @@ goon:
 	g := &Group{Id: 1}
 	err := n.Get(g)
 
+Memcache variance:
+	Put:
+		MemcachePutTimeoutThreshold is the number of bytes at which the memcache timeout uses the large setting.
+		MemcachePutTimeoutSmall is the amount of time to wait during memcache Put operations before aborting them and using the datastore.
+		MemcachePutTimeoutLarge is the amount of time to wait for large memcache Put requests.
+
+	Get:
+		MemcacheGetTimeout is the amount of time to wait for all memcache Get requests
+
+	Notes:
+		The default settings are in effect and used by goon but if you are seeing too many memcache timeout errors in your logs, you may want to bump up the times.
+		Conversely, if you're using github.com/mjibson/appstats and are seeing Memcache requests finishing routinely before the default values you can bump them down.
+		Finally, if these are not good default values as thought, please open an issue.
+
+	To change defaults:
+		package myapp
+
+		import (
+			"github.com/mjibson/goon"
+			"time"
+		)
+
+		func init() {
+			goon.MemcachePutTimeoutThreshold = 1024 * 50 // 50k
+			goon.MemcachePutTimeoutSmall = time.Millisecond * 10
+		}
 */
 package goon
