@@ -156,10 +156,13 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 // the datastore.
 func (g *Goon) Put(src interface{}) (*datastore.Key, error) {
 	ks, err := g.PutMulti([]interface{}{src})
-	if len(ks) == 1 {
-		return ks[0], err
+	if err != nil {
+		if me, ok := err.(appengine.MultiError); ok {
+			return nil, me[0]
+		}
+		return nil, err
 	}
-	return nil, err
+	return ks[0], nil
 }
 
 // PutMany is a wrapper around PutMulti.
@@ -236,7 +239,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	}
 	wg.Wait()
 	if any {
-		return keys, multiErr
+		return keys, realError(multiErr)
 	}
 	return keys, nil
 }
@@ -333,11 +336,7 @@ func (g *Goon) Get(dst interface{}) error {
 	if err := g.GetMulti(dsts); err != nil {
 		// Look for an embedded error if it's multi
 		if me, ok := err.(appengine.MultiError); ok {
-			for i, merr := range me {
-				if i == 0 {
-					return merr
-				}
-			}
+			return me[0]
 		}
 		// Not multi, normal error
 		return err
@@ -469,7 +468,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	}
 	wg.Wait()
 	if any {
-		return multiErr
+		return realError(multiErr)
 	}
 	return nil
 }
@@ -477,10 +476,45 @@ func (g *Goon) GetMulti(dst interface{}) error {
 // Delete deletes the entity for the given key.
 func (g *Goon) Delete(key *datastore.Key) error {
 	keys := []*datastore.Key{key}
-	return g.DeleteMulti(keys)
+	err := g.DeleteMulti(keys)
+	if me, ok := err.(appengine.MultiError); ok {
+		return me[0]
+	}
+	return err
 }
 
 const deleteMultiLimit = 500
+
+// Returns a single error if each error in MultiError is the same
+// otherwise, returns multiError or nil (if multiError is empty)
+func realError(multiError appengine.MultiError) error {
+	if len(multiError) == 0 {
+		return nil
+	}
+	init := multiError[0]
+	for i := 1; i < len(multiError); i++ {
+		// since type error could hold structs, pointers, etc,
+		// the only way to compare non-nil errors is by their string output
+		if init == nil || multiError[i] == nil {
+			if init != multiError[i] {
+				return multiError
+			}
+		} else if init.Error() != multiError[i].Error() {
+			return multiError
+		}
+	}
+	// all errors are the same
+	// some errors are *always* returned in MultiError form from the datastore
+	if _, ok := init.(*datastore.ErrFieldMismatch); ok { // returned in GetMulti
+		return multiError
+	}
+	if init == datastore.ErrInvalidEntityType || // returned in GetMulti
+		init == datastore.ErrNoSuchEntity { // returned in GetMulti
+		return multiError
+	}
+	// datastore.ErrInvalidKey is returned as a single error in PutMulti
+	return init
+}
 
 // DeleteMulti is a batch version of Delete.
 func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
@@ -536,7 +570,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	}
 	wg.Wait()
 	if any {
-		return multiErr
+		return realError(multiErr)
 	}
 	return nil
 }
