@@ -32,15 +32,18 @@ import (
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
 	LogErrors = true
-	// MemcacheTimeoutThreshold is the number of bytes at which the memcache
+	// MemcachePutTimeoutThreshold is the number of bytes at which the memcache
 	// timeout uses the large setting.
-	MemcacheTimeoutThreshold = 1024 * 50 // 50K bytes
+	MemcachePutTimeoutThreshold = 1024 * 50 // 50K bytes
 	// MemcachePutTimeoutSmall is the amount of time to wait during memcache
-	// operations before aborting them and using the datastore.
+	// Put operations before aborting them and using the datastore.
 	MemcachePutTimeoutSmall = time.Millisecond * 5
 	// MemcachePutTimeoutLarge is the amount of time to wait for large memcache
-	// requests.
+	// Put requests.
 	MemcachePutTimeoutLarge = time.Millisecond * 15
+	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
+	// requests
+	MemcacheGetTimeout = time.Millisecond * 10 // the Duration that we'll wait for memcache.Get
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -284,7 +287,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 		}
 	}
 	memcacheTimeout := MemcachePutTimeoutSmall
-	if payloadSize >= MemcacheTimeoutThreshold {
+	if payloadSize >= MemcachePutTimeoutThreshold {
 		memcacheTimeout = MemcachePutTimeoutLarge
 	}
 	err := memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
@@ -350,12 +353,15 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	g.cacheLock.RLock()
 	for i, key := range keys {
 		m := memkey(key)
+		vi := v.Index(i)
 		if s, present := g.cache[m]; present {
-			vi := v.Index(i)
 			reflect.Indirect(vi).Set(reflect.Indirect(reflect.ValueOf(s)))
 		} else {
 			memkeys = append(memkeys, m)
 			mixs = append(mixs, i)
+			dskeys = append(dskeys, key)
+			dsdst = append(dsdst, vi.Interface())
+			dixs = append(dixs, i)
 		}
 	}
 	g.cacheLock.RUnlock()
@@ -364,28 +370,40 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		return nil
 	}
 
-	memvalues, _ := memcache.GetMulti(g.context, memkeys)
-	for i, m := range memkeys {
-		d := v.Index(mixs[i]).Interface()
-		if v.Index(mixs[i]).Kind() == reflect.Struct {
-			d = v.Index(mixs[i]).Addr().Interface()
-		}
-		if s, present := memvalues[m]; present {
-			err := fromGob(d, s.Value)
-			if err != nil {
-				g.error(err)
-				return err
-			}
+	memvalues, err := memcache.GetMulti(appengine.Timeout(g.context, MemcacheGetTimeout), memkeys)
+	if err != nil {
+		g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
+		// No memvalues found, prepare the datastore fetch list already prepared above
+	} else if len(memvalues) > 0 {
+		// since memcache fetch was successful, reset the datastore fetch list and repopulate it
+		dskeys = dskeys[:0]
+		dsdst = dsdst[:0]
+		dixs = dixs[:0]
+		// we only want to check the returned map if there weren't any errors
+		// unlike the datastore, memcache will return a smaller map with no error if some of the keys were missed
 
-			g.putMemory(d)
-		} else {
-			dskeys = append(dskeys, keys[mixs[i]])
-			dsdst = append(dsdst, d)
-			dixs = append(dixs, mixs[i])
+		for i, m := range memkeys {
+			d := v.Index(mixs[i]).Interface()
+			if v.Index(mixs[i]).Kind() == reflect.Struct {
+				d = v.Index(mixs[i]).Addr().Interface()
+			}
+			if s, present := memvalues[m]; present {
+				err := fromGob(d, s.Value)
+				if err != nil {
+					g.error(err)
+					return err
+				}
+
+				g.putMemory(d)
+			} else {
+				dskeys = append(dskeys, keys[mixs[i]])
+				dsdst = append(dsdst, d)
+				dixs = append(dixs, mixs[i])
+			}
 		}
-	}
-	if len(dskeys) == 0 {
-		return nil
+		if len(dskeys) == 0 {
+			return nil
+		}
 	}
 
 	multiErr := make(appengine.MultiError, len(keys))
