@@ -236,7 +236,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	}
 	wg.Wait()
 	if any {
-		return keys, multiErr
+		return keys, realError(multiErr)
 	}
 	return keys, nil
 }
@@ -469,7 +469,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	}
 	wg.Wait()
 	if any {
-		return multiErr
+		return realError(multiErr)
 	}
 	return nil
 }
@@ -481,6 +481,27 @@ func (g *Goon) Delete(key *datastore.Key) error {
 }
 
 const deleteMultiLimit = 500
+
+// Returns a single error if each error in MultiError is the same
+// otherwise, returns multiError or nil (if multiError is empty)
+func realError(multiError appengine.MultiError) error {
+	if len(multiError) == 0 {
+		return nil
+	}
+	init := multiError[0]
+	for i := 1; i < len(multiError); i++ {
+		// since type error could hold structs, pointers, etc,
+		// the only way to compare non-nil errors is by their string output
+		if init == nil || multiError[i] == nil {
+			if init != multiError[i] {
+				return multiError
+			}
+		} else if init.Error() != multiError[i].Error() {
+			return multiError
+		}
+	}
+	return init
+}
 
 // DeleteMulti is a batch version of Delete.
 func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
@@ -536,7 +557,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	}
 	wg.Wait()
 	if any {
-		return multiErr
+		return realError(multiErr)
 	}
 	return nil
 }
