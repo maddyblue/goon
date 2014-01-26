@@ -74,8 +74,13 @@ func FromContext(c appengine.Context) *Goon {
 }
 
 func (g *Goon) error(err error) {
-	if LogErrors {
-		g.context.Errorf("goon: %v", err.Error())
+	if !LogErrors {
+		return
+	}
+	if appengine.IsTimeoutError(err) {
+		g.context.Infof("goon: %v", err)
+	} else {
+		g.context.Errorf("goon: %v", err)
 	}
 }
 
