@@ -107,9 +107,7 @@ func (g *Goon) extractKeys(src interface{}, putRequest bool) ([]*datastore.Key, 
 // is incomplete.
 func (g *Goon) Key(src interface{}) *datastore.Key {
 	if k, err := g.KeyError(src); err == nil {
-		if !k.Incomplete() {
-			return k
-		}
+		return k
 	}
 	return nil
 }

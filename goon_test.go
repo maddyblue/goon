@@ -44,8 +44,8 @@ func TestGoon(t *testing.T) {
 	if k, err := n.KeyError(noid); err == nil && !k.Incomplete() {
 		t.Error("expected incomplete on noid")
 	}
-	if n.Key(noid) != nil {
-		t.Error("expected to not find a key")
+	if n.Key(noid) == nil {
+		t.Error("expected to find a key")
 	}
 
 	var keyTests = []keyTest{
