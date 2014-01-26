@@ -101,7 +101,8 @@ func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.
 	return keys, nil
 }
 
-// Key is the same as KeyError, except nil is returned on error.
+// Key is the same as KeyError, except nil is returned on error or if the key
+// is incomplete.
 func (g *Goon) Key(src interface{}) *datastore.Key {
 	if k, err := g.KeyError(src); err == nil {
 		if !k.Incomplete() {
