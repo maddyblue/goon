@@ -78,7 +78,7 @@ func TestGoon(t *testing.T) {
 
 	for _, kt := range keyTests {
 		if k, err := n.KeyError(kt.obj); err != nil {
-			t.Errorf("error:", err.Error())
+			t.Errorf("error:", err)
 		} else if !k.Equal(kt.key) {
 			t.Errorf("keys not equal")
 		}
@@ -730,7 +730,7 @@ func TestPutGet(t *testing.T) {
 
 	key, err := g.Put(&PutGet{ID: 12, Value: 15})
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
 	if key.IntID() != 12 {
 		t.Fatal("ID should be 12 but is", key.IntID())
@@ -741,7 +741,7 @@ func TestPutGet(t *testing.T) {
 	err = datastore.Get(c,
 		datastore.NewKey(c, "PutGet", "", 12, nil), dsPutGet)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
 	if dsPutGet.Value != 15 {
 		t.Fatal("dsPutGet.Value should be 15 but is",
@@ -752,7 +752,7 @@ func TestPutGet(t *testing.T) {
 	goonPutGet := &PutGet{ID: 12}
 	err = g.Get(goonPutGet)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
 	if goonPutGet.ID != 12 {
 		t.Fatal("goonPutGet.ID should be 12 but is", goonPutGet.ID)
