@@ -111,6 +111,14 @@ func (g *Goon) Key(src interface{}) *datastore.Key {
 	return nil
 }
 
+// Kind returns src's datastore Kind or "" on error.
+func (g *Goon) Kind(src interface{}) string {
+	if k, err := g.KeyError(src); err == nil {
+		return k.Kind()
+	}
+	return ""
+}
+
 // KeyError returns the key of src based on its properties.
 func (g *Goon) KeyError(src interface{}) (*datastore.Key, error) {
 	return g.getStructKey(src)
