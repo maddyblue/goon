@@ -78,7 +78,7 @@ func (g *Goon) error(err error) {
 	}
 }
 
-func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.Key, error) {
+func (g *Goon) extractKeys(src interface{}, putRequest bool) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	if v.Kind() != reflect.Slice {
 		return nil, fmt.Errorf("goon: value must be a slice or pointer-to-slice")
@@ -88,12 +88,14 @@ func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.
 	keys := make([]*datastore.Key, l)
 	for i := 0; i < l; i++ {
 		vi := v.Index(i)
-		key, err := g.getStructKey(vi.Interface())
+		key, hasStringId, err := g.getStructKey(vi.Interface())
 		if err != nil {
 			return nil, err
 		}
-		if !allowIncomplete && key.Incomplete() {
+		if !putRequest && key.Incomplete() {
 			return nil, fmt.Errorf("goon: cannot find a key for struct - %v", vi.Interface())
+		} else if putRequest && key.Incomplete() && hasStringId {
+			return nil, fmt.Errorf("goon: empty string id on put")
 		}
 		keys[i] = key
 	}
@@ -121,7 +123,8 @@ func (g *Goon) Kind(src interface{}) string {
 
 // KeyError returns the key of src based on its properties.
 func (g *Goon) KeyError(src interface{}) (*datastore.Key, error) {
-	return g.getStructKey(src)
+	key, _, err := g.getStructKey(src)
+	return key, err
 }
 
 // RunInTransaction runs f in a transaction. It calls f with a transaction
@@ -233,7 +236,7 @@ func (g *Goon) putMemoryMulti(src interface{}) {
 }
 
 func (g *Goon) putMemory(src interface{}) {
-	key, _ := g.getStructKey(src)
+	key, _, _ := g.getStructKey(src)
 	g.cacheLock.Lock()
 	defer g.cacheLock.Unlock()
 	g.cache[memkey(key)] = src
@@ -255,7 +258,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			g.error(err)
 			return err
 		}
-		key, err := g.getStructKey(src)
+		key, _, err := g.getStructKey(src)
 		if err != nil {
 			return err
 		}
