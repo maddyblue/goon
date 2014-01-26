@@ -50,6 +50,10 @@ func TestGoon(t *testing.T) {
 
 	var keyTests = []keyTest{
 		{
+			HasDefaultKind{},
+			datastore.NewKey(c, "DefaultKind", "", 0, nil),
+		},
+		{
 			HasId{Id: 1},
 			datastore.NewKey(c, "HasId", "", 1, nil),
 		},
