@@ -81,9 +81,6 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 						return nil, errors.New("goon: Only one field may be marked id")
 					}
 					stringID = vf.String()
-					if stringID == "" {
-						return nil, errors.New("goon: Cannot have a blank Id a String Id object")
-					}
 				default:
 					return nil, fmt.Errorf("goon: ID field must be int64 or string in %v", t.Name())
 				}
