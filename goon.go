@@ -31,9 +31,10 @@ import (
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
 	LogErrors = true
+
 	// MemcachePutTimeoutThreshold is the number of bytes at which the memcache
 	// timeout uses the large setting.
-	MemcachePutTimeoutThreshold = 1024 * 50 // 50K bytes
+	MemcachePutTimeoutThreshold = 1024 * 50
 	// MemcachePutTimeoutSmall is the amount of time to wait during memcache
 	// Put operations before aborting them and using the datastore.
 	MemcachePutTimeoutSmall = time.Millisecond * 5
@@ -41,8 +42,8 @@ var (
 	// Put requests.
 	MemcachePutTimeoutLarge = time.Millisecond * 15
 	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
-	// requests
-	MemcacheGetTimeout = time.Millisecond * 10 // the Duration that we'll wait for memcache.Get
+	// requests.
+	MemcacheGetTimeout = time.Millisecond * 10
 )
 
 // Goon holds the app engine context and the request memory cache.
