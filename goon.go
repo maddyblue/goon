@@ -170,11 +170,6 @@ func (g *Goon) Put(src interface{}) (*datastore.Key, error) {
 	return nil, err
 }
 
-// PutMany is a wrapper around PutMulti.
-func (g *Goon) PutMany(srcs ...interface{}) ([]*datastore.Key, error) {
-	return g.PutMulti(srcs)
-}
-
 const putMultiLimit = 500
 
 // PutMulti is a batch version of Put.
