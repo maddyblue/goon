@@ -17,7 +17,6 @@
 package goon
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -82,7 +81,7 @@ func (g *Goon) error(err error) {
 func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	if v.Kind() != reflect.Slice {
-		return nil, errors.New("goon: value must be a slice or pointer-to-slice")
+		return nil, fmt.Errorf("goon: value must be a slice or pointer-to-slice")
 	}
 	l := v.Len()
 
@@ -313,7 +312,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 func (g *Goon) Get(dst interface{}) error {
 	set := reflect.ValueOf(dst)
 	if set.Kind() != reflect.Ptr {
-		return errors.New(fmt.Sprintf("goon: expected pointer to a struct, got %#v", dst))
+		return fmt.Errorf("goon: expected pointer to a struct, got %#v", dst)
 	}
 	dsts := []interface{}{dst}
 	if err := g.GetMulti(dsts); err != nil {

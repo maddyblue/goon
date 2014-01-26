@@ -19,7 +19,6 @@ package goon
 import (
 	"bytes"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -73,12 +72,12 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 				switch vf.Kind() {
 				case reflect.Int64:
 					if intID != 0 || stringID != "" {
-						return nil, errors.New("goon: Only one field may be marked id")
+						return nil, fmt.Errorf("goon: Only one field may be marked id")
 					}
 					intID = vf.Int()
 				case reflect.String:
 					if intID != 0 || stringID != "" {
-						return nil, errors.New("goon: Only one field may be marked id")
+						return nil, fmt.Errorf("goon: Only one field may be marked id")
 					}
 					stringID = vf.String()
 				default:
@@ -87,7 +86,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 			} else if tagValue == "kind" {
 				if vf.Kind() == reflect.String {
 					if kind != "" {
-						return nil, errors.New("goon: Only one field may be marked kind")
+						return nil, fmt.Errorf("goon: Only one field may be marked kind")
 					}
 					kind = vf.String()
 					if kind == "" && len(tagValues) > 1 && tagValues[1] != "" {
@@ -97,7 +96,7 @@ func (g *Goon) getStructKey(src interface{}) (*datastore.Key, error) {
 			} else if tagValue == "parent" {
 				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
 					if parent != nil {
-						return nil, errors.New("goon: Only one field may be marked parent")
+						return nil, fmt.Errorf("goon: Only one field may be marked parent")
 					}
 					parent = vf.Interface().(*datastore.Key)
 				}
@@ -134,7 +133,7 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 	k = t.Kind()
 
 	if k != reflect.Struct {
-		return errors.New(fmt.Sprintf("goon: Expected struct, got instead: %v", k))
+		return fmt.Errorf(fmt.Sprintf("goon: Expected struct, got instead: %v", k))
 	}
 
 	idSet := false
@@ -154,7 +153,7 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 			tagValue := tagValues[0]
 			if tagValue == "id" {
 				if idSet {
-					return errors.New("goon: Only one field may be marked id")
+					return fmt.Errorf("goon: Only one field may be marked id")
 				}
 
 				switch vf.Kind() {
@@ -167,7 +166,7 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 				}
 			} else if tagValue == "kind" {
 				if kindSet {
-					return errors.New("goon: Only one field may be marked kind")
+					return fmt.Errorf("goon: Only one field may be marked kind")
 				}
 				if vf.Kind() == reflect.String {
 					if (len(tagValues) <= 1 || key.Kind() != tagValues[1]) && typeName(src) != key.Kind() {
@@ -177,7 +176,7 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 				}
 			} else if tagValue == "parent" {
 				if parentSet {
-					return errors.New("goon: Only one field may be marked parent")
+					return fmt.Errorf("goon: Only one field may be marked parent")
 				}
 				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
 					vf.Set(reflect.ValueOf(key.Parent()))
@@ -188,7 +187,7 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 	}
 
 	if !idSet {
-		return errors.New("goon: Could not set id field")
+		return fmt.Errorf("goon: Could not set id field")
 	}
 
 	return nil
