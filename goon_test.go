@@ -161,13 +161,6 @@ func TestGoon(t *testing.T) {
 		t.Errorf("get: unexpected error")
 	}
 
-	if _, err := n.PutComplete(&HasId{}); err == nil {
-		t.Errorf("put complete: expected error")
-	}
-	if _, err := n.PutComplete(&HasId{Id: 1}); err != nil {
-		t.Errorf("put complete: unexpected error")
-	}
-
 	// put a HasId resource, then test pulling it from memory, memcache, and datastore
 	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
 	if _, err := n.Put(hi); err != nil {
@@ -240,19 +233,11 @@ func TestGoon(t *testing.T) {
 
 	// Since the datastore can't assign a key to a String ID, test to make sure goon stops it from happening
 	hasString := new(HasString)
-	_, err = n.PutComplete(hasString)
-	if err == nil {
-		t.Errorf("Cannot put an incomplete object using PutComplete - %v", hasString)
-	}
 	_, err = n.Put(hasString)
 	if err == nil {
 		t.Errorf("Cannot put an incomplete string Id object as the datastore will populate an int64 id instead- %v", hasString)
 	}
 	hasString.Id = "hello"
-	_, err = n.PutComplete(hasString)
-	if err != nil {
-		t.Errorf("Error putting hasString object - %v", hasString)
-	}
 	_, err = n.Put(hasString)
 	if err != nil {
 		t.Errorf("Error putting hasString object - %v", hasString)

@@ -225,29 +225,6 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	return keys, nil
 }
 
-// PutComplete is like Put, but errors if a key is incomplete.
-func (g *Goon) PutComplete(src interface{}) (*datastore.Key, error) {
-	k, err := g.getStructKey(src)
-	if err != nil {
-		return nil, err
-	}
-	if k.Incomplete() {
-		err := fmt.Errorf("goon: incomplete key: %v", k)
-		g.error(err)
-		return nil, err
-	}
-	return g.Put(src)
-}
-
-// PutMultiComplete is like PutMulti, but errors if a key is incomplete.
-func (g *Goon) PutMultiComplete(src interface{}) ([]*datastore.Key, error) {
-	_, err := g.extractKeys(src, false)
-	if err != nil {
-		return nil, err
-	}
-	return g.PutMulti(src)
-}
-
 func (g *Goon) putMemoryMulti(src interface{}) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	for i := 0; i < v.Len(); i++ {
