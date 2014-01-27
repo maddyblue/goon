@@ -32,9 +32,10 @@ import (
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
 	LogErrors = true
+
 	// MemcachePutTimeoutThreshold is the number of bytes at which the memcache
 	// timeout uses the large setting.
-	MemcachePutTimeoutThreshold = 1024 * 50 // 50K bytes
+	MemcachePutTimeoutThreshold = 1024 * 50
 	// MemcachePutTimeoutSmall is the amount of time to wait during memcache
 	// Put operations before also issuing a request to the datastore.
 	MemcachePutTimeoutSmall = time.Millisecond * 5
@@ -42,8 +43,8 @@ var (
 	// Put requests.
 	MemcachePutTimeoutLarge = time.Millisecond * 15
 	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
-	// requests
-	MemcacheGetTimeout = time.Millisecond * 10 // the Duration that we'll wait for memcache.Get
+	// requests.
+	MemcacheGetTimeout = time.Millisecond * 10
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -74,39 +75,41 @@ func FromContext(c appengine.Context) *Goon {
 }
 
 func (g *Goon) error(err error) {
-	if LogErrors {
-		g.context.Errorf("goon: %v", err.Error())
+	if !LogErrors {
+		return
 	}
+	g.context.Errorf("goon: %v", err)
 }
 
-func (g *Goon) extractKeys(src interface{}, allowIncomplete bool) ([]*datastore.Key, error) {
+func (g *Goon) extractKeys(src interface{}, putRequest bool) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	if v.Kind() != reflect.Slice {
-		return nil, errors.New("goon: value must be a slice or pointer-to-slice")
+		return nil, fmt.Errorf("goon: value must be a slice or pointer-to-slice")
 	}
 	l := v.Len()
 
 	keys := make([]*datastore.Key, l)
 	for i := 0; i < l; i++ {
 		vi := v.Index(i)
-		key, err := g.getStructKey(vi.Interface())
+		key, hasStringId, err := g.getStructKey(vi.Interface())
 		if err != nil {
 			return nil, err
 		}
-		if !allowIncomplete && key.Incomplete() {
+		if !putRequest && key.Incomplete() {
 			return nil, fmt.Errorf("goon: cannot find a key for struct - %v", vi.Interface())
+		} else if putRequest && key.Incomplete() && hasStringId {
+			return nil, fmt.Errorf("goon: empty string id on put")
 		}
 		keys[i] = key
 	}
 	return keys, nil
 }
 
-// Key is the same as KeyError, except nil is returned on error.
+// Key is the same as KeyError, except nil is returned on error or if the key
+// is incomplete.
 func (g *Goon) Key(src interface{}) *datastore.Key {
 	if k, err := g.KeyError(src); err == nil {
-		if !k.Incomplete() {
-			return k
-		}
+		return k
 	}
 	return nil
 }
@@ -121,7 +124,8 @@ func (g *Goon) Kind(src interface{}) string {
 
 // KeyError returns the key of src based on its properties.
 func (g *Goon) KeyError(src interface{}) (*datastore.Key, error) {
-	return g.getStructKey(src)
+	key, _, err := g.getStructKey(src)
+	return key, err
 }
 
 // RunInTransaction runs f in a transaction. It calls f with a transaction
@@ -168,11 +172,6 @@ func (g *Goon) Put(src interface{}) (*datastore.Key, error) {
 		return ks[0], err
 	}
 	return nil, err
-}
-
-// PutMany is a wrapper around PutMulti.
-func (g *Goon) PutMany(srcs ...interface{}) ([]*datastore.Key, error) {
-	return g.PutMulti(srcs)
 }
 
 const putMultiLimit = 500
@@ -249,29 +248,6 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	return keys, nil
 }
 
-// PutComplete is like Put, but errors if a key is incomplete.
-func (g *Goon) PutComplete(src interface{}) (*datastore.Key, error) {
-	k, err := g.getStructKey(src)
-	if err != nil {
-		return nil, err
-	}
-	if k.Incomplete() {
-		err := fmt.Errorf("goon: incomplete key: %v", k)
-		g.error(err)
-		return nil, err
-	}
-	return g.Put(src)
-}
-
-// PutMultiComplete is like PutMulti, but errors if a key is incomplete.
-func (g *Goon) PutMultiComplete(src interface{}) ([]*datastore.Key, error) {
-	_, err := g.extractKeys(src, false)
-	if err != nil {
-		return nil, err
-	}
-	return g.PutMulti(src)
-}
-
 func (g *Goon) putMemoryMulti(src interface{}) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	for i := 0; i < v.Len(); i++ {
@@ -280,7 +256,7 @@ func (g *Goon) putMemoryMulti(src interface{}) {
 }
 
 func (g *Goon) putMemory(src interface{}) {
-	key, _ := g.getStructKey(src)
+	key, _, _ := g.getStructKey(src)
 	g.cacheLock.Lock()
 	defer g.cacheLock.Unlock()
 	g.cache[memkey(key)] = src
@@ -302,7 +278,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			g.error(err)
 			return err
 		}
-		key, err := g.getStructKey(src)
+		key, _, err := g.getStructKey(src)
 		if err != nil {
 			return err
 		}
@@ -341,7 +317,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 func (g *Goon) Get(dst interface{}) error {
 	set := reflect.ValueOf(dst)
 	if set.Kind() != reflect.Ptr {
-		return errors.New(fmt.Sprintf("goon: expected pointer to a struct, got %#v", dst))
+		return fmt.Errorf("goon: expected pointer to a struct, got %#v", dst)
 	}
 	set = set.Elem()
 	if !set.CanSet() {
