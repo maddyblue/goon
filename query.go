@@ -17,8 +17,9 @@
 package goon
 
 import (
-	"appengine/datastore"
 	"reflect"
+
+	"appengine/datastore"
 )
 
 // Count returns the number of results for the query.
