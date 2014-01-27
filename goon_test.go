@@ -45,11 +45,15 @@ func TestGoon(t *testing.T) {
 	if k, err := n.KeyError(noid); err == nil && !k.Incomplete() {
 		t.Error("expected incomplete on noid")
 	}
-	if n.Key(noid) != nil {
-		t.Error("expected to not find a key")
+	if n.Key(noid) == nil {
+		t.Error("expected to find a key")
 	}
 
 	var keyTests = []keyTest{
+		{
+			HasDefaultKind{},
+			datastore.NewKey(c, "DefaultKind", "", 0, nil),
+		},
 		{
 			HasId{Id: 1},
 			datastore.NewKey(c, "HasId", "", 1, nil),
@@ -75,7 +79,7 @@ func TestGoon(t *testing.T) {
 
 	for _, kt := range keyTests {
 		if k, err := n.KeyError(kt.obj); err != nil {
-			t.Errorf("error:", err.Error())
+			t.Errorf("error:", err)
 		} else if !k.Equal(kt.key) {
 			t.Errorf("keys not equal")
 		}
@@ -158,13 +162,6 @@ func TestGoon(t *testing.T) {
 		t.Errorf("get: unexpected error")
 	}
 
-	if _, err := n.PutComplete(&HasId{}); err == nil {
-		t.Errorf("put complete: expected error")
-	}
-	if _, err := n.PutComplete(&HasId{Id: 1}); err != nil {
-		t.Errorf("put complete: unexpected error")
-	}
-
 	// put a HasId resource, then test pulling it from memory, memcache, and datastore
 	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
 	if _, err := n.Put(hi); err != nil {
@@ -237,19 +234,11 @@ func TestGoon(t *testing.T) {
 
 	// Since the datastore can't assign a key to a String ID, test to make sure goon stops it from happening
 	hasString := new(HasString)
-	_, err = n.PutComplete(hasString)
-	if err == nil {
-		t.Errorf("Cannot put an incomplete object using PutComplete - %v", hasString)
-	}
 	_, err = n.Put(hasString)
 	if err == nil {
 		t.Errorf("Cannot put an incomplete string Id object as the datastore will populate an int64 id instead- %v", hasString)
 	}
 	hasString.Id = "hello"
-	_, err = n.PutComplete(hasString)
-	if err != nil {
-		t.Errorf("Error putting hasString object - %v", hasString)
-	}
 	_, err = n.Put(hasString)
 	if err != nil {
 		t.Errorf("Error putting hasString object - %v", hasString)
@@ -742,7 +731,7 @@ func TestPutGet(t *testing.T) {
 
 	key, err := g.Put(&PutGet{ID: 12, Value: 15})
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
 	if key.IntID() != 12 {
 		t.Fatal("ID should be 12 but is", key.IntID())
@@ -753,7 +742,7 @@ func TestPutGet(t *testing.T) {
 	err = datastore.Get(c,
 		datastore.NewKey(c, "PutGet", "", 12, nil), dsPutGet)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
 	if dsPutGet.Value != 15 {
 		t.Fatal("dsPutGet.Value should be 15 but is",
@@ -764,7 +753,7 @@ func TestPutGet(t *testing.T) {
 	goonPutGet := &PutGet{ID: 12}
 	err = g.Get(goonPutGet)
 	if err != nil {
-		t.Fatal(err.Error())
+		t.Fatal(err)
 	}
 	if goonPutGet.ID != 12 {
 		t.Fatal("goonPutGet.ID should be 12 but is", goonPutGet.ID)
