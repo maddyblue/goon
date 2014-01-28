@@ -370,7 +370,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		m := memkey(key)
 		vi := v.Index(i)
 		if s, present := g.cache[m]; present {
-			reflect.Indirect(v.Index(i)).Set(reflect.Indirect(reflect.ValueOf(s)))
+			reflect.Indirect(vi).Set(reflect.Indirect(reflect.ValueOf(s)))
 		} else {
 			memkeys = append(memkeys, m)
 			mixs = append(mixs, i)

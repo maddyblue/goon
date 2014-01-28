@@ -18,6 +18,7 @@ package goon
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -958,15 +959,46 @@ func TestRace(t *testing.T) {
 	defer c.Close()
 	g := FromContext(c)
 
-	hasid := &HasId{Id: 1, Name: "Race"}
-	_, err = g.Put(hasid)
-	if err != nil {
-		t.Fatalf("Could not put Race entity - %v", err)
+	var hasIdSlice []*HasId
+	for x := 1; x <= 4000; x++ {
+		hasIdSlice = append(hasIdSlice, &HasId{Id: int64(x), Name: "Race"})
 	}
-	for x := 0; x < 5; x++ {
-		go func() {
-			g.Get(hasid)
-		}()
+	_, err = g.PutMulti(hasIdSlice)
+	if err != nil {
+		t.Fatalf("Could not put Race entities - %v", err)
+	}
+	hasIdSlice = hasIdSlice[:0]
+	for x := 1; x <= 4000; x++ {
+		hasIdSlice = append(hasIdSlice, &HasId{Id: int64(x)})
+	}
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		err := g.Get(hasIdSlice[0])
+		if err != nil {
+			t.Errorf("Error fetching id #0 - %v", err)
+		}
+		wg.Done()
+	}()
+	go func() {
+		err := g.GetMulti(hasIdSlice[1:1500])
+		if err != nil {
+			t.Errorf("Error fetching ids 1 through 1499 - %v", err)
+		}
+		wg.Done()
+	}()
+	go func() {
+		err := g.GetMulti(hasIdSlice[1500:])
+		if err != nil {
+			t.Errorf("Error fetching id #1500 through 4000 - %v", err)
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	for x, hi := range hasIdSlice {
+		if hi.Name != "Race" {
+			t.Errorf("Object #%d not fetched properly, fetched instead - %v", x, hi)
+		}
 	}
 }
 
