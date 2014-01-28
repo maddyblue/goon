@@ -29,7 +29,6 @@ import (
 func toGob(src interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	gob.Register(src)
 	if err := enc.Encode(src); err != nil {
 		return nil, err
 	}
@@ -38,7 +37,6 @@ func toGob(src interface{}) ([]byte, error) {
 
 func fromGob(src interface{}, b []byte) error {
 	buf := bytes.NewBuffer(b)
-	gob.Register(src)
 	dec := gob.NewDecoder(buf)
 	if err := dec.Decode(src); err != nil {
 		return err
