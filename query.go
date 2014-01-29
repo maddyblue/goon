@@ -17,6 +17,7 @@
 package goon
 
 import (
+	"fmt"
 	"reflect"
 
 	"appengine/datastore"
@@ -27,46 +28,75 @@ func (g *Goon) Count(q *datastore.Query) (int, error) {
 	return q.Count(g.context)
 }
 
-// GetAll runs the query in the given context and returns all keys that match
-// that query, as well as appending the values to dst, setting the goon key
-// fields of dst, and caching the returned data in local memory.
+// GetAll runs the query and returns all the keys that match the query, as well
+// as appending the values to dst, setting the goon key fields of dst, and
+// caching the returned data in local memory.
 //
-// If q is a "keys-only" query, GetAll ignores dst and only returns the keys.
+// For "keys-only" queries dst can be nil, however if it is not, then GetAll
+// appends zero value structs to dst, only setting the goon key fields.
+// No data is cached with "keys-only" queries.
 //
 // See: https://developers.google.com/appengine/docs/go/datastore/reference#Query.GetAll
 func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, error) {
+	v := reflect.ValueOf(dst)
+	vLenBefore := 0
+
+	if dst != nil {
+		if v.Kind() != reflect.Ptr {
+			return nil, fmt.Errorf("goon: Expected dst to be a pointer to a slice or nil, got instead: %v", v.Kind())
+		}
+
+		v = v.Elem()
+		if v.Kind() != reflect.Slice {
+			return nil, fmt.Errorf("goon: Expected dst to be a pointer to a slice or nil, got instead: %v", v.Kind())
+		}
+
+		vLenBefore = v.Len()
+	}
+
 	keys, err := q.GetAll(g.context, dst)
 	if err != nil {
 		g.error(err)
 		return nil, err
 	}
+	if dst == nil || len(keys) == 0 {
+		return keys, nil
+	}
 
-	keysOnly := dst == nil
+	keysOnly := ((v.Len() - vLenBefore) != len(keys))
+	updateCache := !g.inTransaction && !keysOnly
 
-	var v reflect.Value
-	var t reflect.Type
-	if !keysOnly {
-		v = reflect.Indirect(reflect.ValueOf(dst))
-		t = v.Type()
+	// If this is a keys-only query, we need to fill the slice with zero value elements
+	if keysOnly {
+		elemType := v.Type().Elem()
+		ptr := false
+		if elemType.Kind() == reflect.Ptr {
+			elemType = elemType.Elem()
+			ptr = true
+		}
 
-		// try to detect a keys-only query
-		if t.Kind() != reflect.Slice || v.Len() != len(keys) {
-			keysOnly = true
+		if elemType.Kind() != reflect.Struct {
+			return keys, fmt.Errorf("goon: Expected struct, got instead: %v", elemType.Kind())
+		}
+
+		for i := 0; i < len(keys); i++ {
+			ev := reflect.New(elemType)
+			if !ptr {
+				ev = ev.Elem()
+			}
+
+			v.Set(reflect.Append(v, ev))
 		}
 	}
 
-	if keysOnly {
-		return keys, err
-	}
-
-	if !g.inTransaction {
+	if updateCache {
 		g.cacheLock.Lock()
 		defer g.cacheLock.Unlock()
 	}
 
 	for i, k := range keys {
 		var e interface{}
-		vi := v.Index(i)
+		vi := v.Index(vLenBefore + i)
 		if vi.Kind() == reflect.Ptr {
 			e = vi.Interface()
 		} else {
@@ -77,13 +107,13 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 			return nil, err
 		}
 
-		if !g.inTransaction {
+		if updateCache {
 			// Cache lock is handled before the for loop
 			g.cache[memkey(k)] = e
 		}
 	}
 
-	return keys, err
+	return keys, nil
 }
 
 // Run runs the query.
