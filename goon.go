@@ -31,6 +31,8 @@ import (
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
 	LogErrors = true
+	// LogTimeoutErrors issues appengine.Context.Warningf on memcache timeout errors.
+	LogTimeoutErrors = false
 
 	// MemcachePutTimeoutThreshold is the number of bytes at which the memcache
 	// timeout uses the large setting.
@@ -77,10 +79,12 @@ func (g *Goon) error(err error) {
 	if !LogErrors {
 		return
 	}
-	if appengine.IsTimeoutError(err) {
-		g.context.Warningf("goon: timeout: %v", err)
-	} else {
-		g.context.Errorf("goon: %v", err)
+	g.context.Errorf("goon: %v", err)
+}
+
+func (g *Goon) timeoutError(err error) {
+	if LogTimeoutErrors {
+		g.context.Warningf("goon memcache timeout: %v", err)
 	}
 }
 
@@ -280,7 +284,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	err := memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
 	g.putMemoryMulti(srcs)
 	if appengine.IsTimeoutError(err) {
-		g.error(err)
+		g.timeoutError(err)
 		err = nil
 	} else if err != nil {
 		g.error(err)
@@ -362,7 +366,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 	memvalues, err := memcache.GetMulti(appengine.Timeout(g.context, MemcacheGetTimeout), memkeys)
 	if appengine.IsTimeoutError(err) {
-		g.error(err)
+		g.timeoutError(err)
 		err = nil
 	} else if err != nil {
 		g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
