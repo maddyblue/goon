@@ -18,6 +18,7 @@ package goon
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,66 @@ import (
 	"appengine/datastore"
 	"appengine/memcache"
 )
+
+func TestCaches(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+
+	// Put *struct{}
+	phid := &HasId{Name: "cacheFail"}
+	_, err = g.Put(phid)
+	if err != nil {
+		t.Errorf("Unexpected error on put - %v", err)
+	}
+	time.Sleep(1) // sleep so the datastore can catch up
+
+	// fetch *struct{} from cache
+	ghid := &HasId{Id: phid.Id}
+	err = g.Get(ghid)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(phid, ghid) {
+		t.Errorf("Expected - %v, got %v", phid, ghid)
+	}
+
+	// fetch []struct{} from cache
+	ghids := []HasId{{Id: phid.Id}}
+	err = g.GetMulti(&ghids)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(*phid, ghids[0]) {
+		t.Errorf("Expected - %v, got %v", *phid, ghids[0])
+	}
+
+	// Now flush localcache and fetch them again
+	g.FlushLocalCache()
+	// fetch *struct{} from memcache
+	ghid = &HasId{Id: phid.Id}
+	err = g.Get(ghid)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(phid, ghid) {
+		t.Errorf("Expected - %v, got %v", phid, ghid)
+	}
+
+	g.FlushLocalCache()
+	// fetch []struct{} from memcache
+	ghids = []HasId{{Id: phid.Id}}
+	err = g.GetMulti(&ghids)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(*phid, ghids[0]) {
+		t.Errorf("Expected - %v, got %v", *phid, ghids[0])
+	}
+}
 
 func TestGoon(t *testing.T) {
 	c, err := aetest.NewContext(nil)
@@ -708,15 +769,46 @@ func TestRace(t *testing.T) {
 	defer c.Close()
 	g := FromContext(c)
 
-	hasid := &HasId{Id: 1, Name: "Race"}
-	_, err = g.Put(hasid)
-	if err != nil {
-		t.Fatalf("Could not put Race entity - %v", err)
+	var hasIdSlice []*HasId
+	for x := 1; x <= 4000; x++ {
+		hasIdSlice = append(hasIdSlice, &HasId{Id: int64(x), Name: "Race"})
 	}
-	for x := 0; x < 5; x++ {
-		go func() {
-			g.Get(hasid)
-		}()
+	_, err = g.PutMulti(hasIdSlice)
+	if err != nil {
+		t.Fatalf("Could not put Race entities - %v", err)
+	}
+	hasIdSlice = hasIdSlice[:0]
+	for x := 1; x <= 4000; x++ {
+		hasIdSlice = append(hasIdSlice, &HasId{Id: int64(x)})
+	}
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		err := g.Get(hasIdSlice[0])
+		if err != nil {
+			t.Errorf("Error fetching id #0 - %v", err)
+		}
+		wg.Done()
+	}()
+	go func() {
+		err := g.GetMulti(hasIdSlice[1:1500])
+		if err != nil {
+			t.Errorf("Error fetching ids 1 through 1499 - %v", err)
+		}
+		wg.Done()
+	}()
+	go func() {
+		err := g.GetMulti(hasIdSlice[1500:])
+		if err != nil {
+			t.Errorf("Error fetching id #1500 through 4000 - %v", err)
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	for x, hi := range hasIdSlice {
+		if hi.Name != "Race" {
+			t.Errorf("Object #%d not fetched properly, fetched instead - %v", x, hi)
+		}
 	}
 }
 
