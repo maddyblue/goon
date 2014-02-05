@@ -41,7 +41,6 @@ func TestCaches(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error on put - %v", err)
 	}
-	time.Sleep(1) // sleep so the datastore can catch up
 
 	// fetch *struct{} from cache
 	ghid := &HasId{Id: phid.Id}
@@ -84,6 +83,36 @@ func TestCaches(t *testing.T) {
 	}
 	if !reflect.DeepEqual(*phid, ghids[0]) {
 		t.Errorf("Expected - %v, got %v", *phid, ghids[0])
+	}
+
+	transientVictim := &HasId{Id: phid.Id}
+	err = g.Get(transientVictim)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	transientVictim.Name = "unexpected"
+	victim := &HasId{Id: phid.Id}
+	err = g.Get(victim)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if victim.Name == transientVictim.Name {
+		t.Errorf("localCache returned original struct instead of a copy")
+	}
+
+	transientVictim = &HasId{Id: 7, Name: "putVictim"}
+	_, err = g.Put(transientVictim)
+	if err != nil {
+		t.Errorf("Unexpected error on put - %v", err)
+	}
+	transientVictim.Name = "changed"
+	victim = &HasId{Id: transientVictim.Id}
+	err = g.Get(victim)
+	if err != nil {
+		t.Errorf("Unexpected error on get - %v", err)
+	}
+	if victim.Name == transientVictim.Name {
+		t.Errorf("putVictim is modified inside localcache after Put() completes!")
 	}
 }
 
@@ -652,6 +681,228 @@ func TestGoon(t *testing.T) {
 	} else if qiKONZPRes[1].Data != "two" {
 		t.Errorf("GetMulti NZSoPtS: expected entity data to be 'two', got '%v'", qiKONZPRes[1].Data)
 	}
+
+	dad := &HasParent{Name: "dad"}
+	if _, err := n.Put(dad); err != nil {
+		t.Errorf("dad not able to be stored")
+	}
+
+	son := &HasParent{Name: "son", P: n.Key(dad)}
+	if _, err := n.Put(son); err != nil {
+		t.Errorf("son not able to be stored")
+	}
+
+	sonCopy := &HasParent{Id: son.Id, P: son.P}
+	if err := n.Get(sonCopy); err != nil {
+		t.Errorf("son not able to be fetched - %v", err)
+	}
+	if sonCopy.Name != "son" {
+		t.Errorf("Name not fetched for son")
+	}
+	if !sonCopy.P.Equal(n.Key(dad)) {
+		t.Errorf("did not properly populate the Parent() key for son - %#v", sonCopy)
+	}
+
+	var sons []*HasParent
+	allSonsQuery := datastore.NewQuery("HasParent").Ancestor(n.Key(dad))
+	if _, err := n.GetAll(allSonsQuery, &sons); err != nil {
+		t.Errorf("sons not able to be fetched")
+	}
+
+	for _, child := range sons {
+		if child.Name == "" {
+			t.Errorf("did not properly fetch sons with GetAll")
+		}
+		if child.Name == "son" && !child.P.Equal(n.Key(dad)) {
+			t.Errorf("did not properly populate the Parent() key for son - %#v to %#v", child, dad)
+		}
+	}
+	if len(sons) != 2 {
+		t.Errorf("Should have two HasParent structs")
+	}
+
+	hasParentTest := &HasParent{}
+	fakeParent := datastore.NewKey(c, "FakeParent", "", 1, nil)
+	hasParentKey := datastore.NewKey(c, "HasParent", "", 2, fakeParent)
+	setStructKey(hasParentTest, hasParentKey)
+	if hasParentTest.Id != 2 {
+		t.Errorf("setStructKey not setting stringid properly")
+	}
+	if hasParentTest.P != fakeParent {
+		t.Errorf("setStructKey not setting parent properly")
+	}
+	hps := []HasParent{HasParent{}}
+	setStructKey(&hps[0], hasParentKey)
+	if hps[0].Id != 2 {
+		t.Errorf("setStructKey not setting stringid properly when src is a slice of structs")
+	}
+	if hps[0].P != fakeParent {
+		t.Errorf("setStructKey not setting parent properly when src is a slice of structs")
+	}
+
+	hs := HasString{Id: "hasstringid"}
+	if err := n.Get(hs); err == nil {
+		t.Errorf("Should have received an error because didn't pass a pointer to a struct")
+	}
+	father := &HasId{}
+	fatherkey, err := n.Put(father)
+	if err != nil {
+		t.Fatalf("Could not put father")
+	}
+	if !fatherkey.Equal(n.Key(father)) {
+		t.Fatalf("Father key not populated")
+	}
+
+	goontests := []GoonTest{
+		GoonTest{&HasDefaultKind{Name: "orphan1"}, false},
+		GoonTest{&HasId{Name: "orphan2"}, false},
+		GoonTest{&HasKind{Name: "orphan5", Kind: "other"}, false},
+		GoonTest{&HasParent{Name: "orphan6"}, false},
+		GoonTest{&HasParent{Name: "child7", P: fatherkey}, false},
+		GoonTest{&HasString{Id: "orphan8"}, false},
+		GoonTest{&HasString{Name: "orphan9"}, true},
+		GoonTest{&HasString{Name: "orphan10", Id: "hasstringid"}, false},
+		GoonTest{HasDefaultKind{Name: "orphan11"}, true},
+		GoonTest{HasId{Name: "orphan12"}, true},
+		GoonTest{HasKind{Name: "orphan15", Kind: "other"}, true},
+		GoonTest{HasParent{Name: "orphan16"}, true},
+		GoonTest{HasParent{Name: "child17", P: fatherkey}, true},
+		GoonTest{HasString{Id: "orphan18"}, true},
+		GoonTest{HasString{Name: "orphan19"}, true},
+		GoonTest{HasString{Name: "orphan20", Id: "hasstringid"}, true},
+	}
+
+	multiPut := make([]GoonStore, 0)
+	multiMemoryResult := make([]GoonStore, 0)
+	multiMemcacheResult := make([]GoonStore, 0)
+	multiDatastoreResult := make([]GoonStore, 0)
+	for _, gt := range goontests {
+		if gt.putErr {
+			continue
+		}
+		// should make a copy of each valid put GoonScore object
+		multiPut = append(multiPut, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
+		multiMemoryResult = append(multiMemoryResult, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
+		multiMemcacheResult = append(multiMemcacheResult, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
+		multiDatastoreResult = append(multiDatastoreResult, reflect.ValueOf(gt.orig).Elem().Addr().Interface().(GoonStore))
+	}
+
+	multiKeys, err := n.PutMulti(&multiPut)
+	if err != nil {
+		t.Fatalf("PutMulti failed for []GoonScore - %v", err)
+	}
+	multiKeysCopy, err := n.extractKeys(multiPut, false)
+	if err != nil {
+		t.Fatalf("extractKeys failed for []GoonScore - %v", err)
+	}
+	if !reflect.DeepEqual(multiKeys, multiKeysCopy) {
+		t.Errorf("Keys returned from PutMulti != extractKeys")
+	}
+	multiStrings := make([]string, len(multiPut))
+	for x := range multiStrings {
+		tk, _, err := n.getStructKey(multiPut[x])
+		if err != nil {
+			t.Errorf("Could not get key from %v - %s", multiPut[x], err)
+		}
+		multiStrings[x] = tk.Encode()
+	}
+	err = n.GetMulti(&multiMemoryResult)
+	if err != nil {
+		t.Fatalf("memory - GetMultii failed for []GoonScore - %v", err)
+	}
+	n.FlushLocalCache()
+	err = n.GetMulti(&multiMemcacheResult)
+	if err != nil {
+		t.Fatalf("memcache - GetMultii failed for []GoonScore - %v", err)
+	}
+	n.FlushLocalCache()
+	err = memcache.Flush(c) // flush all memcache
+	if err != nil {
+		t.Fatalf("Error flushing memcache")
+	}
+	err = n.GetMulti(&multiDatastoreResult)
+	if err != nil {
+		t.Fatalf("datastore - GetMultii failed for []GoonScore - %v", err)
+	}
+	if !reflect.DeepEqual(multiPut, multiDatastoreResult) {
+		t.Errorf("PutMulti != GetMulti for datastore")
+	}
+	if !reflect.DeepEqual(multiPut, multiMemcacheResult) {
+		t.Errorf("PutMulti != GetMulti for memcache")
+	}
+	for x := range multiPut {
+		if !reflect.DeepEqual(multiPut[x], multiMemoryResult[x]) {
+			t.Errorf("PutMulti != GetMulti for items - %v != %v", multiPut[x], multiMemoryResult[x])
+		}
+	}
+
+	for _, gt := range goontests {
+		key, err := n.Put(gt.orig)
+		if (err == nil) && gt.putErr {
+			t.Errorf("Put request for %#v should have errored but didn't", gt.orig)
+			continue
+		} else if err != nil {
+			if !gt.putErr {
+				t.Errorf("Put request had unexpected error %v for %#v", err, gt.orig)
+			}
+			// put error'd, nothing else to test
+			continue
+		}
+		if !key.Equal(n.Key(gt.orig)) {
+			t.Errorf("Key not equal for object %#v ***** %v != %v", gt.orig, key, n.Key(gt.orig))
+			continue
+		}
+		if key.Parent() != nil && n.Key(gt.orig) != nil && !key.Parent().Equal(n.Key(gt.orig).Parent()) {
+			t.Errorf("Parent not equal for object %#v ***** %v != %v", gt.orig, key.Parent(), n.Key(gt.orig).Parent())
+		}
+		for _, fetchType := range []string{"memory", "memcache", "datastore"} {
+			switch fetchType {
+			case "datastore":
+				err = memcache.Delete(c, n.Key(gt.orig).Encode())
+				if err != nil {
+					t.Fatalf("Error clearing memcache for %#v", gt.orig)
+				}
+				fallthrough
+			case "memcache":
+				n.FlushLocalCache()
+			}
+
+			putDest := reflect.New(reflect.TypeOf(gt.orig).Elem()).Interface().(GoonStore)
+			setStructKey(putDest, key)
+			err = n.Get(putDest)
+			if err != nil {
+				t.Fatalf("%s - Get failed on object %#v", fetchType, putDest)
+			}
+			if putDest.Data() != gt.orig.Data() {
+				t.Fatalf("%s - Get request failed to populate data of %#v to %#v", fetchType, gt.orig, putDest)
+			}
+		}
+	}
+	for _, gt := range goontests {
+		if gt.putErr {
+			continue // can't test GetAll on a struct that can't be put!
+		}
+		name := typeName(gt.orig)
+		if hk, ok := gt.orig.(*HasKind); ok {
+			name = hk.Kind
+		}
+		query := datastore.NewQuery(name)
+		if n.Key(gt.orig).Parent() == nil {
+			query = query.Filter("Name =", "orphan")
+		} else {
+			query = query.Filter("Name =", "child")
+		}
+		temp := reflect.Indirect(reflect.New(reflect.TypeOf(gt.orig))).Interface()
+		slicePtr := reflect.New(reflect.SliceOf(reflect.TypeOf(temp)))
+		slice := slicePtr.Elem()
+		_, err = n.GetAll(query, slicePtr.Interface())
+		for x := 0; x < slice.Len(); x++ {
+			gs := slice.Index(x).Interface().(GoonStore)
+			if gs.Data() != gt.orig.Data() {
+				t.Errorf("GetAll request failed to populate data of %#v to %#v", gt.orig, gs)
+			}
+		}
+	}
 }
 
 type keyTest struct {
@@ -667,10 +918,18 @@ type HasId struct {
 	Name string
 }
 
+func (src HasId) Data() string {
+	return src.Name
+}
+
 type HasKind struct {
 	Id   int64  `datastore:"-" goon:"id"`
 	Kind string `datastore:"-" goon:"kind"`
 	Name string
+}
+
+func (src HasKind) Data() string {
+	return src.Name
 }
 
 type HasDefaultKind struct {
@@ -685,7 +944,12 @@ type QueryItem struct {
 }
 
 type HasString struct {
-	Id string `datastore:"-" goon:"id"`
+	Id   string `datastore:"-" goon:"id"`
+	Name string
+}
+
+func (src HasString) Data() string {
+	return src.Name
 }
 
 type TwoId struct {
@@ -853,4 +1117,27 @@ func TestPutGet(t *testing.T) {
 		t.Fatal("goonPutGet.Value should be 15 but is",
 			goonPutGet.Value)
 	}
+}
+
+func (src HasDefaultKind) Data() string {
+	return src.Name
+}
+
+type HasParent struct {
+	Id   int64          `datastore:"-" goon:"id"`
+	P    *datastore.Key `datastore:"-" goon:"parent"`
+	Name string
+}
+
+func (src HasParent) Data() string {
+	return src.Name
+}
+
+type GoonStore interface {
+	Data() string
+}
+
+type GoonTest struct {
+	orig   GoonStore
+	putErr bool
 }
