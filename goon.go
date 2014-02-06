@@ -185,7 +185,8 @@ const putMultiLimit = 500
 
 // PutMulti is a batch version of Put.
 //
-// src must satisfy the same conditions as the dst argument to GetMulti.
+// src must be a *[]S, *[]*S, *[]I, []S, []*S, or []I, for some struct type S,
+// or some interface type I. If *[]I or []I, each element must be a struct pointer.
 func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	keys, err := g.extractKeys(src, true) // allow incomplete keys on a Put request
 	if err != nil {
@@ -324,16 +325,19 @@ const getMultiLimit = 1000
 
 // GetMulti is a batch version of Get.
 //
-// dst has similar constraints as datastore.GetMulti.
+// dst must be a *[]S, *[]*S, *[]I, []S, []*S, or []I, for some struct type S,
+// or some interface type I. If *[]I or []I, each element must be a struct pointer.
 func (g *Goon) GetMulti(dst interface{}) error {
 	keys, err := g.extractKeys(dst, false) // don't allow incomplete keys on a Get request
 	if err != nil {
 		return err
 	}
 
+	v := reflect.Indirect(reflect.ValueOf(dst))
+
 	if g.inTransaction {
 		// todo: support getMultiLimit in transactions
-		return datastore.GetMulti(g.context, keys, dst)
+		return datastore.GetMulti(g.context, keys, v.Interface())
 	}
 
 	var dskeys []*datastore.Key
@@ -343,12 +347,20 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	var memkeys []string
 	var mixs []int
 
-	v := reflect.Indirect(reflect.ValueOf(dst))
 	g.cacheLock.RLock()
 	for i, key := range keys {
 		m := memkey(key)
 		vi := v.Index(i)
+
+		if vi.Kind() == reflect.Struct {
+			vi = vi.Addr()
+		}
+
 		if s, present := g.cache[m]; present {
+			if vi.Kind() == reflect.Interface {
+				vi = vi.Elem()
+			}
+
 			reflect.Indirect(vi).Set(reflect.Indirect(reflect.ValueOf(s)))
 		} else {
 			memkeys = append(memkeys, m)
