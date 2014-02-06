@@ -827,7 +827,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Get the entities using normal GetMulti to test local cache
-	qiNZSs := []*QueryItem{{Id: 1}, {Id: 2}} // TODO: Change this once GetMulti gets []S support
+	qiNZSs := []QueryItem{{Id: 1}, {Id: 2}}
 	if err := n.GetMulti(qiNZSs); err != nil {
 		t.Errorf("GetMulti NZSoS: unexpected error: %v", err)
 	} else if len(qiNZSs) != 2 {
@@ -925,7 +925,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
-	if err := n.Get(&qiKOSRes[0]); err != nil { // TODO: Change this to n.GetMulti(qiKOSRes) once GetMulti gets []S support
+	if err := n.GetMulti(qiKOSRes); err != nil {
 		t.Errorf("Get KeysOnly SoS: unexpected error: %v", err)
 	} else if qiKOSRes[0].Id != 1 {
 		t.Errorf("Get KeysOnly SoS: expected entity id to be 1, got %v", qiKOSRes[0].Id)
@@ -989,19 +989,18 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Get the entities using normal GetMulti to test local cache
-	qiKONZSs := []*QueryItem{{Id: 1}, {Id: 2}}
-	if err := n.GetMulti(qiKONZSs); err != nil { // TODO: Change this to n.GetMulti(qiKONZSRes) once GetMulti gets []S support
+	if err := n.GetMulti(qiKONZSRes); err != nil {
 		t.Errorf("GetMulti NZSoS: unexpected error: %v", err)
-	} else if len(qiKONZSs) != 2 {
-		t.Errorf("GetMulti NZSoS: expected slice len to be 2, got %v", len(qiKONZSs))
-	} else if qiKONZSs[0].Id != 1 {
-		t.Errorf("GetMulti NZSoS: expected entity id to be 1, got %v", qiKONZSs[0].Id)
-	} else if qiKONZSs[0].Data != "one" {
-		t.Errorf("GetMulti NZSoS: expected entity data to be 'one', got '%v'", qiKONZSs[0].Data)
-	} else if qiKONZSs[1].Id != 2 {
-		t.Errorf("GetMulti NZSoS: expected entity id to be 2, got %v", qiKONZSs[1].Id)
-	} else if qiKONZSs[1].Data != "two" {
-		t.Errorf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiKONZSs[1].Data)
+	} else if len(qiKONZSRes) != 2 {
+		t.Errorf("GetMulti NZSoS: expected slice len to be 2, got %v", len(qiKONZSRes))
+	} else if qiKONZSRes[0].Id != 1 {
+		t.Errorf("GetMulti NZSoS: expected entity id to be 1, got %v", qiKONZSRes[0].Id)
+	} else if qiKONZSRes[0].Data != "one" {
+		t.Errorf("GetMulti NZSoS: expected entity data to be 'one', got '%v'", qiKONZSRes[0].Data)
+	} else if qiKONZSRes[1].Id != 2 {
+		t.Errorf("GetMulti NZSoS: expected entity id to be 2, got %v", qiKONZSRes[1].Id)
+	} else if qiKONZSRes[1].Data != "two" {
+		t.Errorf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiKONZSRes[1].Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
