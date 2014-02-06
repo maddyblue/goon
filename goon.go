@@ -31,6 +31,8 @@ import (
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
 	LogErrors = true
+	// LogTimeoutErrors issues appengine.Context.Warningf on memcache timeout errors.
+	LogTimeoutErrors = false
 
 	// MemcachePutTimeoutThreshold is the number of bytes at which the memcache
 	// timeout uses the large setting.
@@ -78,6 +80,12 @@ func (g *Goon) error(err error) {
 		return
 	}
 	g.context.Errorf("goon: %v", err)
+}
+
+func (g *Goon) timeoutError(err error) {
+	if LogTimeoutErrors {
+		g.context.Warningf("goon memcache timeout: %v", err)
+	}
 }
 
 func (g *Goon) extractKeys(src interface{}, putRequest bool) ([]*datastore.Key, error) {
@@ -301,7 +309,10 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	}()
 	g.putMemoryMulti(srcs)
 	err := <-errc
-	if err != nil && !appengine.IsTimeoutError(err) {
+	if appengine.IsTimeoutError(err) {
+		g.timeoutError(err)
+		err = nil
+	} else if err != nil {
 		g.error(err)
 	}
 	return err
@@ -376,10 +387,11 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	}
 
 	memvalues, err := memcache.GetMulti(appengine.Timeout(g.context, MemcacheGetTimeout), memkeys)
-	if err != nil {
-		if !appengine.IsTimeoutError(err) {
-			g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
-		}
+	if appengine.IsTimeoutError(err) {
+		g.timeoutError(err)
+		err = nil
+	} else if err != nil {
+		g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
 		// No memvalues found, prepare the datastore fetch list already prepared above
 	} else if len(memvalues) > 0 {
 		// since memcache fetch was successful, reset the datastore fetch list and repopulate it
