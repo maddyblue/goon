@@ -211,64 +211,51 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 	for i := 0; i < goroutines; i++ {
-		lo := i * putMultiLimit
-		hi := (i + 1) * putMultiLimit
-		if hi > len(keys) {
-			hi = len(keys)
-		}
-		go func(keys []*datastore.Key, src reflect.Value, multiErr appengine.MultiError) {
+		go func(i int) {
 			defer wg.Done()
-			putMultiInternal(g, keys, src, multiErr, &any, 3)
-		}(keys[lo:hi], v.Slice(lo, hi), multiErr[lo:hi])
+			lo := i * putMultiLimit
+			hi := (i + 1) * putMultiLimit
+			if hi > len(keys) {
+				hi = len(keys)
+			}
+			rkeys, pmerr := datastore.PutMulti(g.context, keys[lo:hi], v.Slice(lo, hi).Interface())
+			if pmerr != nil {
+				any = true // this flag tells PutMulti to return multiErr later
+				merr, ok := pmerr.(appengine.MultiError)
+				if !ok {
+					g.error(pmerr)
+					for j := lo; j < hi; j++ {
+						multiErr[j] = pmerr
+					}
+					return
+				}
+				copy(multiErr[lo:hi], merr)
+			}
+
+			for i, key := range keys[lo:hi] {
+				if multiErr[lo+i] != nil {
+					continue // there was an error writing this value, go to next
+				}
+				vi := v.Index(lo + i).Interface()
+				if key.Incomplete() {
+					setStructKey(vi, rkeys[i])
+					keys[i] = rkeys[i]
+				}
+				if g.inTransaction {
+					mk := memkey(rkeys[i])
+					delete(g.toDelete, mk)
+					g.toSet[mk] = vi
+				} else {
+					g.putMemory(vi)
+				}
+			}
+		}(i)
 	}
 	wg.Wait()
 	if any {
 		return keys, realError(multiErr)
 	}
 	return keys, nil
-}
-
-func putMultiInternal(g *Goon, keys []*datastore.Key, src reflect.Value, multiErr appengine.MultiError, any *bool, retryCompleteKeys int) {
-	rkeys, pmerr := datastore.PutMulti(appengine.Timeout(g.context, 5*time.Second*time.Duration(4-retryCompleteKeys)), keys, src.Interface())
-	if pmerr != nil {
-		*any = true // this flag tells PutMulti to return multiErr later
-		merr, ok := pmerr.(appengine.MultiError)
-		if !ok {
-			if appengine.IsTimeoutError(pmerr) {
-				// Timeout errors are not MultiErrors
-				g.timeoutError(pmerr)
-				retryCompleteKeys--
-				if retryCompleteKeys >= 0 {
-					putMultiInternal(g, keys, src, multiErr, any, retryCompleteKeys)
-					return
-				}
-			}
-			g.error(pmerr)
-			for j := range multiErr {
-				multiErr[j] = pmerr
-			}
-			return
-		}
-		copy(multiErr, merr)
-	}
-
-	for i, key := range keys {
-		if multiErr[i] != nil {
-			continue // there was an error writing this value, go to next
-		}
-		vi := src.Index(i).Interface()
-		if key.Incomplete() {
-			setStructKey(vi, rkeys[i])
-			keys[i] = rkeys[i]
-		}
-		if g.inTransaction {
-			mk := memkey(rkeys[i])
-			delete(g.toDelete, mk)
-			g.toSet[mk] = vi
-		} else {
-			g.putMemory(vi)
-		}
-	}
 }
 
 func (g *Goon) putMemoryMulti(src interface{}) {
