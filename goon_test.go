@@ -22,10 +22,403 @@ import (
 	"testing"
 	"time"
 
+	"appengine"
 	"appengine/aetest"
 	"appengine/datastore"
 	"appengine/memcache"
 )
+
+// *[]S, *[]*S, *[]I, []S, []*S, []I
+const (
+	ivTypePtrToSliceOfStructs = iota
+	ivTypePtrToSliceOfPtrsToStruct
+	ivTypePtrToSliceOfInterfaces
+	ivTypeSliceOfStructs
+	ivTypeSliceOfPtrsToStruct
+	ivTypeSliceOfInterfaces
+	ivTypeTotal
+)
+
+const (
+	ivModeDatastore = iota
+	ivModeMemcache
+	ivModeMemcacheAndDatastore
+	ivModeLocalcache
+	ivModeLocalcacheAndMemcache
+	ivModeLocalcacheAndDatastore
+	ivModeLocalcacheAndMemcacheAndDatastore
+	ivModeTotal
+)
+
+type ivItem struct {
+	Id   int64  `datastore:"-" goon:"id"`
+	Data string `datastore:"data,noindex"`
+}
+
+func (ivi *ivItem) ForInterface() {}
+
+type ivItemI interface {
+	ForInterface()
+}
+
+var ivItems = []ivItem{{Id: 1, Data: "one"}, {Id: 2, Data: "two"}, {Id: 3, Data: "three"}}
+
+func getInputVarietySrc(t *testing.T, ivType int, indices ...int) interface{} {
+	if ivType >= ivTypeTotal {
+		t.Fatalf("Invalid input variety type! %v >= %v", ivType, ivTypeTotal)
+		return nil
+	}
+
+	var result interface{}
+
+	switch ivType {
+	case ivTypePtrToSliceOfStructs:
+		s := []ivItem{}
+		for _, index := range indices {
+			s = append(s, ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+		}
+		result = &s
+	case ivTypePtrToSliceOfPtrsToStruct:
+		s := []*ivItem{}
+		for _, index := range indices {
+			s = append(s, &ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+		}
+		result = &s
+	case ivTypePtrToSliceOfInterfaces:
+		s := []ivItemI{}
+		for _, index := range indices {
+			s = append(s, &ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+		}
+		result = &s
+	case ivTypeSliceOfStructs:
+		s := []ivItem{}
+		for _, index := range indices {
+			s = append(s, ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+		}
+		result = s
+	case ivTypeSliceOfPtrsToStruct:
+		s := []*ivItem{}
+		for _, index := range indices {
+			s = append(s, &ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+		}
+		result = s
+	case ivTypeSliceOfInterfaces:
+		s := []ivItemI{}
+		for _, index := range indices {
+			s = append(s, &ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+		}
+		result = s
+	}
+
+	return result
+}
+
+func getInputVarietyDst(t *testing.T, ivType int) interface{} {
+	if ivType >= ivTypeTotal {
+		t.Fatalf("Invalid input variety type! %v >= %v", ivType, ivTypeTotal)
+		return nil
+	}
+
+	var result interface{}
+
+	switch ivType {
+	case ivTypePtrToSliceOfStructs:
+		result = &[]ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
+	case ivTypePtrToSliceOfPtrsToStruct:
+		result = &[]*ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
+	case ivTypePtrToSliceOfInterfaces:
+		result = &[]ivItemI{&ivItem{Id: ivItems[0].Id}, &ivItem{Id: ivItems[1].Id}, &ivItem{Id: ivItems[2].Id}}
+	case ivTypeSliceOfStructs:
+		result = []ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
+	case ivTypeSliceOfPtrsToStruct:
+		result = []*ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
+	case ivTypeSliceOfInterfaces:
+		result = []ivItemI{&ivItem{Id: ivItems[0].Id}, &ivItem{Id: ivItems[1].Id}, &ivItem{Id: ivItems[2].Id}}
+	}
+
+	return result
+}
+
+func getPrettyIVMode(ivMode int) string {
+	result := "N/A"
+
+	switch ivMode {
+	case ivModeDatastore:
+		result = "DS"
+	case ivModeMemcache:
+		result = "MC"
+	case ivModeMemcacheAndDatastore:
+		result = "DS+MC"
+	case ivModeLocalcache:
+		result = "LC"
+	case ivModeLocalcacheAndMemcache:
+		result = "MC+LC"
+	case ivModeLocalcacheAndDatastore:
+		result = "DS+LC"
+	case ivModeLocalcacheAndMemcacheAndDatastore:
+		result = "DS+MC+LC"
+	}
+
+	return result
+}
+
+func getPrettyIVType(ivType int) string {
+	result := "N/A"
+
+	switch ivType {
+	case ivTypePtrToSliceOfStructs:
+		result = "*[]S"
+	case ivTypePtrToSliceOfPtrsToStruct:
+		result = "*[]*S"
+	case ivTypePtrToSliceOfInterfaces:
+		result = "*[]I"
+	case ivTypeSliceOfStructs:
+		result = "[]S"
+	case ivTypeSliceOfPtrsToStruct:
+		result = "[]*S"
+	case ivTypeSliceOfInterfaces:
+		result = "[]I"
+	}
+
+	return result
+}
+
+func ivWipe(t *testing.T, g *Goon, prettyInfo string) {
+	// Make sure the datastore is clear of any previous tests
+	// TODO: Batch this once goon gets more convenient batch delete support
+	for _, ivi := range ivItems {
+		if err := g.Delete(g.Key(ivi)); err != nil {
+			t.Errorf("%s > Unexpected error on delete - %v", prettyInfo, err)
+		}
+	}
+
+	// Make sure the caches are clear, so any caching is done by our specific test
+	g.FlushLocalCache()
+	memcache.Flush(g.context)
+}
+
+func ivGetMulti(t *testing.T, g *Goon, ref, dst interface{}, prettyInfo string) error {
+	// Get our data back and make sure it's correct
+	if err := g.GetMulti(dst); err != nil {
+		t.Errorf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
+		return err
+	} else {
+		dstLen := reflect.Indirect(reflect.ValueOf(dst)).Len()
+		refLen := reflect.Indirect(reflect.ValueOf(ref)).Len()
+
+		if dstLen != refLen {
+			t.Errorf("%s > Unexpected dst len (%v) doesn't match ref len (%v)", prettyInfo, dstLen, refLen)
+		} else if !reflect.DeepEqual(ref, dst) {
+			t.Errorf("%s > Expected - %v, %v, %v - got %v, %v, %v", prettyInfo,
+				reflect.Indirect(reflect.ValueOf(ref)).Index(0).Interface(),
+				reflect.Indirect(reflect.ValueOf(ref)).Index(1).Interface(),
+				reflect.Indirect(reflect.ValueOf(ref)).Index(2).Interface(),
+				reflect.Indirect(reflect.ValueOf(dst)).Index(0).Interface(),
+				reflect.Indirect(reflect.ValueOf(dst)).Index(1).Interface(),
+				reflect.Indirect(reflect.ValueOf(dst)).Index(2).Interface())
+		}
+	}
+
+	return nil
+}
+
+func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
+	if mode >= ivModeTotal {
+		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
+		return
+	}
+
+	// Generate a nice debug info string for clear logging
+	prettyInfo := getPrettyIVType(srcType) + " " + getPrettyIVType(dstType) + " " + getPrettyIVMode(mode)
+
+	// This function just gets the entities based on a predefined list, helper for cache population
+	loadIVItem := func(indices ...int) {
+		for _, index := range indices {
+			ivi := &ivItem{Id: ivItems[index].Id}
+			if err := g.Get(ivi); err != nil {
+				t.Errorf("%s > Unexpected error on get - %v", prettyInfo, err)
+			} else if !reflect.DeepEqual(ivItems[index], *ivi) {
+				t.Errorf("%s > Expected - %v, got %v", prettyInfo, ivItems[index], *ivi)
+			}
+		}
+	}
+
+	// Start with a clean slate
+	ivWipe(t, g, prettyInfo)
+
+	// Generate test data with the specified types
+	src := getInputVarietySrc(t, srcType, 0, 1, 2)
+	ref := getInputVarietySrc(t, dstType, 0, 1, 2)
+	dst := getInputVarietyDst(t, dstType)
+
+	// Save our test data
+	if _, err := g.PutMulti(src); err != nil {
+		t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+	}
+
+	// Set the caches into proper state based on given mode
+	switch mode {
+	case ivModeDatastore:
+		g.FlushLocalCache()
+		memcache.Flush(g.context)
+	case ivModeMemcache:
+		loadIVItem(0, 1, 2) // Left in memcache
+		g.FlushLocalCache()
+	case ivModeMemcacheAndDatastore:
+		loadIVItem(0, 1) // Left in memcache
+		g.FlushLocalCache()
+	case ivModeLocalcache:
+		loadIVItem(0, 1, 2) // Left in local cache
+	case ivModeLocalcacheAndMemcache:
+		loadIVItem(0) // Left in memcache
+		g.FlushLocalCache()
+		loadIVItem(1, 2) // Left in local cache
+	case ivModeLocalcacheAndDatastore:
+		loadIVItem(0, 1) // Left in local cache
+	case ivModeLocalcacheAndMemcacheAndDatastore:
+		loadIVItem(0) // Left in memcache
+		g.FlushLocalCache()
+		loadIVItem(1) // Left in local cache
+	}
+
+	// Get our data back and make sure it's correct
+	ivGetMulti(t, g, ref, dst, prettyInfo)
+}
+
+func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode int) {
+	if mode >= ivModeTotal {
+		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
+		return
+	}
+
+	// The following modes are redundant with the current goon transaction implementation
+	switch mode {
+	case ivModeMemcache:
+		return
+	case ivModeMemcacheAndDatastore:
+		return
+	case ivModeLocalcacheAndMemcache:
+		return
+	case ivModeLocalcacheAndMemcacheAndDatastore:
+		return
+	}
+
+	// Generate a nice debug info string for clear logging
+	prettyInfo := getPrettyIVType(srcType) + " " + getPrettyIVType(dstType) + " " + getPrettyIVMode(mode) + " TXNPut"
+
+	// Start with a clean slate
+	ivWipe(t, g, prettyInfo)
+
+	// Generate test data with the specified types
+	src := getInputVarietySrc(t, srcType, 0, 1, 2)
+	ref := getInputVarietySrc(t, dstType, 0, 1, 2)
+	dst := getInputVarietyDst(t, dstType)
+
+	// Save our test data
+	if err := g.RunInTransaction(func(tg *Goon) error {
+		_, err := tg.PutMulti(src)
+		return err
+	}, &datastore.TransactionOptions{XG: true}); err != nil {
+		t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+	}
+
+	// Set the caches into proper state based on given mode
+	switch mode {
+	case ivModeDatastore:
+		g.FlushLocalCache()
+		memcache.Flush(g.context)
+	case ivModeLocalcache:
+		// Entities already in local cache
+	case ivModeLocalcacheAndDatastore:
+		g.FlushLocalCache()
+		memcache.Flush(g.context)
+
+		subSrc := getInputVarietySrc(t, srcType, 0)
+
+		if err := g.RunInTransaction(func(tg *Goon) error {
+			_, err := tg.PutMulti(subSrc)
+			return err
+		}, &datastore.TransactionOptions{XG: true}); err != nil {
+			t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+		}
+	}
+
+	// Get our data back and make sure it's correct
+	ivGetMulti(t, g, ref, dst, prettyInfo)
+}
+
+func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode int) {
+	if mode >= ivModeTotal {
+		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
+		return
+	}
+
+	// The following modes are redundant with the current goon transaction implementation
+	switch mode {
+	case ivModeMemcache:
+		return
+	case ivModeMemcacheAndDatastore:
+		return
+	case ivModeLocalcache:
+		return
+	case ivModeLocalcacheAndMemcache:
+		return
+	case ivModeLocalcacheAndDatastore:
+		return
+	case ivModeLocalcacheAndMemcacheAndDatastore:
+		return
+	}
+
+	// Generate a nice debug info string for clear logging
+	prettyInfo := getPrettyIVType(srcType) + " " + getPrettyIVType(dstType) + " " + getPrettyIVMode(mode) + " TXNGet"
+
+	// Start with a clean slate
+	ivWipe(t, g, prettyInfo)
+
+	// Generate test data with the specified types
+	src := getInputVarietySrc(t, srcType, 0, 1, 2)
+	ref := getInputVarietySrc(t, dstType, 0, 1, 2)
+	dst := getInputVarietyDst(t, dstType)
+
+	// Save our test data
+	if _, err := g.PutMulti(src); err != nil {
+		t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+	}
+
+	// Set the caches into proper state based on given mode
+	// TODO: Instead of clear, fill the caches with invalid data, because we're supposed to always fetch from the datastore
+	switch mode {
+	case ivModeDatastore:
+		g.FlushLocalCache()
+		memcache.Flush(g.context)
+	}
+
+	// Get our data back and make sure it's correct
+	if err := g.RunInTransaction(func(tg *Goon) error {
+		return ivGetMulti(t, tg, ref, dst, prettyInfo)
+	}, &datastore.TransactionOptions{XG: true}); err != nil {
+		t.Errorf("%s > Unexpected error on transaction - %v", prettyInfo, err)
+	}
+}
+
+func TestInputVariety(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+
+	for srcType := 0; srcType < ivTypeTotal; srcType++ {
+		for dstType := 0; dstType < ivTypeTotal; dstType++ {
+			for mode := 0; mode < ivModeTotal; mode++ {
+				validateInputVariety(t, g, srcType, dstType, mode)
+				validateInputVarietyTXNPut(t, g, srcType, dstType, mode)
+				validateInputVarietyTXNGet(t, g, srcType, dstType, mode)
+			}
+		}
+	}
+}
 
 func TestCaches(t *testing.T) {
 	c, err := aetest.NewContext(nil)
@@ -41,7 +434,6 @@ func TestCaches(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unexpected error on put - %v", err)
 	}
-	time.Sleep(1) // sleep so the datastore can catch up
 
 	// fetch *struct{} from cache
 	ghid := &HasId{Id: phid.Id}
@@ -436,7 +828,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Get the entities using normal GetMulti to test local cache
-	qiNZSs := []*QueryItem{{Id: 1}, {Id: 2}} // TODO: Change this once GetMulti gets []S support
+	qiNZSs := []QueryItem{{Id: 1}, {Id: 2}}
 	if err := n.GetMulti(qiNZSs); err != nil {
 		t.Errorf("GetMulti NZSoS: unexpected error: %v", err)
 	} else if len(qiNZSs) != 2 {
@@ -534,7 +926,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
-	if err := n.Get(&qiKOSRes[0]); err != nil { // TODO: Change this to n.GetMulti(qiKOSRes) once GetMulti gets []S support
+	if err := n.GetMulti(qiKOSRes); err != nil {
 		t.Errorf("Get KeysOnly SoS: unexpected error: %v", err)
 	} else if qiKOSRes[0].Id != 1 {
 		t.Errorf("Get KeysOnly SoS: expected entity id to be 1, got %v", qiKOSRes[0].Id)
@@ -598,19 +990,18 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Get the entities using normal GetMulti to test local cache
-	qiKONZSs := []*QueryItem{{Id: 1}, {Id: 2}}
-	if err := n.GetMulti(qiKONZSs); err != nil { // TODO: Change this to n.GetMulti(qiKONZSRes) once GetMulti gets []S support
+	if err := n.GetMulti(qiKONZSRes); err != nil {
 		t.Errorf("GetMulti NZSoS: unexpected error: %v", err)
-	} else if len(qiKONZSs) != 2 {
-		t.Errorf("GetMulti NZSoS: expected slice len to be 2, got %v", len(qiKONZSs))
-	} else if qiKONZSs[0].Id != 1 {
-		t.Errorf("GetMulti NZSoS: expected entity id to be 1, got %v", qiKONZSs[0].Id)
-	} else if qiKONZSs[0].Data != "one" {
-		t.Errorf("GetMulti NZSoS: expected entity data to be 'one', got '%v'", qiKONZSs[0].Data)
-	} else if qiKONZSs[1].Id != 2 {
-		t.Errorf("GetMulti NZSoS: expected entity id to be 2, got %v", qiKONZSs[1].Id)
-	} else if qiKONZSs[1].Data != "two" {
-		t.Errorf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiKONZSs[1].Data)
+	} else if len(qiKONZSRes) != 2 {
+		t.Errorf("GetMulti NZSoS: expected slice len to be 2, got %v", len(qiKONZSRes))
+	} else if qiKONZSRes[0].Id != 1 {
+		t.Errorf("GetMulti NZSoS: expected entity id to be 1, got %v", qiKONZSRes[0].Id)
+	} else if qiKONZSRes[0].Data != "one" {
+		t.Errorf("GetMulti NZSoS: expected entity data to be 'one', got '%v'", qiKONZSRes[0].Data)
+	} else if qiKONZSRes[1].Id != 2 {
+		t.Errorf("GetMulti NZSoS: expected entity id to be 2, got %v", qiKONZSRes[1].Id)
+	} else if qiKONZSRes[1].Data != "two" {
+		t.Errorf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiKONZSRes[1].Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
@@ -852,5 +1243,78 @@ func TestPutGet(t *testing.T) {
 	if goonPutGet.Value != 15 {
 		t.Fatal("goonPutGet.Value should be 15 but is",
 			goonPutGet.Value)
+	}
+}
+
+func TestMultis(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	n := FromContext(c)
+
+	testAmounts := []int{1, 999, 1000, 1001, 1999, 2000, 2001, 2510}
+	for _, x := range testAmounts {
+		memcache.Flush(c)
+		objects := make([]*HasId, x)
+		for y := 0; y < x; y++ {
+			objects[y] = &HasId{Id: int64(y + 1)}
+		}
+		if _, err := n.PutMulti(objects); err != nil {
+			t.Fatalf("Error in PutMulti for %d objects - %v", x, err)
+		}
+		n.FlushLocalCache() // Put just put them in the local cache, get rid of it before doing the Get
+		if err := n.GetMulti(objects); err != nil {
+			t.Fatalf("Error in GetMulti - %v", err)
+		}
+	}
+
+	// do it again, but only write numbers divisible by 100
+	for _, x := range testAmounts {
+		memcache.Flush(c)
+		getobjects := make([]*HasId, 0, x)
+		putobjects := make([]*HasId, 0, x/100+1)
+		keys := make([]*datastore.Key, x)
+		for y := 0; y < x; y++ {
+			keys[y] = datastore.NewKey(c, "HasId", "", int64(y+1), nil)
+		}
+		if err := n.DeleteMulti(keys); err != nil {
+			t.Fatalf("Error deleting keys - %v", err)
+		}
+		for y := 0; y < x; y++ {
+			getobjects = append(getobjects, &HasId{Id: int64(y + 1)})
+			if y%100 == 0 {
+				putobjects = append(putobjects, &HasId{Id: int64(y + 1)})
+			}
+		}
+
+		_, err := n.PutMulti(putobjects)
+		if err != nil {
+			t.Fatalf("Error in PutMulti for %d objects - %v", x, err)
+		}
+		n.FlushLocalCache() // Put just put them in the local cache, get rid of it before doing the Get
+		err = n.GetMulti(getobjects)
+		if err == nil && x != 1 { // a test size of 1 has no objects divisible by 100, so there's no cache miss to return
+			t.Errorf("Should be receiving a multiError on %d objects, but got no errors", x)
+			continue
+		}
+
+		merr, ok := err.(appengine.MultiError)
+		if ok {
+			if len(merr) != len(getobjects) {
+				t.Errorf("Should have received a MultiError object of length %d but got length %d instead", len(getobjects), len(merr))
+			}
+			for x := range merr {
+				switch { // record good conditions, fail in other conditions
+				case merr[x] == nil && x%100 == 0:
+				case merr[x] != nil && x%100 != 0:
+				default:
+					t.Errorf("Found bad condition on object[%d] and error %v", x+1, merr[x])
+				}
+			}
+		} else if x != 1 {
+			t.Errorf("Did not return a multierror on fetch but when fetching %d objects, received - %v", x, merr)
+		}
 	}
 }
