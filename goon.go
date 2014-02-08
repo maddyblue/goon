@@ -32,6 +32,8 @@ import (
 var (
 	// LogErrors issues appengine.Context.Errorf on any error.
 	LogErrors = true
+	// LogTimeoutErrors issues appengine.Context.Warningf on memcache timeout errors.
+	LogTimeoutErrors = false
 
 	// MemcachePutTimeoutThreshold is the number of bytes at which the memcache
 	// timeout uses the large setting.
@@ -79,6 +81,12 @@ func (g *Goon) error(err error) {
 		return
 	}
 	g.context.Errorf("goon: %v", err)
+}
+
+func (g *Goon) timeoutError(err error) {
+	if LogTimeoutErrors {
+		g.context.Warningf("goon memcache timeout: %v", err)
+	}
 }
 
 func (g *Goon) extractKeys(src interface{}, putRequest bool) ([]*datastore.Key, error) {
@@ -168,10 +176,13 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 // the datastore.
 func (g *Goon) Put(src interface{}) (*datastore.Key, error) {
 	ks, err := g.PutMulti([]interface{}{src})
-	if len(ks) == 1 {
-		return ks[0], err
+	if err != nil {
+		if me, ok := err.(appengine.MultiError); ok {
+			return nil, me[0]
+		}
+		return nil, err
 	}
-	return nil, err
+	return ks[0], nil
 }
 
 const putMultiLimit = 500
@@ -243,7 +254,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	}
 	wg.Wait()
 	if any {
-		return keys, multiErr
+		return keys, realError(multiErr)
 	}
 	return keys, nil
 }
@@ -300,7 +311,10 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	g.putMemoryMulti(srcs)
 	select {
 	case err := <-errc:
-		if err != nil {
+		if appengine.IsTimeoutError(err) {
+			g.timeoutError(err)
+			err = nil
+		} else if err != nil {
 			g.error(err)
 		}
 		// since putMemcache() gives no guarantee it will actually store the data in memcache
@@ -328,11 +342,7 @@ func (g *Goon) Get(dst interface{}) error {
 	if err := g.GetMulti(dsts.Interface()); err != nil {
 		// Look for an embedded error if it's multi
 		if me, ok := err.(appengine.MultiError); ok {
-			for i, merr := range me {
-				if i == 0 {
-					return merr
-				}
-			}
+			return me[0]
 		}
 		// Not multi, normal error
 		return err
@@ -392,8 +402,12 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 	go func() {
 		memvalues, err := memcache.GetMulti(g.context, memkeys)
-		if err != nil {
-			g.error(err)
+		if appengine.IsTimeoutError(err) {
+			g.timeoutError(err)
+			err = nil
+		} else if err != nil {
+			g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
+			// No memvalues found, prepare the datastore fetch list already prepared above
 		}
 		memcacheChan <- memvalues
 	}()
@@ -523,7 +537,7 @@ func (g *Goon) startDatastoreGetMulti(datastoreChan chan error, fullLength int, 
 	}
 	wg.Wait()
 	if any {
-		datastoreChan <- multiErr
+		datastoreChan <- realError(multiErr)
 	} else {
 		datastoreChan <- nil
 	}
@@ -532,10 +546,45 @@ func (g *Goon) startDatastoreGetMulti(datastoreChan chan error, fullLength int, 
 // Delete deletes the entity for the given key.
 func (g *Goon) Delete(key *datastore.Key) error {
 	keys := []*datastore.Key{key}
-	return g.DeleteMulti(keys)
+	err := g.DeleteMulti(keys)
+	if me, ok := err.(appengine.MultiError); ok {
+		return me[0]
+	}
+	return err
 }
 
 const deleteMultiLimit = 500
+
+// Returns a single error if each error in MultiError is the same
+// otherwise, returns multiError or nil (if multiError is empty)
+func realError(multiError appengine.MultiError) error {
+	if len(multiError) == 0 {
+		return nil
+	}
+	init := multiError[0]
+	for i := 1; i < len(multiError); i++ {
+		// since type error could hold structs, pointers, etc,
+		// the only way to compare non-nil errors is by their string output
+		if init == nil || multiError[i] == nil {
+			if init != multiError[i] {
+				return multiError
+			}
+		} else if init.Error() != multiError[i].Error() {
+			return multiError
+		}
+	}
+	// all errors are the same
+	// some errors are *always* returned in MultiError form from the datastore
+	if _, ok := init.(*datastore.ErrFieldMismatch); ok { // returned in GetMulti
+		return multiError
+	}
+	if init == datastore.ErrInvalidEntityType || // returned in GetMulti
+		init == datastore.ErrNoSuchEntity { // returned in GetMulti
+		return multiError
+	}
+	// datastore.ErrInvalidKey is returned as a single error in PutMulti
+	return init
+}
 
 // DeleteMulti is a batch version of Delete.
 func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
@@ -591,7 +640,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	}
 	wg.Wait()
 	if any {
-		return multiErr
+		return realError(multiErr)
 	}
 	return nil
 }
