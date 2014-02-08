@@ -461,9 +461,12 @@ func (g *Goon) GetMulti(dst interface{}) error {
 					for i, m := range memkeys {
 						if _, present := memvalues[m]; !present {
 							// memcache miss
-							d := v.Index(mixs[i]).Interface()
+							d := v.Index(mixs[i])
+							if d.Kind() == reflect.Struct {
+								d = d.Addr()
+							}
 							dskeys = append(dskeys, keys[mixs[i]])
-							dsdst = append(dsdst, d)
+							dsdst = append(dsdst, d.Interface())
 							dixs = append(dixs, mixs[i])
 						}
 					}
