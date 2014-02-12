@@ -496,6 +496,11 @@ type MigrationA struct {
 }
 
 type MigrationASub struct {
+	Data string           `datastore:"data,noindex"`
+	Sub  MigrationASubSub `datastore:"sub,noindex"`
+}
+
+type MigrationASubSub struct {
 	Data string `datastore:"data,noindex"`
 }
 
@@ -505,6 +510,7 @@ type MigrationB struct {
 	FancyNumber    int32  `datastore:"number,noindex"`
 	Slang          string `datastore:"word,noindex"`
 	Animal         string `datastore:"sub.data,noindex"`
+	Flower         string `datastore:"sub.sub.data,noindex"`
 }
 
 func TestMigration(t *testing.T) {
@@ -516,7 +522,7 @@ func TestMigration(t *testing.T) {
 	g := FromContext(c)
 
 	// Create & save an entity with the original structure
-	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Sub: MigrationASub{Data: "fox"}}
+	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Sub: MigrationASub{Data: "fox", Sub: MigrationASubSub{Data: "rose"}}}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
@@ -543,7 +549,9 @@ func TestMigration(t *testing.T) {
 	} else if migA.Word != migB1.Slang {
 		t.Errorf("Words don't match: %v != %v", migA.Word, migB1.Slang)
 	} else if migA.Sub.Data != migB1.Animal {
-		t.Errorf("Data don't match: %v != %v", migA.Sub.Data, migB1.Animal)
+		t.Errorf("Animal doesn't match: %v != %v", migA.Sub.Data, migB1.Animal)
+	} else if migA.Sub.Sub.Data != migB1.Flower {
+		t.Errorf("Flower doesn't match: %v != %v", migA.Sub.Sub.Data, migB1.Flower)
 	}
 
 	// Clear all the caches
@@ -561,7 +569,9 @@ func TestMigration(t *testing.T) {
 	} else if migA.Word != migB2.Slang {
 		t.Errorf("Words don't match: %v != %v", migA.Word, migB2.Slang)
 	} else if migA.Sub.Data != migB2.Animal {
-		t.Errorf("Data don't match: %v != %v", migA.Sub.Data, migB2.Animal)
+		t.Errorf("Animal doesn't match: %v != %v", migA.Sub.Data, migB2.Animal)
+	} else if migA.Sub.Sub.Data != migB2.Flower {
+		t.Errorf("Flower doesn't match: %v != %v", migA.Sub.Sub.Data, migB2.Flower)
 	}
 }
 
