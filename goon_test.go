@@ -77,7 +77,8 @@ type ivItemSub struct {
 }
 
 type ivItemSubs struct {
-	Data string `datastore:"data,noindex"`
+	Data  string `datastore:"data,noindex"`
+	Extra string `datastore:",noindex"`
 }
 
 func (ivi *ivItem) ForInterface() {}
@@ -97,9 +98,9 @@ func initializeIvItems(c appengine.Context) {
 			Key: datastore.NewKey(c, "Fruit", "Apple", 0, nil), BlobKey: "fake #1",
 			Sub: ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
 			Subs: []ivItemSubs{
-				{Data: "sub #1.1"},
-				{Data: "sub #1.2"},
-				{Data: "sub #1.3"}}},
+				{Data: "sub #1.1", Extra: "xtra #1.1"},
+				{Data: "sub #1.2", Extra: "xtra #1.2"},
+				{Data: "sub #1.3", Extra: "xtra #1.3"}}},
 		{Id: 2, Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "two", ByteSlice: []byte{0xBE, 0xEF},
@@ -107,9 +108,9 @@ func initializeIvItems(c appengine.Context) {
 			Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), BlobKey: "fake #2",
 			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
 			Subs: []ivItemSubs{
-				{Data: "sub #2.1"},
-				{Data: "sub #2.2"},
-				{Data: "sub #2.3"}}},
+				{Data: "sub #2.1", Extra: "xtra #2.1"},
+				{Data: "sub #2.2", Extra: "xtra #2.2"},
+				{Data: "sub #2.3", Extra: "xtra #2.3"}}},
 		{Id: 3, Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "tri", ByteSlice: []byte{0xF0, 0x0D},
@@ -117,9 +118,9 @@ func initializeIvItems(c appengine.Context) {
 			Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), BlobKey: "fake #3",
 			Sub: ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
 			Subs: []ivItemSubs{
-				{Data: "sub #3.1"},
-				{Data: "sub #3.2"},
-				{Data: "sub #3.3"}}}}
+				{Data: "sub #3.1", Extra: "xtra #3.1"},
+				{Data: "sub #3.2", Extra: "xtra #3.2"},
+				{Data: "sub #3.3", Extra: "xtra #3.3"}}}}
 }
 
 func getInputVarietySrc(t *testing.T, ivType int, indices ...int) interface{} {
