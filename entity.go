@@ -26,22 +26,195 @@ import (
 	"appengine/datastore"
 )
 
-func toGob(src interface{}) ([]byte, error) {
+func serializeStruct(src interface{}) ([]byte, error) {
+	v := reflect.Indirect(reflect.ValueOf(src))
+	t := v.Type()
+	k := t.Kind()
+
+	if k != reflect.Struct {
+		return nil, fmt.Errorf("goon: Expected struct, got instead: %v", k)
+	}
+
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
-	if err := enc.Encode(src); err != nil {
+
+	if err := serializeStructInternal(enc, "", v, t); err != nil {
 		return nil, err
 	}
+
 	return buf.Bytes(), nil
 }
 
-func fromGob(src interface{}, b []byte) error {
+func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Value, t reflect.Type) error {
+	for i := 0; i < v.NumField(); i++ {
+		vf := v.Field(i)
+		if !vf.CanSet() {
+			continue
+		}
+
+		tf := t.Field(i)
+		fieldName := tf.Name
+		tag := tf.Tag.Get("datastore")
+		if len(tag) > 0 {
+			fieldName = strings.Split(tag, ",")[0]
+			if fieldName == "-" {
+				continue
+			}
+		}
+		if namePrefix != "" {
+			fieldName = namePrefix + fieldName
+		}
+
+		if vf.Kind() == reflect.Slice && vf.Type().Elem().Kind() == reflect.Struct {
+			for j := 0; j < vf.Len(); j++ {
+				vi := vf.Index(j)
+				if err := serializeStructInternal(enc, fieldName+".", vi, vi.Type()); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		if vf.Kind() == reflect.Struct {
+			if err := serializeStructInternal(enc, fieldName+".", vf, vf.Type()); err != nil {
+				return err
+			}
+			continue
+		}
+
+		metaData := fieldName
+		if vf.Kind() == reflect.Slice {
+			// When decoding, if the target is a slice but metadata doesn't have the $ sign,
+			// then we can properly create a single value slice instead of panicing
+			metaData = "$" + fieldName
+		}
+
+		if err := enc.Encode(metaData); err != nil {
+			return fmt.Errorf("goon: Failed to encode field metadata %v - %v", metaData, err)
+		}
+		if err := enc.EncodeValue(vf); err != nil {
+			return fmt.Errorf("goon: Failed to encode field %v value %v - %v", fieldName, vf.Interface(), err)
+		}
+	}
+
+	return nil
+}
+
+func deserializeStruct(dst interface{}, b []byte) error {
+	v := reflect.Indirect(reflect.ValueOf(dst))
+	t := v.Type()
+	k := t.Kind()
+
+	if k != reflect.Struct {
+		return fmt.Errorf("goon: Expected struct, got instead: %v", k)
+	}
+
+	var metaData string
 	buf := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buf)
-	if err := dec.Decode(src); err != nil {
-		return err
+	structHistory := make(map[string]map[string]bool)
+
+	for buf.Len() > 0 {
+		if err := dec.Decode(&metaData); err != nil {
+			return fmt.Errorf("goon: Failed to decode field metadata: %v", err)
+		}
+
+		fieldName, slice := metaData, false
+		if metaData[0] == '$' {
+			fieldName, slice = metaData[1:], true
+		}
+		nameParts := strings.Split(fieldName, ".")
+
+		if done, err := deserializeStructInternal(dec, nameParts, 0, slice, structHistory, v, t); err != nil {
+			return err
+		} else if !done {
+			return fmt.Errorf("goon: Could not find field %v", fieldName)
+		}
 	}
+
 	return nil
+}
+
+func deserializeStructInternal(dec *gob.Decoder, nameParts []string, nameIdx int, slice bool, structHistory map[string]map[string]bool, v reflect.Value, t reflect.Type) (bool, error) {
+	relativeName := strings.Join(nameParts[nameIdx:], ".")
+
+	for i := 0; i < v.NumField(); i++ {
+		vf := v.Field(i)
+		if !vf.CanSet() {
+			continue
+		}
+
+		tf := t.Field(i)
+		fieldName := tf.Name
+		tag := tf.Tag.Get("datastore")
+		if len(tag) > 0 {
+			fieldName = strings.Split(tag, ",")[0]
+			if fieldName == "-" {
+				continue
+			}
+		}
+
+		if fieldName == nameParts[nameIdx] && (vf.Kind() == reflect.Struct || (vf.Kind() == reflect.Slice && vf.Type().Elem().Kind() == reflect.Struct)) {
+			if fieldName == relativeName {
+				return false, fmt.Errorf("goon: Can't set data to a struct! %v", strings.Join(nameParts, "."))
+			}
+
+			if vf.Kind() == reflect.Slice {
+				var sv reflect.Value
+				createNew := false
+				absName, childName := strings.Join(nameParts[:nameIdx+1], "."), strings.Join(nameParts[nameIdx+1:], ".")
+				sh, ok := structHistory[absName]
+				if !ok || sh[childName] {
+					sh = make(map[string]bool)
+					structHistory[absName] = sh
+					createNew = true
+				} else if len(sh) == 0 {
+					createNew = true
+				}
+
+				if createNew {
+					structType := vf.Type().Elem()
+					sv = reflect.New(structType).Elem()
+				} else {
+					sv = vf.Index(vf.Len() - 1)
+				}
+
+				if found, err := deserializeStructInternal(dec, nameParts, nameIdx+1, slice, structHistory, sv, sv.Type()); err != nil {
+					return found, err
+				} else if found {
+					if createNew {
+						vf.Set(reflect.Append(vf, sv))
+					}
+					sh[childName] = true
+					return true, nil
+				}
+			} else if found, err := deserializeStructInternal(dec, nameParts, nameIdx+1, slice, structHistory, vf, vf.Type()); found || err != nil {
+				return found, err
+			}
+			continue
+		}
+
+		if fieldName == relativeName {
+			if vf.Kind() == reflect.Slice && !slice {
+				elemType := vf.Type().Elem()
+				ev := reflect.New(elemType).Elem()
+
+				if err := dec.DecodeValue(ev); err != nil {
+					return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
+				}
+
+				vf.Set(reflect.Append(vf, ev))
+			} else {
+				if err := dec.DecodeValue(vf); err != nil {
+					return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
+				}
+			}
+
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // getStructKey returns the key of the struct based in its reflected or

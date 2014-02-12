@@ -284,7 +284,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	items := make([]*memcache.Item, len(srcs))
 	payloadSize := 0
 	for i, src := range srcs {
-		gob, err := toGob(src)
+		data, err := serializeStruct(src)
 		if err != nil {
 			g.error(err)
 			return err
@@ -294,10 +294,10 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			return err
 		}
 		// payloadSize will overflow if we push 2+ gigs on a 32bit machine
-		payloadSize += len(gob)
+		payloadSize += len(data)
 		items[i] = &memcache.Item{
 			Key:   memkey(key),
-			Value: gob,
+			Value: data,
 		}
 	}
 	memcacheTimeout := MemcachePutTimeoutSmall
@@ -419,7 +419,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				d = v.Index(mixs[i]).Addr().Interface()
 			}
 			if s, present := memvalues[m]; present {
-				err := fromGob(d, s.Value)
+				err := deserializeStruct(d, s.Value)
 				if err != nil {
 					g.error(err)
 					return err
