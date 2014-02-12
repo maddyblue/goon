@@ -488,45 +488,59 @@ func TestInputVariety(t *testing.T) {
 }
 
 type MigrationA struct {
-	_kind    string             `goon:"kind,Migration"`
-	Id       int64              `datastore:"-" goon:"id"`
-	Number   int32              `datastore:"number,noindex"`
-	Word     string             `datastore:"word,noindex"`
-	Car      string             `datastore:"car,noindex"`
-	Sub      MigrationASub      `datastore:"sub,noindex"`
-	Son      MigrationAPerson   `datastore:"son,noindex"`
-	Daughter MigrationAPerson   `datastore:"daughter,noindex"`
-	Parents  []MigrationAPerson `datastore:"parents,noindex"`
+	_kind     string            `goon:"kind,Migration"`
+	Id        int64             `datastore:"-" goon:"id"`
+	Number    int32             `datastore:"number,noindex"`
+	Word      string            `datastore:"word,noindex"`
+	Car       string            `datastore:"car,noindex"`
+	Sub       MigrationSub      `datastore:"sub,noindex"`
+	Son       MigrationPerson   `datastore:"son,noindex"`
+	Daughter  MigrationPerson   `datastore:"daughter,noindex"`
+	Parents   []MigrationPerson `datastore:"parents,noindex"`
+	DeepSlice MigrationDeepA    `datastore:"deep,noindex"`
 }
 
-type MigrationASub struct {
-	Data  string           `datastore:"data,noindex"`
-	Noise []int            `datastore:"noise,noindex"`
-	Sub   MigrationASubSub `datastore:"sub,noindex"`
+type MigrationSub struct {
+	Data  string          `datastore:"data,noindex"`
+	Noise []int           `datastore:"noise,noindex"`
+	Sub   MigrationSubSub `datastore:"sub,noindex"`
 }
 
-type MigrationASubSub struct {
+type MigrationSubSub struct {
 	Data string `datastore:"data,noindex"`
 }
 
-type MigrationAPerson struct {
+type MigrationPerson struct {
 	Name string `datastore:"name,noindex"`
 	Age  int    `datastore:"age,noindex"`
 }
 
+type MigrationDeepA struct {
+	Deep MigrationDeepB `datastore:"deep,noindex"`
+}
+
+type MigrationDeepB struct {
+	Deep MigrationDeepC `datastore:"deep,noindex"`
+}
+
+type MigrationDeepC struct {
+	Slice []int `datastore:"slice,noindex"`
+}
+
 type MigrationB struct {
-	_kind          string             `goon:"kind,Migration"`
-	Identification int64              `datastore:"-" goon:"id"`
-	FancyNumber    int32              `datastore:"number,noindex"`
-	Slang          string             `datastore:"word,noindex"`
-	Cars           []string           `datastore:"car,noindex"`
-	Animal         string             `datastore:"sub.data,noindex"`
-	Music          []int              `datastore:"sub.noise,noindex"`
-	Flower         string             `datastore:"sub.sub.data,noindex"`
-	Sons           []MigrationAPerson `datastore:"son,noindex"`
-	DaughterName   string             `datastore:"daughter.name,noindex"`
-	DaughterAge    int                `datastore:"daughter.age,noindex"`
-	OldFolks       []MigrationAPerson `datastore:"parents,noindex"`
+	_kind          string            `goon:"kind,Migration"`
+	Identification int64             `datastore:"-" goon:"id"`
+	FancyNumber    int32             `datastore:"number,noindex"`
+	Slang          string            `datastore:"word,noindex"`
+	Cars           []string          `datastore:"car,noindex"`
+	Animal         string            `datastore:"sub.data,noindex"`
+	Music          []int             `datastore:"sub.noise,noindex"`
+	Flower         string            `datastore:"sub.sub.data,noindex"`
+	Sons           []MigrationPerson `datastore:"son,noindex"`
+	DaughterName   string            `datastore:"daughter.name,noindex"`
+	DaughterAge    int               `datastore:"daughter.age,noindex"`
+	OldFolks       []MigrationPerson `datastore:"parents,noindex"`
+	FarSlice       MigrationDeepA    `datastore:"deep,noindex"`
 }
 
 func TestMigration(t *testing.T) {
@@ -539,9 +553,10 @@ func TestMigration(t *testing.T) {
 
 	// Create & save an entity with the original structure
 	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
-		Sub: MigrationASub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationASubSub{Data: "rose"}},
-		Son: MigrationAPerson{Name: "John", Age: 5}, Daughter: MigrationAPerson{Name: "Nancy", Age: 6},
-		Parents: []MigrationAPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}}}
+		Sub: MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
+		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
+		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
+		DeepSlice: MigrationDeepA{Deep: MigrationDeepB{Deep: MigrationDeepC{Slice: []int{1, 2, 3}}}}}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
@@ -590,6 +605,8 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Daughter ages don't match: %v != %v", migA.Daughter.Age, migB1.DaughterAge)
 	} else if !reflect.DeepEqual(migA.Parents, migB1.OldFolks) {
 		t.Errorf("Parents don't match: %v != %v", migA.Parents, migB1.OldFolks)
+	} else if !reflect.DeepEqual(migA.DeepSlice, migB1.FarSlice) {
+		t.Errorf("Deep slice doesn't match: %v != %v", migA.DeepSlice, migB1.FarSlice)
 	}
 
 	// Clear all the caches
@@ -628,6 +645,8 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Daughter ages don't match: %v != %v", migA.Daughter.Age, migB2.DaughterAge)
 	} else if !reflect.DeepEqual(migA.Parents, migB2.OldFolks) {
 		t.Errorf("Parents don't match: %v != %v", migA.Parents, migB2.OldFolks)
+	} else if !reflect.DeepEqual(migA.DeepSlice, migB2.FarSlice) {
+		t.Errorf("Deep slice doesn't match: %v != %v", migA.DeepSlice, migB2.FarSlice)
 	}
 }
 
