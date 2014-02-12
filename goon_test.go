@@ -50,8 +50,33 @@ const (
 	ivModeTotal
 )
 
+// Have a bunch of different supported types to detect any wild errors
 type ivItem struct {
-	Id   int64  `datastore:"-" goon:"id"`
+	Id        int64     `datastore:"-" goon:"id"`
+	Int       int       `datastore:"int,noindex"`
+	Int8      int8      `datastore:"int8,noindex"`
+	Int16     int16     `datastore:"int16,noindex"`
+	Int32     int32     `datastore:"int32,noindex"`
+	Int64     int64     `datastore:"int64,noindex"`
+	Float32   float32   `datastore:"float32,noindex"`
+	Float64   float64   `datastore:"float64,noindex"`
+	Bool      bool      `datastore:"bool,noindex"`
+	String    string    `datastore:"string,noindex"`
+	ByteSlice []byte    `datastore:"byte_slice,noindex"`
+	Time      time.Time `datastore:"time,noindex"`
+	Casual    string
+	Key       *datastore.Key
+	BlobKey   appengine.BlobKey
+	Sub       ivItemSub
+	Subs      []ivItemSubs
+}
+
+type ivItemSub struct {
+	Data string `datastore:"data,noindex"`
+	Ints []int  `datastore:"ints,noindex"`
+}
+
+type ivItemSubs struct {
 	Data string `datastore:"data,noindex"`
 }
 
@@ -61,7 +86,41 @@ type ivItemI interface {
 	ForInterface()
 }
 
-var ivItems = []ivItem{{Id: 1, Data: "one"}, {Id: 2, Data: "two"}, {Id: 3, Data: "three"}}
+var ivItems []ivItem
+
+func initializeIvItems(c appengine.Context) {
+	ivItems = []ivItem{
+		{Id: 1, Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345,
+			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
+			Bool: true, String: "one", ByteSlice: []byte{0xDE, 0xAD},
+			Time: time.Now().Truncate(time.Microsecond), Casual: "clothes",
+			Key: datastore.NewKey(c, "Fruit", "Apple", 0, nil), BlobKey: "fake #1",
+			Sub: ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
+			Subs: []ivItemSubs{
+				{Data: "sub #1.1"},
+				{Data: "sub #1.2"},
+				{Data: "sub #1.3"}}},
+		{Id: 2, Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346,
+			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
+			Bool: true, String: "two", ByteSlice: []byte{0xBE, 0xEF},
+			Time: time.Now().Truncate(time.Microsecond), Casual: "manners",
+			Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), BlobKey: "fake #2",
+			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
+			Subs: []ivItemSubs{
+				{Data: "sub #2.1"},
+				{Data: "sub #2.2"},
+				{Data: "sub #2.3"}}},
+		{Id: 3, Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
+			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
+			Bool: true, String: "tri", ByteSlice: []byte{0xF0, 0x0D},
+			Time: time.Now().Truncate(time.Microsecond), Casual: "weather",
+			Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), BlobKey: "fake #3",
+			Sub: ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
+			Subs: []ivItemSubs{
+				{Data: "sub #3.1"},
+				{Data: "sub #3.2"},
+				{Data: "sub #3.3"}}}}
+}
 
 func getInputVarietySrc(t *testing.T, ivType int, indices ...int) interface{} {
 	if ivType >= ivTypeTotal {
@@ -75,37 +134,43 @@ func getInputVarietySrc(t *testing.T, ivType int, indices ...int) interface{} {
 	case ivTypePtrToSliceOfStructs:
 		s := []ivItem{}
 		for _, index := range indices {
-			s = append(s, ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+			ivItemCopy := ivItems[index]
+			s = append(s, ivItemCopy)
 		}
 		result = &s
 	case ivTypePtrToSliceOfPtrsToStruct:
 		s := []*ivItem{}
 		for _, index := range indices {
-			s = append(s, &ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+			ivItemCopy := ivItems[index]
+			s = append(s, &ivItemCopy)
 		}
 		result = &s
 	case ivTypePtrToSliceOfInterfaces:
 		s := []ivItemI{}
 		for _, index := range indices {
-			s = append(s, &ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+			ivItemCopy := ivItems[index]
+			s = append(s, &ivItemCopy)
 		}
 		result = &s
 	case ivTypeSliceOfStructs:
 		s := []ivItem{}
 		for _, index := range indices {
-			s = append(s, ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+			ivItemCopy := ivItems[index]
+			s = append(s, ivItemCopy)
 		}
 		result = s
 	case ivTypeSliceOfPtrsToStruct:
 		s := []*ivItem{}
 		for _, index := range indices {
-			s = append(s, &ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+			ivItemCopy := ivItems[index]
+			s = append(s, &ivItemCopy)
 		}
 		result = s
 	case ivTypeSliceOfInterfaces:
 		s := []ivItemI{}
 		for _, index := range indices {
-			s = append(s, &ivItem{Id: ivItems[index].Id, Data: ivItems[index].Data})
+			ivItemCopy := ivItems[index]
+			s = append(s, &ivItemCopy)
 		}
 		result = s
 	}
@@ -408,6 +473,8 @@ func TestInputVariety(t *testing.T) {
 	}
 	defer c.Close()
 	g := FromContext(c)
+
+	initializeIvItems(c)
 
 	for srcType := 0; srcType < ivTypeTotal; srcType++ {
 		for dstType := 0; dstType < ivTypeTotal; dstType++ {
