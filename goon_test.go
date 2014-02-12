@@ -492,6 +492,7 @@ type MigrationA struct {
 	Id     int64         `datastore:"-" goon:"id"`
 	Number int32         `datastore:"number,noindex"`
 	Word   string        `datastore:"word,noindex"`
+	Car    string        `datastore:"car,noindex"`
 	Sub    MigrationASub `datastore:"sub,noindex"`
 }
 
@@ -505,12 +506,13 @@ type MigrationASubSub struct {
 }
 
 type MigrationB struct {
-	_kind          string `goon:"kind,Migration"`
-	Identification int64  `datastore:"-" goon:"id"`
-	FancyNumber    int32  `datastore:"number,noindex"`
-	Slang          string `datastore:"word,noindex"`
-	Animal         string `datastore:"sub.data,noindex"`
-	Flower         string `datastore:"sub.sub.data,noindex"`
+	_kind          string   `goon:"kind,Migration"`
+	Identification int64    `datastore:"-" goon:"id"`
+	FancyNumber    int32    `datastore:"number,noindex"`
+	Slang          string   `datastore:"word,noindex"`
+	Cars           []string `datastore:"car,noindex"`
+	Animal         string   `datastore:"sub.data,noindex"`
+	Flower         string   `datastore:"sub.sub.data,noindex"`
 }
 
 func TestMigration(t *testing.T) {
@@ -522,7 +524,7 @@ func TestMigration(t *testing.T) {
 	g := FromContext(c)
 
 	// Create & save an entity with the original structure
-	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Sub: MigrationASub{Data: "fox", Sub: MigrationASubSub{Data: "rose"}}}
+	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW", Sub: MigrationASub{Data: "fox", Sub: MigrationASubSub{Data: "rose"}}}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
@@ -548,6 +550,10 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Numbers don't match: %v != %v", migA.Number, migB1.FancyNumber)
 	} else if migA.Word != migB1.Slang {
 		t.Errorf("Words don't match: %v != %v", migA.Word, migB1.Slang)
+	} else if len(migB1.Cars) != 1 {
+		t.Errorf("Expected 1 car! Got: %v", len(migB1.Cars))
+	} else if migA.Car != migB1.Cars[0] {
+		t.Errorf("Cars don't match: %v != %v", migA.Car, migB1.Cars[0])
 	} else if migA.Sub.Data != migB1.Animal {
 		t.Errorf("Animal doesn't match: %v != %v", migA.Sub.Data, migB1.Animal)
 	} else if migA.Sub.Sub.Data != migB1.Flower {
@@ -568,6 +574,10 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Numbers don't match: %v != %v", migA.Number, migB2.FancyNumber)
 	} else if migA.Word != migB2.Slang {
 		t.Errorf("Words don't match: %v != %v", migA.Word, migB2.Slang)
+	} else if len(migB2.Cars) != 1 {
+		t.Errorf("Expected 1 car! Got: %v", len(migB2.Cars))
+	} else if migA.Car != migB2.Cars[0] {
+		t.Errorf("Cars don't match: %v != %v", migA.Car, migB2.Cars[0])
 	} else if migA.Sub.Data != migB2.Animal {
 		t.Errorf("Animal doesn't match: %v != %v", migA.Sub.Data, migB2.Animal)
 	} else if migA.Sub.Sub.Data != migB2.Flower {
