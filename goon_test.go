@@ -488,12 +488,15 @@ func TestInputVariety(t *testing.T) {
 }
 
 type MigrationA struct {
-	_kind  string        `goon:"kind,Migration"`
-	Id     int64         `datastore:"-" goon:"id"`
-	Number int32         `datastore:"number,noindex"`
-	Word   string        `datastore:"word,noindex"`
-	Car    string        `datastore:"car,noindex"`
-	Sub    MigrationASub `datastore:"sub,noindex"`
+	_kind    string             `goon:"kind,Migration"`
+	Id       int64              `datastore:"-" goon:"id"`
+	Number   int32              `datastore:"number,noindex"`
+	Word     string             `datastore:"word,noindex"`
+	Car      string             `datastore:"car,noindex"`
+	Sub      MigrationASub      `datastore:"sub,noindex"`
+	Son      MigrationAPerson   `datastore:"son,noindex"`
+	Daughter MigrationAPerson   `datastore:"daughter,noindex"`
+	Parents  []MigrationAPerson `datastore:"parents,noindex"`
 }
 
 type MigrationASub struct {
@@ -506,15 +509,24 @@ type MigrationASubSub struct {
 	Data string `datastore:"data,noindex"`
 }
 
+type MigrationAPerson struct {
+	Name string `datastore:"name,noindex"`
+	Age  int    `datastore:"age,noindex"`
+}
+
 type MigrationB struct {
-	_kind          string   `goon:"kind,Migration"`
-	Identification int64    `datastore:"-" goon:"id"`
-	FancyNumber    int32    `datastore:"number,noindex"`
-	Slang          string   `datastore:"word,noindex"`
-	Cars           []string `datastore:"car,noindex"`
-	Animal         string   `datastore:"sub.data,noindex"`
-	Music          []int    `datastore:"sub.noise,noindex"`
-	Flower         string   `datastore:"sub.sub.data,noindex"`
+	_kind          string             `goon:"kind,Migration"`
+	Identification int64              `datastore:"-" goon:"id"`
+	FancyNumber    int32              `datastore:"number,noindex"`
+	Slang          string             `datastore:"word,noindex"`
+	Cars           []string           `datastore:"car,noindex"`
+	Animal         string             `datastore:"sub.data,noindex"`
+	Music          []int              `datastore:"sub.noise,noindex"`
+	Flower         string             `datastore:"sub.sub.data,noindex"`
+	Sons           []MigrationAPerson `datastore:"son,noindex"`
+	DaughterName   string             `datastore:"daughter.name,noindex"`
+	DaughterAge    int                `datastore:"daughter.age,noindex"`
+	OldFolks       []MigrationAPerson `datastore:"parents,noindex"`
 }
 
 func TestMigration(t *testing.T) {
@@ -526,7 +538,10 @@ func TestMigration(t *testing.T) {
 	g := FromContext(c)
 
 	// Create & save an entity with the original structure
-	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW", Sub: MigrationASub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationASubSub{Data: "rose"}}}
+	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
+		Sub: MigrationASub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationASubSub{Data: "rose"}},
+		Son: MigrationAPerson{Name: "John", Age: 5}, Daughter: MigrationAPerson{Name: "Nancy", Age: 6},
+		Parents: []MigrationAPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}}}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
@@ -535,7 +550,7 @@ func TestMigration(t *testing.T) {
 	g.FlushLocalCache()
 
 	// Get it back, so it's in the cache
-	migA.Sub.Noise = []int{}
+	migA = &MigrationA{Id: 1}
 	if err := g.Get(migA); err != nil {
 		t.Errorf("Unexpected error on Get: %v", err)
 	}
@@ -563,6 +578,18 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Music doesn't match: %v != %v", migA.Sub.Noise, migB1.Music)
 	} else if migA.Sub.Sub.Data != migB1.Flower {
 		t.Errorf("Flower doesn't match: %v != %v", migA.Sub.Sub.Data, migB1.Flower)
+	} else if len(migB1.Sons) != 1 {
+		t.Errorf("Expected 1 son! Got: %v", len(migB1.Sons))
+	} else if migA.Son.Name != migB1.Sons[0].Name {
+		t.Errorf("Son names don't match: %v != %v", migA.Son.Name, migB1.Sons[0].Name)
+	} else if migA.Son.Age != migB1.Sons[0].Age {
+		t.Errorf("Son ages don't match: %v != %v", migA.Son.Age, migB1.Sons[0].Age)
+	} else if migA.Daughter.Name != migB1.DaughterName {
+		t.Errorf("Daughter names don't match: %v != %v", migA.Daughter.Name, migB1.DaughterName)
+	} else if migA.Daughter.Age != migB1.DaughterAge {
+		t.Errorf("Daughter ages don't match: %v != %v", migA.Daughter.Age, migB1.DaughterAge)
+	} else if !reflect.DeepEqual(migA.Parents, migB1.OldFolks) {
+		t.Errorf("Parents don't match: %v != %v", migA.Parents, migB1.OldFolks)
 	}
 
 	// Clear all the caches
@@ -589,6 +616,18 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Music doesn't match: %v != %v", migA.Sub.Noise, migB2.Music)
 	} else if migA.Sub.Sub.Data != migB2.Flower {
 		t.Errorf("Flower doesn't match: %v != %v", migA.Sub.Sub.Data, migB2.Flower)
+	} else if len(migB2.Sons) != 1 {
+		t.Errorf("Expected 1 son! Got: %v", len(migB2.Sons))
+	} else if migA.Son.Name != migB2.Sons[0].Name {
+		t.Errorf("Sons don't match: %v != %v", migA.Son.Name, migB2.Sons[0].Name)
+	} else if migA.Son.Age != migB2.Sons[0].Age {
+		t.Errorf("Son ages don't match: %v != %v", migA.Son.Age, migB2.Sons[0].Age)
+	} else if migA.Daughter.Name != migB2.DaughterName {
+		t.Errorf("Daughters don't match: %v != %v", migA.Daughter.Name, migB2.DaughterName)
+	} else if migA.Daughter.Age != migB2.DaughterAge {
+		t.Errorf("Daughter ages don't match: %v != %v", migA.Daughter.Age, migB2.DaughterAge)
+	} else if !reflect.DeepEqual(migA.Parents, migB2.OldFolks) {
+		t.Errorf("Parents don't match: %v != %v", migA.Parents, migB2.OldFolks)
 	}
 }
 
