@@ -651,6 +651,31 @@ func TestMigration(t *testing.T) {
 	}
 }
 
+func TestNegativeCacheHit(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+
+	hid := &HasId{Id: 1}
+
+	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
+		t.Errorf("Expected ErrNoSuchEntity, got %v", err)
+	}
+
+	// Do a sneaky save straight to the datastore
+	if _, err := datastore.Put(c, datastore.NewKey(c, "HasId", "", 1, nil), &HasId{Id: 1, Name: "one"}); err != nil {
+		t.Errorf("Unexpected error on datastore.Put: %v", err)
+	}
+
+	// Get the entity again via goon, to make sure we cached the non-existance
+	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
+		t.Errorf("Expected ErrNoSuchEntity, got %v", err)
+	}
+}
+
 func TestCaches(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
@@ -902,7 +927,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	hiPush := &HasId{Id: hi.Id, Name: "changedinmemcache"}
-	n.putMemcache([]interface{}{hiPush})
+	n.putMemcache([]interface{}{hiPush}, []byte{1})
 	n.cacheLock.Lock()
 	delete(n.cache, memkey(n.Key(hi)))
 	n.cacheLock.Unlock()
