@@ -499,6 +499,7 @@ type MigrationA struct {
 	Daughter  MigrationPerson   `datastore:"daughter,noindex"`
 	Parents   []MigrationPerson `datastore:"parents,noindex"`
 	DeepSlice MigrationDeepA    `datastore:"deep,noindex"`
+	ZZs       []ZigZag          `datastore:"zigzag,noindex"`
 }
 
 type MigrationSub struct {
@@ -528,6 +529,16 @@ type MigrationDeepC struct {
 	Slice []int `datastore:"slice,noindex"`
 }
 
+type ZigZag struct {
+	Zig int `datastore:"zig,noindex"`
+	Zag int `datastore:"zag,noindex"`
+}
+
+type ZigZags struct {
+	Zig []int `datastore:"zig,noindex"`
+	Zag []int `datastore:"zag,noindex"`
+}
+
 type MigrationB struct {
 	_kind          string            `goon:"kind,Migration"`
 	Identification int64             `datastore:"-" goon:"id"`
@@ -542,6 +553,7 @@ type MigrationB struct {
 	DaughterAge    int               `datastore:"daughter.age,noindex"`
 	OldFolks       []MigrationPerson `datastore:"parents,noindex"`
 	FarSlice       MigrationDeepA    `datastore:"deep,noindex"`
+	ZZs            ZigZags           `datastore:"zigzag,noindex"`
 }
 
 func TestMigration(t *testing.T) {
@@ -557,7 +569,8 @@ func TestMigration(t *testing.T) {
 		Sub: MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
 		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
 		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
-		DeepSlice: MigrationDeepA{Deep: MigrationDeepB{Deep: MigrationDeepC{Slice: []int{1, 2, 3}}}}}
+		DeepSlice: MigrationDeepA{Deep: MigrationDeepB{Deep: MigrationDeepC{Slice: []int{1, 2, 3}}}},
+		ZZs:       []ZigZag{{Zig: 1}, {Zag: 1}}}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
@@ -608,6 +621,18 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Parents don't match: %v != %v", migA.Parents, migB1.OldFolks)
 	} else if !reflect.DeepEqual(migA.DeepSlice, migB1.FarSlice) {
 		t.Errorf("Deep slice doesn't match: %v != %v", migA.DeepSlice, migB1.FarSlice)
+	} else if len(migB1.ZZs.Zig) != 2 {
+		t.Errorf("Expected 2 Zigs, got: %v", len(migB1.ZZs.Zig))
+	} else if len(migB1.ZZs.Zag) != 2 {
+		t.Errorf("Expected 2 Zags, got: %v", len(migB1.ZZs.Zag))
+	} else if migA.ZZs[0].Zig != migB1.ZZs.Zig[0] {
+		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[0].Zig, migB1.ZZs.Zig[0])
+	} else if migA.ZZs[1].Zig != migB1.ZZs.Zig[1] {
+		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[1].Zig, migB1.ZZs.Zig[1])
+	} else if migA.ZZs[0].Zag != migB1.ZZs.Zag[0] {
+		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[0].Zag, migB1.ZZs.Zag[0])
+	} else if migA.ZZs[1].Zag != migB1.ZZs.Zag[1] {
+		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[1].Zag, migB1.ZZs.Zag[1])
 	}
 
 	// Clear all the caches
@@ -648,6 +673,18 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Parents don't match: %v != %v", migA.Parents, migB2.OldFolks)
 	} else if !reflect.DeepEqual(migA.DeepSlice, migB2.FarSlice) {
 		t.Errorf("Deep slice doesn't match: %v != %v", migA.DeepSlice, migB2.FarSlice)
+	} else if len(migB1.ZZs.Zig) != 2 {
+		t.Errorf("Expected 2 Zigs, got: %v", len(migB1.ZZs.Zig))
+	} else if len(migB1.ZZs.Zag) != 2 {
+		t.Errorf("Expected 2 Zags, got: %v", len(migB1.ZZs.Zag))
+	} else if migA.ZZs[0].Zig != migB1.ZZs.Zig[0] {
+		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[0].Zig, migB1.ZZs.Zig[0])
+	} else if migA.ZZs[1].Zig != migB1.ZZs.Zig[1] {
+		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[1].Zig, migB1.ZZs.Zig[1])
+	} else if migA.ZZs[0].Zag != migB1.ZZs.Zag[0] {
+		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[0].Zag, migB1.ZZs.Zag[0])
+	} else if migA.ZZs[1].Zag != migB1.ZZs.Zag[1] {
+		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[1].Zag, migB1.ZZs.Zag[1])
 	}
 }
 
