@@ -487,6 +487,74 @@ func TestInputVariety(t *testing.T) {
 	}
 }
 
+type MigrationA struct {
+	_kind  string `goon:"kind,Migration"`
+	Id     int64  `datastore:"-" goon:"id"`
+	Number int32  `datastore:"number,noindex"`
+	Word   string `datastore:"word,noindex"`
+}
+
+type MigrationB struct {
+	_kind          string `goon:"kind,Migration"`
+	Identification int64  `datastore:"-" goon:"id"`
+	FancyNumber    int32  `datastore:"number,noindex"`
+	Slang          string `datastore:"word,noindex"`
+}
+
+func TestMigration(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+
+	// Create & save an entity with the original structure
+	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit"}
+	if _, err := g.Put(migA); err != nil {
+		t.Errorf("Unexpected error on Put: %v", err)
+	}
+
+	// Clear the local cache, because we want this data in memcache
+	g.FlushLocalCache()
+
+	// Get it back, so it's in the cache
+	if err := g.Get(migA); err != nil {
+		t.Errorf("Unexpected error on Get: %v", err)
+	}
+
+	// Clear the local cache, because it doesn't need to support migration
+	g.FlushLocalCache()
+
+	// Test whether memcache supports migration
+	migB1 := &MigrationB{Identification: migA.Id}
+	if err := g.Get(migB1); err != nil {
+		t.Errorf("Unexpected error on Get: %v", err)
+	} else if migA.Id != migB1.Identification {
+		t.Errorf("Ids don't match: %v != %v", migA.Id, migB1.Identification)
+	} else if migA.Number != migB1.FancyNumber {
+		t.Errorf("Numbers don't match: %v != %v", migA.Number, migB1.FancyNumber)
+	} else if migA.Word != migB1.Slang {
+		t.Errorf("Words don't match: %v != %v", migA.Word, migB1.Slang)
+	}
+
+	// Clear all the caches
+	g.FlushLocalCache()
+	memcache.Flush(c)
+
+	// Test whether datastore supports migration
+	migB2 := &MigrationB{Identification: migA.Id}
+	if err := g.Get(migB2); err != nil {
+		t.Errorf("Unexpected error on Get: %v", err)
+	} else if migA.Id != migB2.Identification {
+		t.Errorf("Ids don't match: %v != %v", migA.Id, migB2.Identification)
+	} else if migA.Number != migB2.FancyNumber {
+		t.Errorf("Numbers don't match: %v != %v", migA.Number, migB2.FancyNumber)
+	} else if migA.Word != migB2.Slang {
+		t.Errorf("Words don't match: %v != %v", migA.Word, migB2.Slang)
+	}
+}
+
 func TestCaches(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
