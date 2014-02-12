@@ -26,7 +26,16 @@ import (
 	"appengine/datastore"
 )
 
+const (
+	serializationStateEmpty  = 0x00
+	serializationStateNormal = 0x01
+)
+
 func serializeStruct(src interface{}) ([]byte, error) {
+	if src == nil {
+		return []byte{serializationStateEmpty}, nil
+	}
+
 	v := reflect.Indirect(reflect.ValueOf(src))
 	t := v.Type()
 	k := t.Kind()
@@ -36,6 +45,7 @@ func serializeStruct(src interface{}) ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
+	buf.WriteByte(serializationStateNormal) // Set the header
 	enc := gob.NewEncoder(&buf)
 
 	if err := serializeStructInternal(enc, "", v, t); err != nil {
@@ -109,8 +119,16 @@ func deserializeStruct(dst interface{}, b []byte) error {
 		return fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	var metaData string
 	buf := bytes.NewBuffer(b)
+	if header, err := buf.ReadByte(); err != nil {
+		return fmt.Errorf("goon: Unexpected error reading cache header: %v", err)
+	} else if header == serializationStateEmpty {
+		return datastore.ErrNoSuchEntity
+	} else if header != serializationStateNormal {
+		return fmt.Errorf("goon: Unrecognized cache header: %v", header)
+	}
+
+	var metaData string
 	dec := gob.NewDecoder(buf)
 	structHistory := make(map[string]map[string]bool)
 
