@@ -488,10 +488,15 @@ func TestInputVariety(t *testing.T) {
 }
 
 type MigrationA struct {
-	_kind  string `goon:"kind,Migration"`
-	Id     int64  `datastore:"-" goon:"id"`
-	Number int32  `datastore:"number,noindex"`
-	Word   string `datastore:"word,noindex"`
+	_kind  string        `goon:"kind,Migration"`
+	Id     int64         `datastore:"-" goon:"id"`
+	Number int32         `datastore:"number,noindex"`
+	Word   string        `datastore:"word,noindex"`
+	Sub    MigrationASub `datastore:"sub,noindex"`
+}
+
+type MigrationASub struct {
+	Data string `datastore:"data,noindex"`
 }
 
 type MigrationB struct {
@@ -499,6 +504,7 @@ type MigrationB struct {
 	Identification int64  `datastore:"-" goon:"id"`
 	FancyNumber    int32  `datastore:"number,noindex"`
 	Slang          string `datastore:"word,noindex"`
+	Animal         string `datastore:"sub.data,noindex"`
 }
 
 func TestMigration(t *testing.T) {
@@ -510,7 +516,7 @@ func TestMigration(t *testing.T) {
 	g := FromContext(c)
 
 	// Create & save an entity with the original structure
-	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit"}
+	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Sub: MigrationASub{Data: "fox"}}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
@@ -536,6 +542,8 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Numbers don't match: %v != %v", migA.Number, migB1.FancyNumber)
 	} else if migA.Word != migB1.Slang {
 		t.Errorf("Words don't match: %v != %v", migA.Word, migB1.Slang)
+	} else if migA.Sub.Data != migB1.Animal {
+		t.Errorf("Data don't match: %v != %v", migA.Sub.Data, migB1.Animal)
 	}
 
 	// Clear all the caches
@@ -552,6 +560,8 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Numbers don't match: %v != %v", migA.Number, migB2.FancyNumber)
 	} else if migA.Word != migB2.Slang {
 		t.Errorf("Words don't match: %v != %v", migA.Word, migB2.Slang)
+	} else if migA.Sub.Data != migB2.Animal {
+		t.Errorf("Data don't match: %v != %v", migA.Sub.Data, migB2.Animal)
 	}
 }
 
