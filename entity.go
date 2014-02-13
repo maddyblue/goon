@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"time"
 
 	"appengine/datastore"
 )
@@ -30,6 +31,8 @@ const (
 	serializationStateEmpty  = 0x00
 	serializationStateNormal = 0x01
 )
+
+var timeType = reflect.TypeOf(time.Time{})
 
 func serializeStruct(src interface{}) ([]byte, error) {
 	if src == nil {
@@ -75,17 +78,20 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 			fieldName = namePrefix + fieldName
 		}
 
-		if vf.Kind() == reflect.Slice && vf.Type().Elem().Kind() == reflect.Struct {
-			for j := 0; j < vf.Len(); j++ {
-				vi := vf.Index(j)
-				if err := serializeStructInternal(enc, fieldName+".", vi, vi.Type()); err != nil {
-					return err
+		if vf.Kind() == reflect.Slice {
+			elemType := vf.Type().Elem()
+			if elemType.Kind() == reflect.Struct && elemType != timeType {
+				for j := 0; j < vf.Len(); j++ {
+					vi := vf.Index(j)
+					if err := serializeStructInternal(enc, fieldName+".", vi, vi.Type()); err != nil {
+						return err
+					}
 				}
+				continue
 			}
-			continue
 		}
 
-		if vf.Kind() == reflect.Struct {
+		if vf.Kind() == reflect.Struct && tf.Type != timeType {
 			if err := serializeStructInternal(enc, fieldName+".", vf, vf.Type()); err != nil {
 				return err
 			}
@@ -172,11 +178,26 @@ func deserializeStructInternal(dec *gob.Decoder, nameParts []string, nameIdx int
 			}
 		}
 
-		if fieldName == nameParts[nameIdx] && (vf.Kind() == reflect.Struct || (vf.Kind() == reflect.Slice && vf.Type().Elem().Kind() == reflect.Struct)) {
-			if fieldName == relativeName {
-				return false, fmt.Errorf("goon: Can't set data to a struct! %v", strings.Join(nameParts, "."))
+		if fieldName == relativeName {
+			if vf.Kind() == reflect.Slice && !slice {
+				elemType := vf.Type().Elem()
+				ev := reflect.New(elemType).Elem()
+
+				if err := dec.DecodeValue(ev); err != nil {
+					return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
+				}
+
+				vf.Set(reflect.Append(vf, ev))
+			} else {
+				if err := dec.DecodeValue(vf); err != nil {
+					return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
+				}
 			}
 
+			return true, nil
+		}
+
+		if fieldName == nameParts[nameIdx] && (vf.Kind() == reflect.Struct || (vf.Kind() == reflect.Slice && vf.Type().Elem().Kind() == reflect.Struct)) {
 			if vf.Kind() == reflect.Slice {
 				var sv reflect.Value
 				createNew := false
@@ -209,26 +230,6 @@ func deserializeStructInternal(dec *gob.Decoder, nameParts []string, nameIdx int
 			} else if found, err := deserializeStructInternal(dec, nameParts, nameIdx+1, slice, structHistory, vf, vf.Type()); found || err != nil {
 				return found, err
 			}
-			continue
-		}
-
-		if fieldName == relativeName {
-			if vf.Kind() == reflect.Slice && !slice {
-				elemType := vf.Type().Elem()
-				ev := reflect.New(elemType).Elem()
-
-				if err := dec.DecodeValue(ev); err != nil {
-					return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
-				}
-
-				vf.Set(reflect.Append(vf, ev))
-			} else {
-				if err := dec.DecodeValue(vf); err != nil {
-					return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
-				}
-			}
-
-			return true, nil
 		}
 	}
 

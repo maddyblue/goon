@@ -52,18 +52,19 @@ const (
 
 // Have a bunch of different supported types to detect any wild errors
 type ivItem struct {
-	Id        int64     `datastore:"-" goon:"id"`
-	Int       int       `datastore:"int,noindex"`
-	Int8      int8      `datastore:"int8,noindex"`
-	Int16     int16     `datastore:"int16,noindex"`
-	Int32     int32     `datastore:"int32,noindex"`
-	Int64     int64     `datastore:"int64,noindex"`
-	Float32   float32   `datastore:"float32,noindex"`
-	Float64   float64   `datastore:"float64,noindex"`
-	Bool      bool      `datastore:"bool,noindex"`
-	String    string    `datastore:"string,noindex"`
-	ByteSlice []byte    `datastore:"byte_slice,noindex"`
-	Time      time.Time `datastore:"time,noindex"`
+	Id        int64       `datastore:"-" goon:"id"`
+	Int       int         `datastore:"int,noindex"`
+	Int8      int8        `datastore:"int8,noindex"`
+	Int16     int16       `datastore:"int16,noindex"`
+	Int32     int32       `datastore:"int32,noindex"`
+	Int64     int64       `datastore:"int64,noindex"`
+	Float32   float32     `datastore:"float32,noindex"`
+	Float64   float64     `datastore:"float64,noindex"`
+	Bool      bool        `datastore:"bool,noindex"`
+	String    string      `datastore:"string,noindex"`
+	ByteSlice []byte      `datastore:"byte_slice,noindex"`
+	Time      time.Time   `datastore:"time,noindex"`
+	TimeSlice []time.Time `datastore:"time_slice,noindex"`
 	Casual    string
 	Key       *datastore.Key
 	BlobKey   appengine.BlobKey
@@ -90,11 +91,15 @@ type ivItemI interface {
 var ivItems []ivItem
 
 func initializeIvItems(c appengine.Context) {
+	t1 := time.Now().Truncate(time.Microsecond)
+	t2 := t1.Add(time.Second * 1)
+	t3 := t1.Add(time.Second * 2)
+
 	ivItems = []ivItem{
 		{Id: 1, Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "one", ByteSlice: []byte{0xDE, 0xAD},
-			Time: time.Now().Truncate(time.Microsecond), Casual: "clothes",
+			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, Casual: "clothes",
 			Key: datastore.NewKey(c, "Fruit", "Apple", 0, nil), BlobKey: "fake #1",
 			Sub: ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
 			Subs: []ivItemSubs{
@@ -104,7 +109,7 @@ func initializeIvItems(c appengine.Context) {
 		{Id: 2, Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "two", ByteSlice: []byte{0xBE, 0xEF},
-			Time: time.Now().Truncate(time.Microsecond), Casual: "manners",
+			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, Casual: "manners",
 			Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), BlobKey: "fake #2",
 			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
 			Subs: []ivItemSubs{
@@ -114,7 +119,7 @@ func initializeIvItems(c appengine.Context) {
 		{Id: 3, Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "tri", ByteSlice: []byte{0xF0, 0x0D},
-			Time: time.Now().Truncate(time.Microsecond), Casual: "weather",
+			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, Casual: "weather",
 			Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), BlobKey: "fake #3",
 			Sub: ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
 			Subs: []ivItemSubs{
@@ -322,11 +327,14 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 		t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
 	}
 
+	// Clear the caches, as we're going to precisely set the caches via Get
+	g.FlushLocalCache()
+	memcache.Flush(g.context)
+
 	// Set the caches into proper state based on given mode
 	switch mode {
 	case ivModeDatastore:
-		g.FlushLocalCache()
-		memcache.Flush(g.context)
+		// Caches already clear
 	case ivModeMemcache:
 		loadIVItem(0, 1, 2) // Left in memcache
 		g.FlushLocalCache()
@@ -494,6 +502,7 @@ type MigrationA struct {
 	Number    int32             `datastore:"number,noindex"`
 	Word      string            `datastore:"word,noindex"`
 	Car       string            `datastore:"car,noindex"`
+	Holiday   time.Time         `datastore:"holiday,noindex"`
 	Sub       MigrationSub      `datastore:"sub,noindex"`
 	Son       MigrationPerson   `datastore:"son,noindex"`
 	Daughter  MigrationPerson   `datastore:"daughter,noindex"`
@@ -545,6 +554,7 @@ type MigrationB struct {
 	FancyNumber    int32             `datastore:"number,noindex"`
 	Slang          string            `datastore:"word,noindex"`
 	Cars           []string          `datastore:"car,noindex"`
+	Holidays       []time.Time       `datastore:"holiday,noindex"`
 	Animal         string            `datastore:"sub.data,noindex"`
 	Music          []int             `datastore:"sub.noise,noindex"`
 	Flower         string            `datastore:"sub.sub.data,noindex"`
@@ -565,7 +575,7 @@ func TestMigration(t *testing.T) {
 	g := FromContext(c)
 
 	// Create & save an entity with the original structure
-	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
+	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW", Holiday: time.Now().Truncate(time.Microsecond),
 		Sub: MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
 		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
 		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
@@ -601,6 +611,10 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Expected 1 car! Got: %v", len(migB1.Cars))
 	} else if migA.Car != migB1.Cars[0] {
 		t.Errorf("Cars don't match: %v != %v", migA.Car, migB1.Cars[0])
+	} else if len(migB1.Holidays) != 1 {
+		t.Errorf("Expected 1 holiday! Got: %v", len(migB1.Holidays))
+	} else if migA.Holiday != migB1.Holidays[0] {
+		t.Errorf("Holidays don't match: %v != %v", migA.Holiday, migB1.Holidays[0])
 	} else if migA.Sub.Data != migB1.Animal {
 		t.Errorf("Animal doesn't match: %v != %v", migA.Sub.Data, migB1.Animal)
 	} else if !reflect.DeepEqual(migA.Sub.Noise, migB1.Music) {
@@ -653,6 +667,10 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Expected 1 car! Got: %v", len(migB2.Cars))
 	} else if migA.Car != migB2.Cars[0] {
 		t.Errorf("Cars don't match: %v != %v", migA.Car, migB2.Cars[0])
+	} else if len(migB2.Holidays) != 1 {
+		t.Errorf("Expected 1 holiday! Got: %v", len(migB2.Holidays))
+	} else if migA.Holiday != migB2.Holidays[0] {
+		t.Errorf("Holidays don't match: %v != %v", migA.Holiday, migB2.Holidays[0])
 	} else if migA.Sub.Data != migB2.Animal {
 		t.Errorf("Animal doesn't match: %v != %v", migA.Sub.Data, migB2.Animal)
 	} else if !reflect.DeepEqual(migA.Sub.Noise, migB2.Music) {
