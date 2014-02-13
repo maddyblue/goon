@@ -65,6 +65,7 @@ type ivItem struct {
 	ByteSlice []byte      `datastore:"byte_slice,noindex"`
 	Time      time.Time   `datastore:"time,noindex"`
 	TimeSlice []time.Time `datastore:"time_slice,noindex"`
+	NoIndex   int         `datastore:",noindex"`
 	Casual    string
 	Key       *datastore.Key
 	ZeroKey   *datastore.Key
@@ -106,7 +107,7 @@ func initializeIvItems(c appengine.Context) {
 		{Id: 1, Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "one", ByteSlice: []byte{0xDE, 0xAD},
-			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, Casual: "clothes",
+			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, NoIndex: 1, Casual: "clothes",
 			Key: datastore.NewKey(c, "Fruit", "Apple", 0, nil), BlobKey: "fake #1",
 			Sub: ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
 			Subs: []ivItemSubs{
@@ -117,7 +118,7 @@ func initializeIvItems(c appengine.Context) {
 		{Id: 2, Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "two", ByteSlice: []byte{0xBE, 0xEF},
-			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, Casual: "manners",
+			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, NoIndex: 2, Casual: "manners",
 			Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), BlobKey: "fake #2",
 			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
 			Subs: []ivItemSubs{
@@ -128,7 +129,7 @@ func initializeIvItems(c appengine.Context) {
 		{Id: 3, Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "tri", ByteSlice: []byte{0xF0, 0x0D},
-			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, Casual: "weather",
+			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, NoIndex: 3, Casual: "weather",
 			Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), BlobKey: "fake #3",
 			Sub: ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
 			Subs: []ivItemSubs{

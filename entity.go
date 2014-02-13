@@ -59,6 +59,8 @@ func serializeStruct(src interface{}) ([]byte, error) {
 }
 
 func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Value, t reflect.Type) error {
+	var fieldName string
+
 	for i := 0; i < v.NumField(); i++ {
 		vf := v.Field(i)
 		if !vf.CanSet() {
@@ -66,13 +68,20 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 		}
 
 		tf := t.Field(i)
-		fieldName := tf.Name
 		tag := tf.Tag.Get("datastore")
 		if len(tag) > 0 {
-			fieldName = strings.Split(tag, ",")[0]
+			if commaPos := strings.Index(tag, ","); commaPos == -1 {
+				fieldName = tag
+			} else if commaPos == 0 {
+				fieldName = tf.Name
+			} else {
+				fieldName = tag[:commaPos]
+			}
 			if fieldName == "-" {
 				continue
 			}
+		} else {
+			fieldName = tf.Name
 		}
 		if namePrefix != "" {
 			fieldName = namePrefix + fieldName
@@ -172,6 +181,8 @@ func deserializeStruct(dst interface{}, b []byte) error {
 func deserializeStructInternal(dec *gob.Decoder, nameParts []string, nameIdx int, slice, zeroValue bool, structHistory map[string]map[string]bool, v reflect.Value, t reflect.Type) (bool, error) {
 	relativeName := strings.Join(nameParts[nameIdx:], ".")
 
+	var fieldName string
+
 	for i := 0; i < v.NumField(); i++ {
 		vf := v.Field(i)
 		if !vf.CanSet() {
@@ -179,13 +190,20 @@ func deserializeStructInternal(dec *gob.Decoder, nameParts []string, nameIdx int
 		}
 
 		tf := t.Field(i)
-		fieldName := tf.Name
 		tag := tf.Tag.Get("datastore")
 		if len(tag) > 0 {
-			fieldName = strings.Split(tag, ",")[0]
+			if commaPos := strings.Index(tag, ","); commaPos == -1 {
+				fieldName = tag
+			} else if commaPos == 0 {
+				fieldName = tf.Name
+			} else {
+				fieldName = tag[:commaPos]
+			}
 			if fieldName == "-" {
 				continue
 			}
+		} else {
+			fieldName = tf.Name
 		}
 
 		if fieldName == relativeName {
