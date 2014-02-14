@@ -60,6 +60,7 @@ func serializeStruct(src interface{}) ([]byte, error) {
 
 func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Value, t reflect.Type) error {
 	var fieldName string
+	var metaData string
 
 	for i := 0; i < v.NumField(); i++ {
 		vf := v.Field(i)
@@ -89,6 +90,7 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 
 		if vf.Kind() == reflect.Slice {
 			elemType := vf.Type().Elem()
+			// Unroll slices of structs
 			if elemType.Kind() == reflect.Struct && elemType != timeType {
 				for j := 0; j < vf.Len(); j++ {
 					vi := vf.Index(j)
@@ -97,6 +99,35 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 					}
 				}
 				continue
+			}
+			// For a slice of pointers we need to check if any index is nil,
+			// because Gob unfortunately fails at encoding nil values
+			if elemType.Kind() == reflect.Ptr {
+				anyNil := false
+				for j := 0; j < vf.Len(); j++ {
+					vi := vf.Index(j)
+					if vi.IsNil() {
+						anyNil = true
+						break
+					}
+				}
+				if anyNil {
+					for j := 0; j < vf.Len(); j++ {
+						vi := vf.Index(j)
+						encodeValue := true
+						if vi.IsNil() {
+							// Gob unfortunately fails at encoding nil values
+							metaData = "!" + fieldName
+							encodeValue = false
+						} else {
+							metaData = fieldName
+						}
+						if err := serializeStructInternalEncode(enc, fieldName, metaData, encodeValue, vi); err != nil {
+							return err
+						}
+					}
+					continue
+				}
 			}
 		}
 
@@ -107,29 +138,36 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 			continue
 		}
 
-		metaData := fieldName
+		encodeValue := true
 		if vf.Kind() == reflect.Slice {
 			// When decoding, if the target is a slice but metadata doesn't have the $ sign,
 			// then we can properly create a single value slice instead of panicing
 			metaData = "$" + fieldName
-		}
-
-		encodeValue := true
-		if vf.Kind() == reflect.Ptr && vf.IsNil() {
+		} else if vf.Kind() == reflect.Ptr && vf.IsNil() {
+			// Gob unfortunately fails at encoding nil values
 			metaData = "!" + fieldName
 			encodeValue = false
+		} else {
+			metaData = fieldName
 		}
 
-		if err := enc.Encode(metaData); err != nil {
-			return fmt.Errorf("goon: Failed to encode field metadata %v - %v", metaData, err)
-		}
-		if encodeValue {
-			if err := enc.EncodeValue(vf); err != nil {
-				return fmt.Errorf("goon: Failed to encode field %v value %v - %v", fieldName, vf.Interface(), err)
-			}
+		if err := serializeStructInternalEncode(enc, fieldName, metaData, encodeValue, vf); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func serializeStructInternalEncode(enc *gob.Encoder, fieldName, metaData string, encodeValue bool, v reflect.Value) error {
+	if err := enc.Encode(metaData); err != nil {
+		return fmt.Errorf("goon: Failed to encode field metadata %v - %v", metaData, err)
+	}
+	if encodeValue {
+		if err := enc.EncodeValue(v); err != nil {
+			return fmt.Errorf("goon: Failed to encode field %v value %v - %v", fieldName, v.Interface(), err)
+		}
+	}
 	return nil
 }
 
@@ -207,20 +245,20 @@ func deserializeStructInternal(dec *gob.Decoder, nameParts []string, nameIdx int
 		}
 
 		if fieldName == relativeName {
-			if !zeroValue {
-				if vf.Kind() == reflect.Slice && !slice {
-					elemType := vf.Type().Elem()
-					ev := reflect.New(elemType).Elem()
+			if vf.Kind() == reflect.Slice && !slice {
+				elemType := vf.Type().Elem()
+				ev := reflect.New(elemType).Elem()
 
+				if !zeroValue {
 					if err := dec.DecodeValue(ev); err != nil {
 						return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
 					}
+				}
 
-					vf.Set(reflect.Append(vf, ev))
-				} else {
-					if err := dec.DecodeValue(vf); err != nil {
-						return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
-					}
+				vf.Set(reflect.Append(vf, ev))
+			} else if !zeroValue {
+				if err := dec.DecodeValue(vf); err != nil {
+					return true, fmt.Errorf("goon: Failed to decode field %v - %v", strings.Join(nameParts, "."), err)
 				}
 			}
 

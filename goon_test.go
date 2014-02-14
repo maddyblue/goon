@@ -69,6 +69,7 @@ type ivItem struct {
 	Casual    string
 	Key       *datastore.Key
 	ZeroKey   *datastore.Key
+	KeySlice  []*datastore.Key
 	BlobKey   appengine.BlobKey
 	Sub       ivItemSub
 	Subs      []ivItemSubs
@@ -108,8 +109,10 @@ func initializeIvItems(c appengine.Context) {
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "one", ByteSlice: []byte{0xDE, 0xAD},
 			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, NoIndex: 1, Casual: "clothes",
-			Key: datastore.NewKey(c, "Fruit", "Apple", 0, nil), BlobKey: "fake #1",
-			Sub: ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
+			Key:      datastore.NewKey(c, "Fruit", "Apple", 0, nil),
+			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)},
+			BlobKey:  "fake #1",
+			Sub:      ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
 			Subs: []ivItemSubs{
 				{Data: "sub #1.1", Extra: "xtra #1.1"},
 				{Data: "sub #1.2", Extra: "xtra #1.2"},
@@ -119,8 +122,10 @@ func initializeIvItems(c appengine.Context) {
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "two", ByteSlice: []byte{0xBE, 0xEF},
 			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, NoIndex: 2, Casual: "manners",
-			Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), BlobKey: "fake #2",
-			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
+			Key:      datastore.NewKey(c, "Fruit", "Banana", 0, nil),
+			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 3, nil), nil, datastore.NewKey(c, "Number", "", 4, nil)},
+			BlobKey:  "fake #2",
+			Sub:      ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
 			Subs: []ivItemSubs{
 				{Data: "sub #2.1", Extra: "xtra #2.1"},
 				{Data: "sub #2.2", Extra: "xtra #2.2"},
@@ -130,8 +135,10 @@ func initializeIvItems(c appengine.Context) {
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "tri", ByteSlice: []byte{0xF0, 0x0D},
 			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, NoIndex: 3, Casual: "weather",
-			Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), BlobKey: "fake #3",
-			Sub: ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
+			Key:      datastore.NewKey(c, "Fruit", "Cherry", 0, nil),
+			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 5, nil), nil, datastore.NewKey(c, "Number", "", 6, nil)},
+			BlobKey:  "fake #3",
+			Sub:      ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
 			Subs: []ivItemSubs{
 				{Data: "sub #3.1", Extra: "xtra #3.1"},
 				{Data: "sub #3.2", Extra: "xtra #3.2"},
@@ -520,6 +527,7 @@ type MigrationA struct {
 	Parents   []MigrationPerson `datastore:"parents,noindex"`
 	DeepSlice MigrationDeepA    `datastore:"deep,noindex"`
 	ZZs       []ZigZag          `datastore:"zigzag,noindex"`
+	ZeroKey   *datastore.Key    `datastore:",noindex"`
 }
 
 type MigrationSub struct {
@@ -575,6 +583,7 @@ type MigrationB struct {
 	OldFolks       []MigrationPerson `datastore:"parents,noindex"`
 	FarSlice       MigrationDeepA    `datastore:"deep,noindex"`
 	ZZs            ZigZags           `datastore:"zigzag,noindex"`
+	Keys           []*datastore.Key  `datastore:"ZeroKey,noindex"`
 }
 
 func TestMigration(t *testing.T) {
@@ -609,111 +618,68 @@ func TestMigration(t *testing.T) {
 	g.FlushLocalCache()
 
 	// Test whether memcache supports migration
-	migB1 := &MigrationB{Identification: migA.Id}
-	if err := g.Get(migB1); err != nil {
-		t.Errorf("Unexpected error on Get: %v", err)
-	} else if migA.Id != migB1.Identification {
-		t.Errorf("Ids don't match: %v != %v", migA.Id, migB1.Identification)
-	} else if migA.Number != migB1.FancyNumber {
-		t.Errorf("Numbers don't match: %v != %v", migA.Number, migB1.FancyNumber)
-	} else if migA.Word != migB1.Slang {
-		t.Errorf("Words don't match: %v != %v", migA.Word, migB1.Slang)
-	} else if len(migB1.Cars) != 1 {
-		t.Errorf("Expected 1 car! Got: %v", len(migB1.Cars))
-	} else if migA.Car != migB1.Cars[0] {
-		t.Errorf("Cars don't match: %v != %v", migA.Car, migB1.Cars[0])
-	} else if len(migB1.Holidays) != 1 {
-		t.Errorf("Expected 1 holiday! Got: %v", len(migB1.Holidays))
-	} else if migA.Holiday != migB1.Holidays[0] {
-		t.Errorf("Holidays don't match: %v != %v", migA.Holiday, migB1.Holidays[0])
-	} else if migA.Sub.Data != migB1.Animal {
-		t.Errorf("Animal doesn't match: %v != %v", migA.Sub.Data, migB1.Animal)
-	} else if !reflect.DeepEqual(migA.Sub.Noise, migB1.Music) {
-		t.Errorf("Music doesn't match: %v != %v", migA.Sub.Noise, migB1.Music)
-	} else if migA.Sub.Sub.Data != migB1.Flower {
-		t.Errorf("Flower doesn't match: %v != %v", migA.Sub.Sub.Data, migB1.Flower)
-	} else if len(migB1.Sons) != 1 {
-		t.Errorf("Expected 1 son! Got: %v", len(migB1.Sons))
-	} else if migA.Son.Name != migB1.Sons[0].Name {
-		t.Errorf("Son names don't match: %v != %v", migA.Son.Name, migB1.Sons[0].Name)
-	} else if migA.Son.Age != migB1.Sons[0].Age {
-		t.Errorf("Son ages don't match: %v != %v", migA.Son.Age, migB1.Sons[0].Age)
-	} else if migA.Daughter.Name != migB1.DaughterName {
-		t.Errorf("Daughter names don't match: %v != %v", migA.Daughter.Name, migB1.DaughterName)
-	} else if migA.Daughter.Age != migB1.DaughterAge {
-		t.Errorf("Daughter ages don't match: %v != %v", migA.Daughter.Age, migB1.DaughterAge)
-	} else if !reflect.DeepEqual(migA.Parents, migB1.OldFolks) {
-		t.Errorf("Parents don't match: %v != %v", migA.Parents, migB1.OldFolks)
-	} else if !reflect.DeepEqual(migA.DeepSlice, migB1.FarSlice) {
-		t.Errorf("Deep slice doesn't match: %v != %v", migA.DeepSlice, migB1.FarSlice)
-	} else if len(migB1.ZZs.Zig) != 2 {
-		t.Errorf("Expected 2 Zigs, got: %v", len(migB1.ZZs.Zig))
-	} else if len(migB1.ZZs.Zag) != 2 {
-		t.Errorf("Expected 2 Zags, got: %v", len(migB1.ZZs.Zag))
-	} else if migA.ZZs[0].Zig != migB1.ZZs.Zig[0] {
-		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[0].Zig, migB1.ZZs.Zig[0])
-	} else if migA.ZZs[1].Zig != migB1.ZZs.Zig[1] {
-		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[1].Zig, migB1.ZZs.Zig[1])
-	} else if migA.ZZs[0].Zag != migB1.ZZs.Zag[0] {
-		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[0].Zag, migB1.ZZs.Zag[0])
-	} else if migA.ZZs[1].Zag != migB1.ZZs.Zag[1] {
-		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[1].Zag, migB1.ZZs.Zag[1])
-	}
+	verifyMigration(t, g, migA, "MC")
 
 	// Clear all the caches
 	g.FlushLocalCache()
 	memcache.Flush(c)
 
 	// Test whether datastore supports migration
-	migB2 := &MigrationB{Identification: migA.Id}
-	if err := g.Get(migB2); err != nil {
-		t.Errorf("Unexpected error on Get: %v", err)
-	} else if migA.Id != migB2.Identification {
-		t.Errorf("Ids don't match: %v != %v", migA.Id, migB2.Identification)
-	} else if migA.Number != migB2.FancyNumber {
-		t.Errorf("Numbers don't match: %v != %v", migA.Number, migB2.FancyNumber)
-	} else if migA.Word != migB2.Slang {
-		t.Errorf("Words don't match: %v != %v", migA.Word, migB2.Slang)
-	} else if len(migB2.Cars) != 1 {
-		t.Errorf("Expected 1 car! Got: %v", len(migB2.Cars))
-	} else if migA.Car != migB2.Cars[0] {
-		t.Errorf("Cars don't match: %v != %v", migA.Car, migB2.Cars[0])
-	} else if len(migB2.Holidays) != 1 {
-		t.Errorf("Expected 1 holiday! Got: %v", len(migB2.Holidays))
-	} else if migA.Holiday != migB2.Holidays[0] {
-		t.Errorf("Holidays don't match: %v != %v", migA.Holiday, migB2.Holidays[0])
-	} else if migA.Sub.Data != migB2.Animal {
-		t.Errorf("Animal doesn't match: %v != %v", migA.Sub.Data, migB2.Animal)
-	} else if !reflect.DeepEqual(migA.Sub.Noise, migB2.Music) {
-		t.Errorf("Music doesn't match: %v != %v", migA.Sub.Noise, migB2.Music)
-	} else if migA.Sub.Sub.Data != migB2.Flower {
-		t.Errorf("Flower doesn't match: %v != %v", migA.Sub.Sub.Data, migB2.Flower)
-	} else if len(migB2.Sons) != 1 {
-		t.Errorf("Expected 1 son! Got: %v", len(migB2.Sons))
-	} else if migA.Son.Name != migB2.Sons[0].Name {
-		t.Errorf("Sons don't match: %v != %v", migA.Son.Name, migB2.Sons[0].Name)
-	} else if migA.Son.Age != migB2.Sons[0].Age {
-		t.Errorf("Son ages don't match: %v != %v", migA.Son.Age, migB2.Sons[0].Age)
-	} else if migA.Daughter.Name != migB2.DaughterName {
-		t.Errorf("Daughters don't match: %v != %v", migA.Daughter.Name, migB2.DaughterName)
-	} else if migA.Daughter.Age != migB2.DaughterAge {
-		t.Errorf("Daughter ages don't match: %v != %v", migA.Daughter.Age, migB2.DaughterAge)
-	} else if !reflect.DeepEqual(migA.Parents, migB2.OldFolks) {
-		t.Errorf("Parents don't match: %v != %v", migA.Parents, migB2.OldFolks)
-	} else if !reflect.DeepEqual(migA.DeepSlice, migB2.FarSlice) {
-		t.Errorf("Deep slice doesn't match: %v != %v", migA.DeepSlice, migB2.FarSlice)
-	} else if len(migB1.ZZs.Zig) != 2 {
-		t.Errorf("Expected 2 Zigs, got: %v", len(migB1.ZZs.Zig))
-	} else if len(migB1.ZZs.Zag) != 2 {
-		t.Errorf("Expected 2 Zags, got: %v", len(migB1.ZZs.Zag))
-	} else if migA.ZZs[0].Zig != migB1.ZZs.Zig[0] {
-		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[0].Zig, migB1.ZZs.Zig[0])
-	} else if migA.ZZs[1].Zig != migB1.ZZs.Zig[1] {
-		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[1].Zig, migB1.ZZs.Zig[1])
-	} else if migA.ZZs[0].Zag != migB1.ZZs.Zag[0] {
-		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[0].Zag, migB1.ZZs.Zag[0])
-	} else if migA.ZZs[1].Zag != migB1.ZZs.Zag[1] {
-		t.Errorf("Invalid zig #1: %v != %v", migA.ZZs[1].Zag, migB1.ZZs.Zag[1])
+	verifyMigration(t, g, migA, "DS")
+}
+
+func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, debugInfo string) {
+	migB := &MigrationB{Identification: migA.Id}
+	if err := g.Get(migB); err != nil {
+		t.Errorf("%v > Unexpected error on Get: %v", debugInfo, err)
+	} else if migA.Id != migB.Identification {
+		t.Errorf("%v > Ids don't match: %v != %v", debugInfo, migA.Id, migB.Identification)
+	} else if migA.Number != migB.FancyNumber {
+		t.Errorf("%v > Numbers don't match: %v != %v", debugInfo, migA.Number, migB.FancyNumber)
+	} else if migA.Word != migB.Slang {
+		t.Errorf("%v > Words don't match: %v != %v", debugInfo, migA.Word, migB.Slang)
+	} else if len(migB.Cars) != 1 {
+		t.Errorf("%v > Expected 1 car! Got: %v", debugInfo, len(migB.Cars))
+	} else if migA.Car != migB.Cars[0] {
+		t.Errorf("%v > Cars don't match: %v != %v", debugInfo, migA.Car, migB.Cars[0])
+	} else if len(migB.Holidays) != 1 {
+		t.Errorf("%v > Expected 1 holiday! Got: %v", debugInfo, len(migB.Holidays))
+	} else if migA.Holiday != migB.Holidays[0] {
+		t.Errorf("%v > Holidays don't match: %v != %v", debugInfo, migA.Holiday, migB.Holidays[0])
+	} else if migA.Sub.Data != migB.Animal {
+		t.Errorf("%v > Animal doesn't match: %v != %v", debugInfo, migA.Sub.Data, migB.Animal)
+	} else if !reflect.DeepEqual(migA.Sub.Noise, migB.Music) {
+		t.Errorf("%v > Music doesn't match: %v != %v", debugInfo, migA.Sub.Noise, migB.Music)
+	} else if migA.Sub.Sub.Data != migB.Flower {
+		t.Errorf("%v > Flower doesn't match: %v != %v", debugInfo, migA.Sub.Sub.Data, migB.Flower)
+	} else if len(migB.Sons) != 1 {
+		t.Errorf("%v > Expected 1 son! Got: %v", debugInfo, len(migB.Sons))
+	} else if migA.Son.Name != migB.Sons[0].Name {
+		t.Errorf("%v > Son names don't match: %v != %v", debugInfo, migA.Son.Name, migB.Sons[0].Name)
+	} else if migA.Son.Age != migB.Sons[0].Age {
+		t.Errorf("%v > Son ages don't match: %v != %v", debugInfo, migA.Son.Age, migB.Sons[0].Age)
+	} else if migA.Daughter.Name != migB.DaughterName {
+		t.Errorf("%v > Daughter names don't match: %v != %v", debugInfo, migA.Daughter.Name, migB.DaughterName)
+	} else if migA.Daughter.Age != migB.DaughterAge {
+		t.Errorf("%v > Daughter ages don't match: %v != %v", debugInfo, migA.Daughter.Age, migB.DaughterAge)
+	} else if !reflect.DeepEqual(migA.Parents, migB.OldFolks) {
+		t.Errorf("%v > Parents don't match: %v != %v", debugInfo, migA.Parents, migB.OldFolks)
+	} else if !reflect.DeepEqual(migA.DeepSlice, migB.FarSlice) {
+		t.Errorf("%v > Deep slice doesn't match: %v != %v", debugInfo, migA.DeepSlice, migB.FarSlice)
+	} else if len(migB.ZZs.Zig) != 2 {
+		t.Errorf("%v > Expected 2 Zigs, got: %v", debugInfo, len(migB.ZZs.Zig))
+	} else if len(migB.ZZs.Zag) != 2 {
+		t.Errorf("%v > Expected 2 Zags, got: %v", debugInfo, len(migB.ZZs.Zag))
+	} else if migA.ZZs[0].Zig != migB.ZZs.Zig[0] {
+		t.Errorf("%v > Invalid zig #1: %v != %v", debugInfo, migA.ZZs[0].Zig, migB.ZZs.Zig[0])
+	} else if migA.ZZs[1].Zig != migB.ZZs.Zig[1] {
+		t.Errorf("%v > Invalid zig #2: %v != %v", debugInfo, migA.ZZs[1].Zig, migB.ZZs.Zig[1])
+	} else if migA.ZZs[0].Zag != migB.ZZs.Zag[0] {
+		t.Errorf("%v > Invalid zag #1: %v != %v", debugInfo, migA.ZZs[0].Zag, migB.ZZs.Zag[0])
+	} else if migA.ZZs[1].Zag != migB.ZZs.Zag[1] {
+		t.Errorf("%v > Invalid zag #2: %v != %v", debugInfo, migA.ZZs[1].Zag, migB.ZZs.Zag[1])
+	} else if len(migB.Keys) != 1 {
+		t.Errorf("%v > Expected 1 keys, got %v", debugInfo, len(migB.Keys))
 	}
 }
 
