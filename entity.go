@@ -154,9 +154,10 @@ func serializeStruct(src interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	var buf bytes.Buffer
+	initialBufSize := 512 + t.Size() // Rough estimation for initial buffer size
+	buf := bytes.NewBuffer(make([]byte, 0, initialBufSize))
 	buf.WriteByte(serializationStateNormal) // Set the header
-	enc := gob.NewEncoder(&buf)
+	enc := gob.NewEncoder(buf)
 
 	if err := serializeStructInternal(enc, "", v, t); err != nil {
 		return nil, err
