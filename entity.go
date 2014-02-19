@@ -201,19 +201,21 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 			elemType := vf.Type().Elem()
 			// Unroll slices of structs
 			if elemType.Kind() == reflect.Struct && elemType != timeType {
-				for j := 0; j < vf.Len(); j++ {
+				subPrefix := fieldName + "."
+				vfLen := vf.Len()
+				for j := 0; j < vfLen; j++ {
 					vi := vf.Index(j)
-					if err := serializeStructInternal(enc, fieldName+".", vi, vi.Type()); err != nil {
+					if err := serializeStructInternal(enc, subPrefix, vi, vi.Type()); err != nil {
 						return err
 					}
 				}
 				continue
-			}
-			// For a slice of pointers we need to check if any index is nil,
-			// because Gob unfortunately fails at encoding nil values
-			if elemType.Kind() == reflect.Ptr {
+			} else if elemType.Kind() == reflect.Ptr {
+				// For a slice of pointers we need to check if any index is nil,
+				// because Gob unfortunately fails at encoding nil values
 				anyNil := false
-				for j := 0; j < vf.Len(); j++ {
+				vfLen := vf.Len()
+				for j := 0; j < vfLen; j++ {
 					vi := vf.Index(j)
 					if vi.IsNil() {
 						anyNil = true
@@ -221,7 +223,7 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 					}
 				}
 				if anyNil {
-					for j := 0; j < vf.Len(); j++ {
+					for j := 0; j < vfLen; j++ {
 						vi := vf.Index(j)
 						encodeValue := true
 						if vi.IsNil() {
@@ -238,9 +240,7 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 					continue
 				}
 			}
-		}
-
-		if vf.Kind() == reflect.Struct && tf.Type != timeType {
+		} else if vf.Kind() == reflect.Struct && tf.Type != timeType {
 			if err := serializeStructInternal(enc, fieldName+".", vf, vf.Type()); err != nil {
 				return err
 			}
