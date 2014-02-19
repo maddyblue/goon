@@ -33,6 +33,11 @@ type fieldInfo struct {
 	fieldIndex []int
 }
 
+type structMetaData struct {
+	metaDatas   []string
+	totalLength int
+}
+
 const (
 	serializationStateEmpty  = 0x00
 	serializationStateNormal = 0x01
@@ -141,6 +146,33 @@ func generateStructFieldMap(t reflect.Type, namePrefix string, indexPrefix, slic
 	}
 }
 
+func serializeStructMetaData(buf []byte, smd *structMetaData) {
+	pos := 0
+	for _, metaData := range smd.metaDatas {
+		copy(buf[pos:], metaData)
+		pos += len(metaData)
+		buf[pos] = '+'
+		pos += 1
+	}
+	buf[pos-1] = '|'
+}
+
+func deserializeStructMetaData(buf []byte) *structMetaData {
+	smd := &structMetaData{metaDatas: make([]string, 0, 16)}
+	pos, bufLen := 0, len(buf)
+	for i := 0; i < bufLen; i++ {
+		if buf[i] == '+' || buf[i] == '|' {
+			smd.metaDatas = append(smd.metaDatas, string(buf[pos:i]))
+			smd.totalLength += i - pos
+			pos = i + 1
+			if buf[i] == '|' {
+				break
+			}
+		}
+	}
+	return smd
+}
+
 func serializeStruct(src interface{}) ([]byte, error) {
 	if src == nil {
 		return []byte{serializationStateEmpty}, nil
@@ -154,19 +186,27 @@ func serializeStruct(src interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	initialBufSize := 512 + t.Size() // Rough estimation for initial buffer size
+	initialBufSize := 2 * t.Size() // Rough estimation for initial buffer size
 	buf := bytes.NewBuffer(make([]byte, 0, initialBufSize))
-	buf.WriteByte(serializationStateNormal) // Set the header
 	enc := gob.NewEncoder(buf)
+	smd := &structMetaData{metaDatas: make([]string, 0, 16)}
 
-	if err := serializeStructInternal(enc, "", v, t); err != nil {
+	if err := serializeStructInternal(enc, smd, "", v, t); err != nil {
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	bufSize := buf.Len()
+	// final size = header + all metadatas + separators for metadata + data
+	finalBufSize := 1 + smd.totalLength + len(smd.metaDatas) + bufSize
+	finalBuf := make([]byte, finalBufSize)
+	finalBuf[0] = byte(serializationStateNormal)       // Set the header
+	serializeStructMetaData(finalBuf[1:], smd)         // Serialize the metadata
+	copy(finalBuf[finalBufSize-bufSize:], buf.Bytes()) // Copy the actual data
+
+	return finalBuf, nil
 }
 
-func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Value, t reflect.Type) error {
+func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, namePrefix string, v reflect.Value, t reflect.Type) error {
 	var fieldName string
 	var metaData string
 
@@ -205,7 +245,7 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 				vfLen := vf.Len()
 				for j := 0; j < vfLen; j++ {
 					vi := vf.Index(j)
-					if err := serializeStructInternal(enc, subPrefix, vi, vi.Type()); err != nil {
+					if err := serializeStructInternal(enc, smd, subPrefix, vi, vi.Type()); err != nil {
 						return err
 					}
 				}
@@ -233,7 +273,7 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 						} else {
 							metaData = fieldName
 						}
-						if err := serializeStructInternalEncode(enc, fieldName, metaData, encodeValue, vi); err != nil {
+						if err := serializeStructInternalEncode(enc, smd, fieldName, metaData, encodeValue, vi); err != nil {
 							return err
 						}
 					}
@@ -241,7 +281,7 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 				}
 			}
 		} else if vf.Kind() == reflect.Struct && tf.Type != timeType {
-			if err := serializeStructInternal(enc, fieldName+".", vf, vf.Type()); err != nil {
+			if err := serializeStructInternal(enc, smd, fieldName+".", vf, vf.Type()); err != nil {
 				return err
 			}
 			continue
@@ -260,7 +300,7 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 			metaData = fieldName
 		}
 
-		if err := serializeStructInternalEncode(enc, fieldName, metaData, encodeValue, vf); err != nil {
+		if err := serializeStructInternalEncode(enc, smd, fieldName, metaData, encodeValue, vf); err != nil {
 			return err
 		}
 	}
@@ -268,10 +308,10 @@ func serializeStructInternal(enc *gob.Encoder, namePrefix string, v reflect.Valu
 	return nil
 }
 
-func serializeStructInternalEncode(enc *gob.Encoder, fieldName, metaData string, encodeValue bool, v reflect.Value) error {
-	if err := enc.Encode(metaData); err != nil {
-		return fmt.Errorf("goon: Failed to encode field metadata %v - %v", metaData, err)
-	}
+func serializeStructInternalEncode(enc *gob.Encoder, smd *structMetaData, fieldName, metaData string, encodeValue bool, v reflect.Value) error {
+	smd.metaDatas = append(smd.metaDatas, metaData)
+	smd.totalLength += len(metaData)
+
 	if encodeValue {
 		if err := enc.EncodeValue(v); err != nil {
 			return fmt.Errorf("goon: Failed to encode field %v value %v - %v", fieldName, v.Interface(), err)
@@ -281,6 +321,10 @@ func serializeStructInternalEncode(enc *gob.Encoder, fieldName, metaData string,
 }
 
 func deserializeStruct(dst interface{}, b []byte) error {
+	if len(b) == 0 {
+		return fmt.Errorf("goon: Expected some data to deserialize, got none.")
+	}
+
 	v := reflect.Indirect(reflect.ValueOf(dst))
 	t := v.Type()
 	k := t.Kind()
@@ -289,25 +333,20 @@ func deserializeStruct(dst interface{}, b []byte) error {
 		return fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	buf := bytes.NewBuffer(b)
-	if header, err := buf.ReadByte(); err != nil {
-		return fmt.Errorf("goon: Unexpected error reading cache header: %v", err)
-	} else if header == serializationStateEmpty {
+	if header := b[0]; header == serializationStateEmpty {
 		return datastore.ErrNoSuchEntity
 	} else if header != serializationStateNormal {
 		return fmt.Errorf("goon: Unrecognized cache header: %v", header)
 	}
 
-	var metaData string
+	smd := deserializeStructMetaData(b[1:])
+	dataPos := 1 + smd.totalLength + len(smd.metaDatas)
+	buf := bytes.NewBuffer(b[dataPos:])
 	dec := gob.NewDecoder(buf)
 	structHistory := make(map[string]map[string]bool, 8)
 	fieldMap := getFieldInfo(t)
 
-	for buf.Len() > 0 {
-		if err := dec.Decode(&metaData); err != nil {
-			return fmt.Errorf("goon: Failed to decode field metadata: %v", err)
-		}
-
+	for _, metaData := range smd.metaDatas {
 		fieldName, slice, zeroValue := metaData, false, false
 		if metaData[0] == '$' {
 			fieldName, slice = metaData[1:], true
