@@ -68,6 +68,7 @@ type ivItem struct {
 	NoIndex   int         `datastore:",noindex"`
 	Casual    string
 	Key       *datastore.Key
+	ChildKey  *datastore.Key
 	ZeroKey   *datastore.Key
 	KeySlice  []*datastore.Key
 	BlobKey   appengine.BlobKey
@@ -110,6 +111,7 @@ func initializeIvItems(c appengine.Context) {
 			Bool: true, String: "one", ByteSlice: []byte{0xDE, 0xAD},
 			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, NoIndex: 1, Casual: "clothes",
 			Key:      datastore.NewKey(c, "Fruit", "Apple", 0, nil),
+			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
 			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)},
 			BlobKey:  "fake #1",
 			Sub:      ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
@@ -123,6 +125,7 @@ func initializeIvItems(c appengine.Context) {
 			Bool: true, String: "two", ByteSlice: []byte{0xBE, 0xEF},
 			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, NoIndex: 2, Casual: "manners",
 			Key:      datastore.NewKey(c, "Fruit", "Banana", 0, nil),
+			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
 			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 3, nil), nil, datastore.NewKey(c, "Number", "", 4, nil)},
 			BlobKey:  "fake #2",
 			Sub:      ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
@@ -136,6 +139,7 @@ func initializeIvItems(c appengine.Context) {
 			Bool: true, String: "tri", ByteSlice: []byte{0xF0, 0x0D},
 			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, NoIndex: 3, Casual: "weather",
 			Key:      datastore.NewKey(c, "Fruit", "Cherry", 0, nil),
+			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
 			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 5, nil), nil, datastore.NewKey(c, "Number", "", 6, nil)},
 			BlobKey:  "fake #3",
 			Sub:      ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
