@@ -18,13 +18,16 @@ package goon
 
 import (
 	"bytes"
+	"container/list"
 	"encoding/gob"
 	"fmt"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
+	"appengine"
 	"appengine/datastore"
 )
 
@@ -43,16 +46,63 @@ type structMetaData struct {
 	totalLength int
 }
 
+// https://developers.google.com/appengine/docs/go/datastore/reference
+type seBootstrap struct {
+	v01 datastore.Key // Non-pointer on purpose
+	v02 time.Time
+	v03 appengine.BlobKey
+	v04 []time.Time
+	v05 []int
+	v06 []int8
+	v07 []int16
+	v08 []int32
+	v09 []int64
+	v10 []float32
+	v11 []float64
+	v12 []bool
+	v13 []string
+	v14 [][]byte
+}
+
+type serializationEncoder struct {
+	buf *bytes.Buffer
+	enc *gob.Encoder
+}
+
+type serializationDecoder struct {
+	sr  *serializationReader
+	dec *gob.Decoder
+}
+
+type serializationReader struct {
+	r *bytes.Reader
+}
+
+func (sr *serializationReader) Read(p []byte) (n int, err error) {
+	return sr.r.Read(p)
+}
+
+func (sr *serializationReader) ReadByte() (c byte, err error) {
+	return sr.r.ReadByte()
+}
+
 const (
 	serializationStateEmpty  = 0x00
 	serializationStateNormal = 0x01
 )
 
 var (
-	timeType       = reflect.TypeOf(time.Time{})
-	fieldInfos     = make(map[reflect.Type]map[string]*fieldInfo)
-	fieldMetadatas = make(map[reflect.Type][]fieldMetadata)
-	fieldIMLock    sync.RWMutex
+	timeType                  = reflect.TypeOf(time.Time{})
+	fieldInfos                = make(map[reflect.Type]map[string]*fieldInfo)
+	fieldMetadatas            = make(map[reflect.Type][]fieldMetadata)
+	fieldIMLock               sync.RWMutex
+	serializationEncoders     = list.New()
+	serializationEncodersLock sync.Mutex
+	serializationDecoders     = list.New()
+	serializationDecodersLock sync.Mutex
+	seBoot                    seBootstrap
+	seBootBytes               []byte
+	seBootBytesLock           sync.RWMutex
 )
 
 func getFieldInfoAndMetadata(t reflect.Type) (map[string]*fieldInfo, []fieldMetadata) {
@@ -169,6 +219,108 @@ func deserializeStructMetaData(buf []byte) *structMetaData {
 	return smd
 }
 
+// updateSEBootBytes should only be set true if called under seBootBytesLock write-lock
+func bootstrapSerializationEncoder(se *serializationEncoder, updateSEBootBytes bool) {
+	se.enc.Encode(seBoot.v01)
+	se.enc.Encode(seBoot.v02)
+	se.enc.Encode(seBoot.v03)
+	se.enc.Encode(seBoot.v04)
+	se.enc.Encode(seBoot.v05)
+	se.enc.Encode(seBoot.v06)
+	se.enc.Encode(seBoot.v07)
+	se.enc.Encode(seBoot.v08)
+	se.enc.Encode(seBoot.v09)
+	se.enc.Encode(seBoot.v10)
+	se.enc.Encode(seBoot.v11)
+	se.enc.Encode(seBoot.v12)
+	se.enc.Encode(seBoot.v13)
+	se.enc.Encode(seBoot.v14)
+
+	if updateSEBootBytes {
+		seBootBytes = make([]byte, se.buf.Len())
+		copy(seBootBytes, se.buf.Bytes())
+	}
+
+	se.buf.Reset()
+}
+
+func bootstrapSerializationDecoder(sd *serializationDecoder) {
+	seBootBytesLock.RLock()
+	ok := len(seBootBytes) > 0
+	seBootBytesLock.RUnlock()
+	if !ok {
+		seBootBytesLock.Lock()
+		ok = len(seBootBytes) > 0
+		if !ok {
+			buf := bytes.NewBuffer(make([]byte, 0, 4096))
+			enc := gob.NewEncoder(buf)
+			se := &serializationEncoder{buf: buf, enc: enc}
+			bootstrapSerializationEncoder(se, true)
+		}
+		seBootBytesLock.Unlock()
+	}
+
+	sd.sr.r = bytes.NewReader(seBootBytes)
+	for i := 0; i < 14; i++ {
+		sd.dec.Decode(nil)
+	}
+}
+
+func getSerializationEncoder() *serializationEncoder {
+	serializationEncodersLock.Lock()
+	// Use an existing one if possible
+	if serializationEncoders.Len() > 0 {
+		defer serializationEncodersLock.Unlock()
+		return serializationEncoders.Remove(serializationEncoders.Front()).(*serializationEncoder)
+	}
+	serializationEncodersLock.Unlock()
+	// Otherwise allocate a new one
+	buf := bytes.NewBuffer(make([]byte, 0, 16384)) // 16 KiB initial capacity
+	enc := gob.NewEncoder(buf)
+	se := &serializationEncoder{buf: buf, enc: enc}
+	bootstrapSerializationEncoder(se, false)
+	return se
+}
+
+func freeSerializationEncoder(se *serializationEncoder) {
+	se.buf.Reset()
+	serializationEncodersLock.Lock()
+	serializationEncoders.PushBack(se)
+	// TODO: Perhaps some occasional clean-up is in order?
+	// Running 50 goroutines concurrently can allocate a bunch of these
+	// but they may not be needed again for quite some time
+	serializationEncodersLock.Unlock()
+}
+
+func getSerializationDecoder(data []byte) *serializationDecoder {
+	serializationDecodersLock.Lock()
+	// Use an existing one if possible
+	if serializationDecoders.Len() > 0 {
+		sd := serializationDecoders.Remove(serializationDecoders.Front()).(*serializationDecoder)
+		serializationDecodersLock.Unlock()
+		sd.sr.r = bytes.NewReader(data)
+		return sd
+	}
+	serializationDecodersLock.Unlock()
+	// Otherwise allocate a new one
+	sr := &serializationReader{}
+	dec := gob.NewDecoder(sr)
+	sd := &serializationDecoder{sr: sr, dec: dec}
+	bootstrapSerializationDecoder(sd)
+	sd.sr.r = bytes.NewReader(data)
+	return sd
+}
+
+func freeSerializationDecoder(sd *serializationDecoder) {
+	sd.sr.r = nil // Avoid memory leaks
+	serializationDecodersLock.Lock()
+	serializationDecoders.PushBack(sd)
+	// TODO: Perhaps some occasional clean-up is in order?
+	// Running 50 goroutines concurrently can allocate a bunch of these
+	// but they may not be needed again for quite some time
+	serializationDecodersLock.Unlock()
+}
+
 func serializeStruct(src interface{}) ([]byte, error) {
 	if src == nil {
 		return []byte{serializationStateEmpty}, nil
@@ -182,23 +334,22 @@ func serializeStruct(src interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	initialBufSize := 2 * t.Size() // Rough estimation for initial buffer size
-	buf := bytes.NewBuffer(make([]byte, 0, initialBufSize))
-	enc := gob.NewEncoder(buf)
+	se := getSerializationEncoder()
+	defer freeSerializationEncoder(se)
 	smd := &structMetaData{metaDatas: make([]string, 0, 16)}
 	_, fms := getFieldInfoAndMetadata(t) // Use this function to force generation if needed
 
-	if err := serializeStructInternal(enc, smd, fms, "", v); err != nil {
+	if err := serializeStructInternal(se.enc, smd, fms, "", v); err != nil {
 		return nil, err
 	}
 
-	bufSize := buf.Len()
+	bufSize := se.buf.Len()
 	// final size = header + all metadatas + separators for metadata + data
 	finalBufSize := 1 + smd.totalLength + len(smd.metaDatas) + bufSize
 	finalBuf := make([]byte, finalBufSize)
-	finalBuf[0] = byte(serializationStateNormal)       // Set the header
-	serializeStructMetaData(finalBuf[1:], smd)         // Serialize the metadata
-	copy(finalBuf[finalBufSize-bufSize:], buf.Bytes()) // Copy the actual data
+	finalBuf[0] = byte(serializationStateNormal)          // Set the header
+	serializeStructMetaData(finalBuf[1:], smd)            // Serialize the metadata
+	copy(finalBuf[finalBufSize-bufSize:], se.buf.Bytes()) // Copy the actual data
 
 	return finalBuf, nil
 }
@@ -206,6 +357,7 @@ func serializeStruct(src interface{}) ([]byte, error) {
 func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, fms []fieldMetadata, namePrefix string, v reflect.Value) error {
 	var fieldName string
 	var metaData string
+	var elemType reflect.Type
 
 	for _, fm := range fms {
 		vf := v.Field(fm.index)
@@ -217,48 +369,74 @@ func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, fms []fieldM
 		}
 
 		if vf.Kind() == reflect.Slice {
-			elemType := vf.Type().Elem()
-			// Unroll slices of structs
-			if elemType.Kind() == reflect.Struct && elemType != timeType {
-				if vfLen := vf.Len(); vfLen > 0 {
-					subFms := getFieldMetadata(elemType)
-					subPrefix := fieldName + "."
-					for j := 0; j < vfLen; j++ {
-						vi := vf.Index(j)
-						if err := serializeStructInternal(enc, smd, subFms, subPrefix, vi); err != nil {
-							return err
-						}
-					}
-				}
-				continue
-			} else if elemType.Kind() == reflect.Ptr {
-				// For a slice of pointers we need to check if any index is nil,
-				// because Gob unfortunately fails at encoding nil values
-				anyNil := false
-				vfLen := vf.Len()
-				for j := 0; j < vfLen; j++ {
-					vi := vf.Index(j)
-					if vi.IsNil() {
-						anyNil = true
-						break
-					}
-				}
-				if anyNil {
-					for j := 0; j < vfLen; j++ {
-						vi := vf.Index(j)
-						encodeValue := true
-						if vi.IsNil() {
-							// Gob unfortunately fails at encoding nil values
-							metaData = "!" + fieldName
-							encodeValue = false
-						} else {
-							metaData = fieldName
-						}
-						if err := serializeStructInternalEncode(enc, smd, fieldName, metaData, encodeValue, vi); err != nil {
-							return err
+			elemType = vf.Type().Elem()
+			if elemType != timeType {
+				// Unroll slices of structs
+				if elemType.Kind() == reflect.Struct {
+					if vfLen := vf.Len(); vfLen > 0 {
+						subFms := getFieldMetadata(elemType)
+						subPrefix := fieldName + "."
+						for j := 0; j < vfLen; j++ {
+							vi := vf.Index(j)
+							if err := serializeStructInternal(enc, smd, subFms, subPrefix, vi); err != nil {
+								return err
+							}
 						}
 					}
 					continue
+				} else if elemType.Kind() == reflect.Ptr {
+					// For a slice of pointers we need to check if any index is nil,
+					// because Gob unfortunately fails at encoding nil values
+					anyNil := false
+					vfLen := vf.Len()
+					for j := 0; j < vfLen; j++ {
+						vi := vf.Index(j)
+						if vi.IsNil() {
+							anyNil = true
+							break
+						}
+					}
+					if anyNil {
+						for j := 0; j < vfLen; j++ {
+							vi := vf.Index(j)
+							encodeValue := true
+							if vi.IsNil() {
+								// Gob unfortunately fails at encoding nil values
+								metaData = "!" + fieldName
+								encodeValue = false
+							} else {
+								metaData = fieldName
+							}
+							if err := serializeStructInternalEncode(enc, smd, fieldName, metaData, encodeValue, vi); err != nil {
+								return err
+							}
+						}
+						continue
+					}
+				} else if elemType.Kind().String() != elemType.Name() {
+					// For slices of custom non-struct types, encode them as slices of the underlying type.
+					// This is required to be able to re-use a global gob encoding machine,
+					// as custom types require the type info to be declared by gob for every encoded struct!
+					switch elemType.Kind() {
+					case reflect.String:
+						vf = reflect.ValueOf(*(*[]string)(unsafe.Pointer(vf.UnsafeAddr())))
+					case reflect.Bool:
+						vf = reflect.ValueOf(*(*[]bool)(unsafe.Pointer(vf.UnsafeAddr())))
+					case reflect.Int:
+						vf = reflect.ValueOf(*(*[]int)(unsafe.Pointer(vf.UnsafeAddr())))
+					case reflect.Int8:
+						vf = reflect.ValueOf(*(*[]int8)(unsafe.Pointer(vf.UnsafeAddr())))
+					case reflect.Int16:
+						vf = reflect.ValueOf(*(*[]int16)(unsafe.Pointer(vf.UnsafeAddr())))
+					case reflect.Int32:
+						vf = reflect.ValueOf(*(*[]int32)(unsafe.Pointer(vf.UnsafeAddr())))
+					case reflect.Int64:
+						vf = reflect.ValueOf(*(*[]int64)(unsafe.Pointer(vf.UnsafeAddr())))
+					case reflect.Float32:
+						vf = reflect.ValueOf(*(*[]float32)(unsafe.Pointer(vf.UnsafeAddr())))
+					case reflect.Float64:
+						vf = reflect.ValueOf(*(*[]float64)(unsafe.Pointer(vf.UnsafeAddr())))
+					}
 				}
 			}
 		} else if vf.Kind() == reflect.Struct {
@@ -271,7 +449,8 @@ func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, fms []fieldM
 		}
 
 		encodeValue := true
-		if vf.Kind() == reflect.Slice {
+		if vf.Kind() == reflect.Slice && elemType.Kind() != reflect.Uint8 {
+			// NB! []byte is a special case and not a slice
 			// When decoding, if the target is a slice but metadata doesn't have the $ sign,
 			// then we can properly create a single value slice instead of panicing
 			metaData = "$" + fieldName
@@ -323,8 +502,8 @@ func deserializeStruct(dst interface{}, b []byte) error {
 
 	smd := deserializeStructMetaData(b[1:])
 	dataPos := 1 + smd.totalLength + len(smd.metaDatas)
-	buf := bytes.NewBuffer(b[dataPos:])
-	dec := gob.NewDecoder(buf)
+	sd := getSerializationDecoder(b[dataPos:])
+	defer freeSerializationDecoder(sd)
 	structHistory := make(map[string]map[string]bool, 8)
 	fieldMap, _ := getFieldInfoAndMetadata(t)
 
@@ -342,7 +521,7 @@ func deserializeStruct(dst interface{}, b []byte) error {
 			return fmt.Errorf("goon: Could not find field %v", fieldName)
 		}
 
-		if err := deserializeStructInternal(dec, fi, fieldName, nameParts, slice, zeroValue, structHistory, v, t); err != nil {
+		if err := deserializeStructInternal(sd.dec, fi, fieldName, nameParts, slice, zeroValue, structHistory, v, t); err != nil {
 			return err
 		}
 	}
@@ -385,15 +564,21 @@ func deserializeStructInternal(dec *gob.Decoder, fi *fieldInfo, fieldName string
 
 	if vf.Kind() == reflect.Slice && !slice {
 		elemType := vf.Type().Elem()
-		ev := reflect.New(elemType).Elem()
-
-		if !zeroValue {
-			if err := dec.DecodeValue(ev); err != nil {
-				return fmt.Errorf("goon: Failed to decode field %v - %v", fieldName, err)
+		if elemType.Kind() == reflect.Uint8 {
+			if !zeroValue {
+				if err := dec.DecodeValue(vf); err != nil {
+					return fmt.Errorf("goon: Failed to decode field %v - %v", fieldName, err)
+				}
 			}
+		} else {
+			ev := reflect.New(elemType).Elem()
+			if !zeroValue {
+				if err := dec.DecodeValue(ev); err != nil {
+					return fmt.Errorf("goon: Failed to decode field %v - %v", fieldName, err)
+				}
+			}
+			vf.Set(reflect.Append(vf, ev))
 		}
-
-		vf.Set(reflect.Append(vf, ev))
 	} else if !zeroValue {
 		if err := dec.DecodeValue(vf); err != nil {
 			return fmt.Errorf("goon: Failed to decode field %v - %v", fieldName, err)
