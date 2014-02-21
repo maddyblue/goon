@@ -69,6 +69,7 @@ type ivItem struct {
 	Casual    string
 	Ζεύς      string
 	Level     ivItemInt
+	Levels    []ivItemInt
 	Key       *datastore.Key
 	ChildKey  *datastore.Key
 	ZeroKey   *datastore.Key
@@ -113,7 +114,8 @@ func initializeIvItems(c appengine.Context) {
 		{Id: 1, Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "one", ByteSlice: []byte{0xDE, 0xAD},
-			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, NoIndex: 1, Casual: "clothes", Ζεύς: "Zeus", Level: 1,
+			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, NoIndex: 1,
+			Casual: "clothes", Ζεύς: "Zeus", Level: 1, Levels: []ivItemInt{1, 2, 3},
 			Key:      datastore.NewKey(c, "Fruit", "Apple", 0, nil),
 			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
 			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)},
@@ -127,7 +129,8 @@ func initializeIvItems(c appengine.Context) {
 		{Id: 2, Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "two", ByteSlice: []byte{0xBE, 0xEF},
-			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, NoIndex: 2, Casual: "manners", Ζεύς: "Alcmene", Level: 2,
+			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, NoIndex: 2,
+			Casual: "manners", Ζεύς: "Alcmene", Level: 2, Levels: []ivItemInt{2, 3, 4},
 			Key:      datastore.NewKey(c, "Fruit", "Banana", 0, nil),
 			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
 			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 3, nil), nil, datastore.NewKey(c, "Number", "", 4, nil)},
@@ -141,7 +144,8 @@ func initializeIvItems(c appengine.Context) {
 		{Id: 3, Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "tri", ByteSlice: []byte{0xF0, 0x0D},
-			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, NoIndex: 3, Casual: "weather", Ζεύς: "Hercules", Level: 3,
+			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, NoIndex: 3,
+			Casual: "weather", Ζεύς: "Hercules", Level: 3, Levels: []ivItemInt{3, 4, 5},
 			Key:      datastore.NewKey(c, "Fruit", "Cherry", 0, nil),
 			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
 			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 5, nil), nil, datastore.NewKey(c, "Number", "", 6, nil)},
@@ -531,6 +535,7 @@ type MigrationA struct {
 	Holiday   time.Time         `datastore:"holiday,noindex"`
 	α         int               `datastore:",noindex"`
 	Level     MigrationIntA     `datastore:"level,noindex`
+	Floor     MigrationIntA     `datastore:"floor,noindex"`
 	Sub       MigrationSub      `datastore:"sub,noindex"`
 	Son       MigrationPerson   `datastore:"son,noindex"`
 	Daughter  MigrationPerson   `datastore:"daughter,noindex"`
@@ -589,6 +594,7 @@ type MigrationB struct {
 	Holidays       []time.Time       `datastore:"holiday,noindex"`
 	β              int               `datastore:"α,noindex"`
 	Level          MigrationIntB     `datastore:"level,noindex`
+	Floors         []MigrationIntB   `datastore:"floor,noindex"`
 	Animal         string            `datastore:"sub.data,noindex"`
 	Music          []int             `datastore:"sub.noise,noindex"`
 	Flower         string            `datastore:"sub.sub.data,noindex"`
@@ -611,7 +617,7 @@ func TestMigration(t *testing.T) {
 
 	// Create & save an entity with the original structure
 	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
-		Holiday: time.Now().Truncate(time.Microsecond), α: 1, Level: 9001,
+		Holiday: time.Now().Truncate(time.Microsecond), α: 1, Level: 9001, Floor: 5,
 		Sub: MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
 		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
 		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
@@ -666,6 +672,10 @@ func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, debugInfo string) 
 		t.Errorf("%v > Greek doesn't match: %v != %v", debugInfo, migA.α, migB.β)
 	} else if int(migA.Level) != int(migB.Level) {
 		t.Errorf("%v > Level doesn't match: %v != %v", debugInfo, migA.Level, migB.Level)
+	} else if len(migB.Floors) != 1 {
+		t.Errorf("%v > Expected 1 floor! Got: %v", debugInfo, len(migB.Floors))
+	} else if int(migA.Floor) != int(migB.Floors[0]) {
+		t.Errorf("%v > Floor doesn't match: %v != %v", debugInfo, migA.Floor, migB.Floors[0])
 	} else if migA.Sub.Data != migB.Animal {
 		t.Errorf("%v > Animal doesn't match: %v != %v", debugInfo, migA.Sub.Data, migB.Animal)
 	} else if !reflect.DeepEqual(migA.Sub.Noise, migB.Music) {
