@@ -158,7 +158,61 @@ func initializeIvItems(c appengine.Context) {
 			ZZZV: []ivZZZV{{Data: "None"}, {Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil)}}}}
 }
 
-func getInputVarietySrc(t *testing.T, ivType int, indices ...int) interface{} {
+func getIVItemCopy(g *Goon, index int) *ivItem {
+	// All basic value types are copied easily
+	ivi := ivItems[index]
+
+	// .. but pointer based types require extra work
+	ivi.ByteSlice = []byte{}
+	for _, v := range ivItems[index].ByteSlice {
+		ivi.ByteSlice = append(ivi.ByteSlice, v)
+	}
+
+	ivi.TimeSlice = []time.Time{}
+	for _, v := range ivItems[index].TimeSlice {
+		ivi.TimeSlice = append(ivi.TimeSlice, v)
+	}
+
+	ivi.Levels = []ivItemInt{}
+	for _, v := range ivItems[index].Levels {
+		ivi.Levels = append(ivi.Levels, v)
+	}
+
+	ivi.Key = datastore.NewKey(g.context, ivItems[index].Key.Kind(), ivItems[index].Key.StringID(), ivItems[index].Key.IntID(), nil)
+
+	ivi.ChildKey = datastore.NewKey(g.context, ivItems[index].ChildKey.Kind(), ivItems[index].ChildKey.StringID(), ivItems[index].ChildKey.IntID(),
+		datastore.NewKey(g.context, ivItems[index].ChildKey.Parent().Kind(), ivItems[index].ChildKey.Parent().StringID(), ivItems[index].ChildKey.Parent().IntID(),
+			datastore.NewKey(g.context, ivItems[index].ChildKey.Parent().Parent().Kind(), ivItems[index].ChildKey.Parent().Parent().StringID(), ivItems[index].ChildKey.Parent().Parent().IntID(), nil)))
+
+	ivi.KeySlice = []*datastore.Key{}
+	for _, key := range ivItems[index].KeySlice {
+		if key == nil {
+			ivi.KeySlice = append(ivi.KeySlice, nil)
+		} else {
+			ivi.KeySlice = append(ivi.KeySlice, datastore.NewKey(g.context, key.Kind(), key.StringID(), key.IntID(), nil))
+		}
+	}
+
+	ivi.Sub = ivItemSub{}
+	ivi.Sub.Data = ivItems[index].Sub.Data
+	for _, v := range ivItems[index].Sub.Ints {
+		ivi.Sub.Ints = append(ivi.Sub.Ints, v)
+	}
+
+	ivi.Subs = []ivItemSubs{}
+	for _, sub := range ivItems[index].Subs {
+		ivi.Subs = append(ivi.Subs, ivItemSubs{Data: sub.Data, Extra: sub.Extra})
+	}
+
+	ivi.ZZZV = []ivZZZV{}
+	for _, zzzv := range ivItems[index].ZZZV {
+		ivi.ZZZV = append(ivi.ZZZV, ivZZZV{Key: zzzv.Key, Data: zzzv.Data})
+	}
+
+	return &ivi
+}
+
+func getInputVarietySrc(t *testing.T, g *Goon, ivType int, indices ...int) interface{} {
 	if ivType >= ivTypeTotal {
 		t.Fatalf("Invalid input variety type! %v >= %v", ivType, ivTypeTotal)
 		return nil
@@ -170,43 +224,37 @@ func getInputVarietySrc(t *testing.T, ivType int, indices ...int) interface{} {
 	case ivTypePtrToSliceOfStructs:
 		s := []ivItem{}
 		for _, index := range indices {
-			ivItemCopy := ivItems[index]
-			s = append(s, ivItemCopy)
+			s = append(s, *getIVItemCopy(g, index))
 		}
 		result = &s
 	case ivTypePtrToSliceOfPtrsToStruct:
 		s := []*ivItem{}
 		for _, index := range indices {
-			ivItemCopy := ivItems[index]
-			s = append(s, &ivItemCopy)
+			s = append(s, getIVItemCopy(g, index))
 		}
 		result = &s
 	case ivTypePtrToSliceOfInterfaces:
 		s := []ivItemI{}
 		for _, index := range indices {
-			ivItemCopy := ivItems[index]
-			s = append(s, &ivItemCopy)
+			s = append(s, getIVItemCopy(g, index))
 		}
 		result = &s
 	case ivTypeSliceOfStructs:
 		s := []ivItem{}
 		for _, index := range indices {
-			ivItemCopy := ivItems[index]
-			s = append(s, ivItemCopy)
+			s = append(s, *getIVItemCopy(g, index))
 		}
 		result = s
 	case ivTypeSliceOfPtrsToStruct:
 		s := []*ivItem{}
 		for _, index := range indices {
-			ivItemCopy := ivItems[index]
-			s = append(s, &ivItemCopy)
+			s = append(s, getIVItemCopy(g, index))
 		}
 		result = s
 	case ivTypeSliceOfInterfaces:
 		s := []ivItemI{}
 		for _, index := range indices {
-			ivItemCopy := ivItems[index]
-			s = append(s, &ivItemCopy)
+			s = append(s, getIVItemCopy(g, index))
 		}
 		result = s
 	}
@@ -348,8 +396,8 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	ivWipe(t, g, prettyInfo)
 
 	// Generate test data with the specified types
-	src := getInputVarietySrc(t, srcType, 0, 1, 2)
-	ref := getInputVarietySrc(t, dstType, 0, 1, 2)
+	src := getInputVarietySrc(t, g, srcType, 0, 1, 2)
+	ref := getInputVarietySrc(t, g, dstType, 0, 1, 2)
 	dst := getInputVarietyDst(t, dstType)
 
 	// Save our test data
@@ -414,8 +462,8 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 	ivWipe(t, g, prettyInfo)
 
 	// Generate test data with the specified types
-	src := getInputVarietySrc(t, srcType, 0, 1, 2)
-	ref := getInputVarietySrc(t, dstType, 0, 1, 2)
+	src := getInputVarietySrc(t, g, srcType, 0, 1, 2)
+	ref := getInputVarietySrc(t, g, dstType, 0, 1, 2)
 	dst := getInputVarietyDst(t, dstType)
 
 	// Save our test data
@@ -437,7 +485,7 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 		g.FlushLocalCache()
 		memcache.Flush(g.context)
 
-		subSrc := getInputVarietySrc(t, srcType, 0)
+		subSrc := getInputVarietySrc(t, g, srcType, 0)
 
 		if err := g.RunInTransaction(func(tg *Goon) error {
 			_, err := tg.PutMulti(subSrc)
@@ -480,8 +528,8 @@ func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode in
 	ivWipe(t, g, prettyInfo)
 
 	// Generate test data with the specified types
-	src := getInputVarietySrc(t, srcType, 0, 1, 2)
-	ref := getInputVarietySrc(t, dstType, 0, 1, 2)
+	src := getInputVarietySrc(t, g, srcType, 0, 1, 2)
+	ref := getInputVarietySrc(t, g, dstType, 0, 1, 2)
 	dst := getInputVarietyDst(t, dstType)
 
 	// Save our test data
