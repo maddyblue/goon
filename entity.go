@@ -25,7 +25,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"appengine"
 	"appengine/datastore"
@@ -417,25 +416,63 @@ func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, fms []fieldM
 					// For slices of custom non-struct types, encode them as slices of the underlying type.
 					// This is required to be able to re-use a global gob encoding machine,
 					// as custom types require the type info to be declared by gob for every encoded struct!
+					// NB! We don't currently update the elemType variable as an optimization!
+					vfLen := vf.Len()
 					switch elemType.Kind() {
 					case reflect.String:
-						vf = reflect.ValueOf(*(*[]string)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]string, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = vf.Index(i).String()
+						}
+						vf = reflect.ValueOf(copy)
 					case reflect.Bool:
-						vf = reflect.ValueOf(*(*[]bool)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]bool, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = vf.Index(i).Bool()
+						}
+						vf = reflect.ValueOf(copy)
 					case reflect.Int:
-						vf = reflect.ValueOf(*(*[]int)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]int, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = int(vf.Index(i).Int())
+						}
+						vf = reflect.ValueOf(copy)
 					case reflect.Int8:
-						vf = reflect.ValueOf(*(*[]int8)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]int8, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = int8(vf.Index(i).Int())
+						}
+						vf = reflect.ValueOf(copy)
 					case reflect.Int16:
-						vf = reflect.ValueOf(*(*[]int16)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]int16, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = int16(vf.Index(i).Int())
+						}
+						vf = reflect.ValueOf(copy)
 					case reflect.Int32:
-						vf = reflect.ValueOf(*(*[]int32)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]int32, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = int32(vf.Index(i).Int())
+						}
+						vf = reflect.ValueOf(copy)
 					case reflect.Int64:
-						vf = reflect.ValueOf(*(*[]int64)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]int64, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = vf.Index(i).Int()
+						}
+						vf = reflect.ValueOf(copy)
 					case reflect.Float32:
-						vf = reflect.ValueOf(*(*[]float32)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]float32, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = float32(vf.Index(i).Float())
+						}
+						vf = reflect.ValueOf(copy)
 					case reflect.Float64:
-						vf = reflect.ValueOf(*(*[]float64)(unsafe.Pointer(vf.UnsafeAddr())))
+						copy := make([]float64, vfLen, vfLen)
+						for i := 0; i < vfLen; i++ {
+							copy[i] = vf.Index(i).Float()
+						}
+						vf = reflect.ValueOf(copy)
 					}
 				}
 			}
