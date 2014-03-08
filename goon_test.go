@@ -76,6 +76,7 @@ type ivItem struct {
 	ChildKey    *datastore.Key
 	ZeroKey     *datastore.Key
 	KeySlice    []*datastore.Key
+	KeySliceNil []*datastore.Key
 	BlobKey     appengine.BlobKey
 	BKSlice     []appengine.BlobKey
 	Sub         ivItemSub
@@ -173,10 +174,11 @@ func initializeIvItems(c appengine.Context) {
 			ByteSlice: []byte{0xDE, 0xAD}, BSSlice: [][]byte{{0x01, 0x02}, {0x03, 0x04}},
 			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, NoIndex: 1,
 			Casual: "clothes", Ζεύς: "Zeus",
-			Key:      datastore.NewKey(c, "Fruit", "Apple", 0, nil),
-			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)},
-			BlobKey:  "fake #1", BKSlice: []appengine.BlobKey{"fake #1.1", "fake #1.2"},
+			Key:         datastore.NewKey(c, "Fruit", "Apple", 0, nil),
+			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
+			KeySlice:    []*datastore.Key{datastore.NewKey(c, "Key", "", 1, nil), datastore.NewKey(c, "Key", "", 2, nil), datastore.NewKey(c, "Key", "", 3, nil)},
+			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)},
+			BlobKey:     "fake #1", BKSlice: []appengine.BlobKey{"fake #1.1", "fake #1.2"},
 			Sub: ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
 			Subs: []ivItemSubs{
 				{Data: "sub #1.1", Extra: "xtra #1.1"},
@@ -197,10 +199,11 @@ func initializeIvItems(c appengine.Context) {
 			ByteSlice: []byte{0xBE, 0xEF}, BSSlice: [][]byte{{0x05, 0x06}, {0x07, 0x08}},
 			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, NoIndex: 2,
 			Casual: "manners", Ζεύς: "Alcmene",
-			Key:      datastore.NewKey(c, "Fruit", "Banana", 0, nil),
-			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 3, nil), nil, datastore.NewKey(c, "Number", "", 4, nil)},
-			BlobKey:  "fake #2", BKSlice: []appengine.BlobKey{"fake #2.1", "fake #2.2"},
+			Key:         datastore.NewKey(c, "Fruit", "Banana", 0, nil),
+			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
+			KeySlice:    []*datastore.Key{datastore.NewKey(c, "Key", "", 4, nil), datastore.NewKey(c, "Key", "", 5, nil), datastore.NewKey(c, "Key", "", 6, nil)},
+			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 3, nil), nil, datastore.NewKey(c, "Number", "", 4, nil)},
+			BlobKey:     "fake #2", BKSlice: []appengine.BlobKey{"fake #2.1", "fake #2.2"},
 			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
 			Subs: []ivItemSubs{
 				{Data: "sub #2.1", Extra: "xtra #2.1"},
@@ -221,10 +224,11 @@ func initializeIvItems(c appengine.Context) {
 			ByteSlice: []byte{0xF0, 0x0D}, BSSlice: [][]byte{{0x09, 0x0A}, {0x0B, 0x0C}},
 			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, NoIndex: 3,
 			Casual: "weather", Ζεύς: "Hercules",
-			Key:      datastore.NewKey(c, "Fruit", "Cherry", 0, nil),
-			ChildKey: datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			KeySlice: []*datastore.Key{datastore.NewKey(c, "Number", "", 5, nil), nil, datastore.NewKey(c, "Number", "", 6, nil)},
-			BlobKey:  "fake #3", BKSlice: []appengine.BlobKey{"fake #3.1", "fake #3.2"},
+			Key:         datastore.NewKey(c, "Fruit", "Cherry", 0, nil),
+			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
+			KeySlice:    []*datastore.Key{datastore.NewKey(c, "Key", "", 7, nil), datastore.NewKey(c, "Key", "", 8, nil), datastore.NewKey(c, "Key", "", 9, nil)},
+			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 5, nil), nil, datastore.NewKey(c, "Number", "", 6, nil)},
+			BlobKey:     "fake #3", BKSlice: []appengine.BlobKey{"fake #3.1", "fake #3.2"},
 			Sub: ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
 			Subs: []ivItemSubs{
 				{Data: "sub #3.1", Extra: "xtra #3.1"},
@@ -360,10 +364,15 @@ func getIVItemCopy(g *Goon, index int) *ivItem {
 
 	ivi.KeySlice = []*datastore.Key{}
 	for _, key := range ivItems[index].KeySlice {
+		ivi.KeySlice = append(ivi.KeySlice, datastore.NewKey(g.context, key.Kind(), key.StringID(), key.IntID(), nil))
+	}
+
+	ivi.KeySliceNil = []*datastore.Key{}
+	for _, key := range ivItems[index].KeySliceNil {
 		if key == nil {
-			ivi.KeySlice = append(ivi.KeySlice, nil)
+			ivi.KeySliceNil = append(ivi.KeySliceNil, nil)
 		} else {
-			ivi.KeySlice = append(ivi.KeySlice, datastore.NewKey(g.context, key.Kind(), key.StringID(), key.IntID(), nil))
+			ivi.KeySliceNil = append(ivi.KeySliceNil, datastore.NewKey(g.context, key.Kind(), key.StringID(), key.IntID(), nil))
 		}
 	}
 
