@@ -50,17 +50,18 @@ type seBootstrap struct {
 	v01 *datastore.Key
 	v02 time.Time
 	v03 appengine.BlobKey
-	v04 []time.Time
-	v05 []int
-	v06 []int8
-	v07 []int16
-	v08 []int32
-	v09 []int64
-	v10 []float32
-	v11 []float64
-	v12 []bool
-	v13 []string
-	v14 [][]byte
+	v04 []*datastore.Key
+	v05 []time.Time
+	v06 []int
+	v07 []int8
+	v08 []int16
+	v09 []int32
+	v10 []int64
+	v11 []float32
+	v12 []float64
+	v13 []bool
+	v14 []string
+	v15 [][]byte
 }
 
 type serializationEncoder struct {
@@ -256,6 +257,7 @@ func bootstrapSerializationEncoder(se *serializationEncoder, updateSEBootBytes b
 	se.enc.Encode(seBoot.v12)
 	se.enc.Encode(seBoot.v13)
 	se.enc.Encode(seBoot.v14)
+	se.enc.Encode(seBoot.v15)
 
 	if updateSEBootBytes {
 		seBootBytes = make([]byte, se.buf.Len())
@@ -282,7 +284,7 @@ func bootstrapSerializationDecoder(sd *serializationDecoder) {
 	}
 
 	sd.sr.r = bytes.NewReader(seBootBytes)
-	for i := 0; i < 14; i++ {
+	for i := 0; i < 15; i++ {
 		sd.dec.Decode(nil)
 	}
 }
