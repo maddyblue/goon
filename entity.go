@@ -47,20 +47,21 @@ type structMetaData struct {
 
 // https://developers.google.com/appengine/docs/go/datastore/reference
 type seBootstrap struct {
-	v01 datastore.Key // Non-pointer on purpose
+	v01 *datastore.Key
 	v02 time.Time
 	v03 appengine.BlobKey
-	v04 []time.Time
-	v05 []int
-	v06 []int8
-	v07 []int16
-	v08 []int32
-	v09 []int64
-	v10 []float32
-	v11 []float64
-	v12 []bool
-	v13 []string
-	v14 [][]byte
+	v04 []*datastore.Key
+	v05 []time.Time
+	v06 []int
+	v07 []int8
+	v08 []int16
+	v09 []int32
+	v10 []int64
+	v11 []float32
+	v12 []float64
+	v13 []bool
+	v14 []string
+	v15 [][]byte
 }
 
 type serializationEncoder struct {
@@ -99,10 +100,32 @@ var (
 	serializationEncodersLock sync.Mutex
 	serializationDecoders     = list.New()
 	serializationDecodersLock sync.Mutex
-	seBoot                    seBootstrap
+	seBoot                    = seBootstrap{v01: &datastore.Key{}}
 	seBootBytes               []byte
 	seBootBytesLock           sync.RWMutex
 )
+
+func init() {
+	// The serialization type cache bootstrapping optimization suffers from a race condition.
+	// Because encoding/gob uses a partial global type cache of its own, it is possible that
+	// some other piece of code uses encoding/gob before we do our bootstrapping. To be exact,
+	// inconsistent use of encoding/gob with custom types before us is what causes problems.
+	// Using encoding/gob after us isn't a problem. Neither is using it before us, if the usage
+	// always happens before us. The order of usage before us only matters if the custom types
+	// match a type that we have in our bootstrapping. To mostly solve this race condition,
+	// we bootstrap a single decoder in this init() function. However a rare edge case remains
+	// where the race condition can still cause trouble for us. The requirements for it are:
+	// 1) Some other init() function has to use encoding/gob
+	// 2) Be in a package that does not import goon, nor import anything that imports goon
+	// 3) Executes before goon's init()
+	// 4) That init()'s encoding/gob usage has to either:
+	//    a) Happen inconsistently, i.e. not always happen, e.g.:
+	//       * The usage is under a conditional, e.g. only executes when the clock is 09:00
+	//       * The order in which the package is presented to the compiler gets moved after goon
+	//       * The usage is removed during a code update
+	//    b) Register a same type as us, but in an inconsistent order between multiple executions
+	freeSerializationDecoder(getSerializationDecoder([]byte{}))
+}
 
 func getFieldInfoAndMetadata(t reflect.Type) (map[string]*fieldInfo, []fieldMetadata) {
 	fieldIMLock.RLock()
@@ -234,6 +257,7 @@ func bootstrapSerializationEncoder(se *serializationEncoder, updateSEBootBytes b
 	se.enc.Encode(seBoot.v12)
 	se.enc.Encode(seBoot.v13)
 	se.enc.Encode(seBoot.v14)
+	se.enc.Encode(seBoot.v15)
 
 	if updateSEBootBytes {
 		seBootBytes = make([]byte, se.buf.Len())
@@ -251,7 +275,7 @@ func bootstrapSerializationDecoder(sd *serializationDecoder) {
 		seBootBytesLock.Lock()
 		ok = len(seBootBytes) > 0
 		if !ok {
-			buf := bytes.NewBuffer(make([]byte, 0, 4096))
+			buf := bytes.NewBuffer(make([]byte, 0, 512))
 			enc := gob.NewEncoder(buf)
 			se := &serializationEncoder{buf: buf, enc: enc}
 			bootstrapSerializationEncoder(se, true)
@@ -260,7 +284,7 @@ func bootstrapSerializationDecoder(sd *serializationDecoder) {
 	}
 
 	sd.sr.r = bytes.NewReader(seBootBytes)
-	for i := 0; i < 14; i++ {
+	for i := 0; i < 15; i++ {
 		sd.dec.Decode(nil)
 	}
 }
