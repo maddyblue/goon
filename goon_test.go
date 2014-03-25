@@ -1664,15 +1664,15 @@ func TestMemcachePutTimeout(t *testing.T) {
 	}
 
 	LogTimeoutErrors = true
-	MemcachePutTimeoutSmall = time.Nanosecond
+	MemcachePutTimeoutSmall = 0
 	MemcacheGetTimeout = time.Nanosecond
-	if err := g.putMemcache([]interface{}{hi}, []byte{0}); appengine.IsTimeoutError(err) {
+	if err := g.putMemcache([]interface{}{hi}, []byte{0}); err != nil {
 		t.Errorf("Request should not timeout due to the error being swallowed - err = %v", err)
 	}
 	MemcachePutTimeoutSmall = time.Second
 	MemcachePutTimeoutThreshold = 0
-	MemcachePutTimeoutLarge = time.Nanosecond
-	if err := g.putMemcache([]interface{}{hi}, []byte{0}); appengine.IsTimeoutError(err) {
+	MemcachePutTimeoutLarge = 0
+	if err := g.putMemcache([]interface{}{hi}, []byte{0}); err != nil {
 		t.Errorf("Request should not timeout due to the error being swallowed - err = %v", err)
 	}
 
@@ -1684,11 +1684,12 @@ func TestMemcachePutTimeout(t *testing.T) {
 	g.FlushLocalCache()
 	memcache.Flush(c)
 	// time out Get
-	MemcacheGetTimeout = time.Nanosecond
+	MemcacheGetTimeout = 0
 	// time out Put too
-	MemcachePutTimeoutSmall = time.Nanosecond
+	MemcachePutTimeoutSmall = 0
 	MemcachePutTimeoutThreshold = 0
-	MemcachePutTimeoutLarge = time.Nanosecond
+	MemcachePutTimeoutLarge = 0
+
 	hiResult := &HasId{Id: hi.Id}
 	if err := g.Get(hiResult); err != nil {
 		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
