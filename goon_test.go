@@ -1649,47 +1649,38 @@ type PutGet struct {
 	Value int32
 }
 
-func TestMemcachePutTimeout(t *testing.T) {
+func timeoutMemcacheOperations(yes bool) {
+	if yes {
+		MemcacheGetTimeout = 0
+		MemcachePutTimeoutSmall = 0
+		MemcachePutTimeoutLarge = 0
+	} else {
+		MemcacheGetTimeout = time.Second
+		MemcachePutTimeoutSmall = time.Second
+		MemcachePutTimeoutLarge = time.Second
+	}
+}
+
+func TestMemcacheTimeout(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
 		t.Fatalf("Could not start aetest - %v", err)
 	}
 	defer c.Close()
 	g := FromContext(c)
-	MemcachePutTimeoutSmall = time.Second
+
+	LogTimeoutErrors = true
+	LogErrors = true
+
 	// put a HasId resource, then test pulling it from memory, memcache, and datastore
 	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
 	if _, err := g.Put(hi); err != nil {
 		t.Errorf("put: unexpected error - %v", err)
 	}
 
-	LogTimeoutErrors = true
-	MemcachePutTimeoutSmall = 0
-	MemcacheGetTimeout = time.Nanosecond
-	if err := g.putMemcache([]interface{}{hi}, []byte{0}); err != nil {
-		t.Errorf("Request should not timeout due to the error being swallowed - err = %v", err)
-	}
-	MemcachePutTimeoutSmall = time.Second
-	MemcachePutTimeoutThreshold = 0
-	MemcachePutTimeoutLarge = 0
-	if err := g.putMemcache([]interface{}{hi}, []byte{0}); err != nil {
-		t.Errorf("Request should not timeout due to the error being swallowed - err = %v", err)
-	}
-
-	MemcachePutTimeoutLarge = time.Second
-	if err := g.putMemcache([]interface{}{hi}, []byte{0}); err != nil {
-		t.Errorf("putMemcache: unexpected error - %v", err)
-	}
-
 	g.FlushLocalCache()
 	memcache.Flush(c)
-	// time out Get
-	MemcacheGetTimeout = 0
-	// time out Put too
-	MemcachePutTimeoutSmall = 0
-	MemcachePutTimeoutThreshold = 0
-	MemcachePutTimeoutLarge = 0
-
+	timeoutMemcacheOperations(true)
 	hiResult := &HasId{Id: hi.Id}
 	if err := g.Get(hiResult); err != nil {
 		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
@@ -1699,14 +1690,49 @@ func TestMemcachePutTimeout(t *testing.T) {
 		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
 	}
 
-	hiResult = &HasId{Id: hi.Id}
+	// poison the cache, then fetch result from cache and make sure it was poisoned
 	g.FlushLocalCache()
-	MemcacheGetTimeout = time.Second
+	timeoutMemcacheOperations(false)
+	poisoned := &HasId{Id: hi.Id, Name: "poisoned"}
+	if err := g.putMemcache([]interface{}{poisoned}, []byte{1}); err != nil {
+		t.Errorf("Got error putting poisoned object - %v", err)
+	}
+
+	g.FlushLocalCache()
+	hiResult = &HasId{Id: hi.Id}
 	if err := g.Get(hiResult); err != nil {
-		t.Errorf("Request should not timeout cause we'll fetch from memcache successfully but got error %v", err)
+		t.Errorf("Request should not timeout cause but got error  %v", err)
+	}
+	if reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Result should have been poisoned but got %v instead, expected %v", hiResult, poisoned)
+	}
+
+	// now timeout the memcache Get and make sure the request goes to the
+	// non-poisoned datastore entity
+	g.FlushLocalCache()
+	timeoutMemcacheOperations(true)
+	hiResult = &HasId{Id: hi.Id}
+	if err := g.Get(hiResult); err != nil {
+		t.Errorf("Request should not timeout cause but got error  %v", err)
 	}
 	if !reflect.DeepEqual(hi, hiResult) {
-		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
+		t.Errorf("Result is poisoned, got %v instead, expected %v", hiResult, hi)
+	}
+
+	// now fix the cache, then fetch result from cache and make sure it was fixed
+	timeoutMemcacheOperations(false)
+	g.FlushLocalCache()
+	if err := g.putMemcache([]interface{}{hi}, []byte{1}); err != nil {
+		t.Errorf("Got error putting fixed object - %v", err)
+	}
+
+	g.FlushLocalCache()
+	hiResult = &HasId{Id: hi.Id}
+	if err := g.Get(hiResult); err != nil {
+		t.Errorf("Request should not timeout cause but got error  %v", err)
+	}
+	if !reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Result should have been fixed but got %v instead, expected %v", hiResult, hi)
 	}
 }
 
