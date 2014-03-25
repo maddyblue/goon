@@ -1649,65 +1649,65 @@ type PutGet struct {
 	Value int32
 }
 
-// Commenting out for issue https://code.google.com/p/googleappengine/issues/detail?id=10493
-//func TestMemcachePutTimeout(t *testing.T) {
-//	c, err := aetest.NewContext(nil)
-//	if err != nil {
-//		t.Fatalf("Could not start aetest - %v", err)
-//	}
-//	defer c.Close()
-//	g := FromContext(c)
-//	MemcachePutTimeoutSmall = time.Second
-//	// put a HasId resource, then test pulling it from memory, memcache, and datastore
-//	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
-//	if _, err := g.Put(hi); err != nil {
-//		t.Errorf("put: unexpected error - %v", err)
-//	}
+func TestMemcachePutTimeout(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+	MemcachePutTimeoutSmall = time.Second
+	// put a HasId resource, then test pulling it from memory, memcache, and datastore
+	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
+	if _, err := g.Put(hi); err != nil {
+		t.Errorf("put: unexpected error - %v", err)
+	}
 
-//	MemcachePutTimeoutSmall = 0
-//	MemcacheGetTimeout = 0
-//	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
-//		t.Errorf("Request should timeout - err = %v", err)
-//	}
-//	MemcachePutTimeoutSmall = time.Second
-//	MemcachePutTimeoutThreshold = 0
-//	MemcachePutTimeoutLarge = 0
-//	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
-//		t.Errorf("Request should timeout - err = %v", err)
-//	}
+	LogTimeoutErrors = true
+	MemcachePutTimeoutSmall = time.Nanosecond
+	MemcacheGetTimeout = time.Nanosecond
+	if err := g.putMemcache([]interface{}{hi}, []byte{0}); appengine.IsTimeoutError(err) {
+		t.Errorf("Request should not timeout due to the error being swallowed - err = %v", err)
+	}
+	MemcachePutTimeoutSmall = time.Second
+	MemcachePutTimeoutThreshold = 0
+	MemcachePutTimeoutLarge = time.Nanosecond
+	if err := g.putMemcache([]interface{}{hi}, []byte{0}); appengine.IsTimeoutError(err) {
+		t.Errorf("Request should not timeout due to the error being swallowed - err = %v", err)
+	}
 
-//	MemcachePutTimeoutLarge = time.Second
-//	if err := g.putMemcache([]interface{}{hi}); err != nil {
-//		t.Errorf("putMemcache: unexpected error - %v", err)
-//	}
+	MemcachePutTimeoutLarge = time.Second
+	if err := g.putMemcache([]interface{}{hi}, []byte{0}); err != nil {
+		t.Errorf("putMemcache: unexpected error - %v", err)
+	}
 
-//	g.FlushLocalCache()
-//	memcache.Flush(c)
-//	// time out Get
-//	MemcacheGetTimeout = 0
-//	// time out Put too
-//	MemcachePutTimeoutSmall = 0
-//	MemcachePutTimeoutThreshold = 0
-//	MemcachePutTimeoutLarge = 0
-//	hiResult := &HasId{Id: hi.Id}
-//	if err := g.Get(hiResult); err != nil {
-//		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
-//		// Put timing out should also error, but it won't be returned here, just logged
-//	}
-//	if !reflect.DeepEqual(hi, hiResult) {
-//		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
-//	}
+	g.FlushLocalCache()
+	memcache.Flush(c)
+	// time out Get
+	MemcacheGetTimeout = time.Nanosecond
+	// time out Put too
+	MemcachePutTimeoutSmall = time.Nanosecond
+	MemcachePutTimeoutThreshold = 0
+	MemcachePutTimeoutLarge = time.Nanosecond
+	hiResult := &HasId{Id: hi.Id}
+	if err := g.Get(hiResult); err != nil {
+		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
+		// Put timing out should also error, but it won't be returned here, just logged
+	}
+	if !reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
+	}
 
-//	hiResult = &HasId{Id: hi.Id}
-//	g.FlushLocalCache()
-//	MemcacheGetTimeout = time.Second
-//	if err := g.Get(hiResult); err != nil {
-//		t.Errorf("Request should not timeout cause we'll fetch from memcache successfully but got error %v", err)
-//	}
-//	if !reflect.DeepEqual(hi, hiResult) {
-//		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
-//	}
-//}
+	hiResult = &HasId{Id: hi.Id}
+	g.FlushLocalCache()
+	MemcacheGetTimeout = time.Second
+	if err := g.Get(hiResult); err != nil {
+		t.Errorf("Request should not timeout cause we'll fetch from memcache successfully but got error %v", err)
+	}
+	if !reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
+	}
+}
 
 // This test won't fail but if run with -race flag, it will show known race conditions
 // Using multiple goroutines per http request is recommended here:
