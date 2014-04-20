@@ -1651,9 +1651,9 @@ type PutGet struct {
 
 func timeoutMemcacheOperations(yes bool) {
 	if yes {
-		MemcacheGetTimeout = 0
-		MemcachePutTimeoutSmall = 0
-		MemcachePutTimeoutLarge = 0
+		MemcacheGetTimeout = 1
+		MemcachePutTimeoutSmall = 1
+		MemcachePutTimeoutLarge = 1
 	} else {
 		MemcacheGetTimeout = time.Second
 		MemcachePutTimeoutSmall = time.Second
