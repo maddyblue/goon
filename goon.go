@@ -17,6 +17,7 @@
 package goon
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -59,7 +60,8 @@ type Goon struct {
 }
 
 func memkey(k *datastore.Key) string {
-	return k.Encode()
+	// Versioning, so that incompatible changes to the cache system won't cause problems
+	return "g2:" + k.Encode()
 }
 
 // NewGoon creates a new Goon object from the given request.
@@ -259,9 +261,12 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	return keys, nil
 }
 
-func (g *Goon) putMemoryMulti(src interface{}) {
+func (g *Goon) putMemoryMulti(src interface{}, exists []byte) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	for i := 0; i < v.Len(); i++ {
+		if exists[i] == 0 {
+			continue
+		}
 		g.putMemory(v.Index(i).Interface())
 	}
 }
@@ -280,11 +285,15 @@ func (g *Goon) FlushLocalCache() {
 	g.cacheLock.Unlock()
 }
 
-func (g *Goon) putMemcache(srcs []interface{}) error {
+func (g *Goon) putMemcache(srcs []interface{}, exists []byte) error {
 	items := make([]*memcache.Item, len(srcs))
 	payloadSize := 0
 	for i, src := range srcs {
-		gob, err := toGob(src)
+		toSerialize := src
+		if exists[i] == 0 {
+			toSerialize = nil
+		}
+		data, err := serializeStruct(toSerialize)
 		if err != nil {
 			g.error(err)
 			return err
@@ -294,10 +303,10 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 			return err
 		}
 		// payloadSize will overflow if we push 2+ gigs on a 32bit machine
-		payloadSize += len(gob)
+		payloadSize += len(data)
 		items[i] = &memcache.Item{
 			Key:   memkey(key),
-			Value: gob,
+			Value: data,
 		}
 	}
 	memcacheTimeout := MemcachePutTimeoutSmall
@@ -308,7 +317,7 @@ func (g *Goon) putMemcache(srcs []interface{}) error {
 	go func() {
 		errc <- memcache.SetMulti(appengine.Timeout(g.context, memcacheTimeout), items)
 	}()
-	g.putMemoryMulti(srcs)
+	g.putMemoryMulti(srcs, exists)
 	err := <-errc
 	if appengine.IsTimeoutError(err) {
 		g.timeoutError(err)
@@ -398,6 +407,8 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		return nil
 	}
 
+	multiErr, any := make(appengine.MultiError, len(keys)), false
+
 	memvalues, err := memcache.GetMulti(appengine.Timeout(g.context, MemcacheGetTimeout), memkeys)
 	if appengine.IsTimeoutError(err) {
 		g.timeoutError(err)
@@ -419,13 +430,16 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				d = v.Index(mixs[i]).Addr().Interface()
 			}
 			if s, present := memvalues[m]; present {
-				err := fromGob(d, s.Value)
-				if err != nil {
+				err := deserializeStruct(d, s.Value)
+				if err == datastore.ErrNoSuchEntity {
+					any = true // this flag tells GetMulti to return multiErr later
+					multiErr[mixs[i]] = err
+				} else if err != nil {
 					g.error(err)
 					return err
+				} else {
+					g.putMemory(d)
 				}
-
-				g.putMemory(d)
 			} else {
 				dskeys = append(dskeys, keys[mixs[i]])
 				dsdst = append(dsdst, d)
@@ -433,11 +447,13 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			}
 		}
 		if len(dskeys) == 0 {
+			if any {
+				return realError(multiErr)
+			}
 			return nil
 		}
 	}
 
-	multiErr, any := make(appengine.MultiError, len(keys)), false
 	goroutines := (len(dskeys)-1)/getMultiLimit + 1
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
@@ -445,6 +461,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		go func(i int) {
 			defer wg.Done()
 			var toCache []interface{}
+			var exists []byte
 			lo := i * getMultiLimit
 			hi := (i + 1) * getMultiLimit
 			if hi > len(dskeys) {
@@ -464,15 +481,21 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				for i, idx := range dixs[lo:hi] {
 					if merr[i] == nil {
 						toCache = append(toCache, dsdst[lo+i])
+						exists = append(exists, 1)
 					} else {
+						if merr[i] == datastore.ErrNoSuchEntity {
+							toCache = append(toCache, dsdst[lo+i])
+							exists = append(exists, 0)
+						}
 						multiErr[idx] = merr[i]
 					}
 				}
 			} else {
 				toCache = append(toCache, dsdst[lo:hi]...)
+				exists = append(exists, bytes.Repeat([]byte{1}, hi-lo)...)
 			}
 			if len(toCache) > 0 {
-				if err := g.putMemcache(toCache); err != nil {
+				if err := g.putMemcache(toCache, exists); err != nil {
 					g.error(err)
 					// since putMemcache() gives no guarantee it will actually store the data in memcache
 					// we log and swallow this error
