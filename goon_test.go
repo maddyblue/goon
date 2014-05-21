@@ -17,6 +17,8 @@
 package goon
 
 import (
+	"bytes"
+	"encoding/gob"
 	"reflect"
 	"sync"
 	"testing"
@@ -1877,4 +1879,93 @@ func TestMultis(t *testing.T) {
 			t.Errorf("Did not return a multierror on fetch but when fetching %d objects, received - %v", x, merr)
 		}
 	}
+}
+
+type Container struct {
+	Id      int64         `datastore:"-" goon:"id"`
+	Entry   interface{}   `datastore:"-"`
+	Entries []interface{} `datastore:"-"`
+}
+
+func (x *Container) Load(c <-chan datastore.Property) error {
+	for {
+		prop := <-c
+		if prop.Name == "" {
+			return nil
+		}
+		switch prop.Name {
+		case "Gob":
+			if err := gob.NewDecoder(bytes.NewReader(prop.Value.([]byte))).Decode(x); err != nil {
+				return err
+			}
+		default:
+			// skip, it'll get loaded in the Gob
+		}
+	}
+}
+
+func (x *Container) Save(c chan<- datastore.Property) error {
+	var data bytes.Buffer
+	err := gob.NewEncoder(&data).Encode(x)
+	if err != nil {
+		close(c)
+		return err
+	}
+	c <- datastore.Property{
+		Name:    "Gob",
+		Value:   data.Bytes(),
+		NoIndex: true,
+	}
+	return datastore.SaveStruct(x, c)
+}
+
+type InterfaceImpl struct {
+	Index int
+}
+
+func init() {
+	gob.Register(InterfaceImpl{})
+}
+
+func TestInterfaceTypes(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	n := FromContext(c)
+	container := &Container{Entry: InterfaceImpl{1}, Entries: []interface{}{InterfaceImpl{2}, InterfaceImpl{3}}}
+	_, err = n.Put(container)
+	if err != nil {
+		t.Fatalf("Err is - %v", err)
+	}
+	t.Log("Put Container")
+	tempContainer := &Container{Id: container.Id}
+	err = n.Get(tempContainer)
+	if err != nil {
+		t.Fatalf("Err is - %v", err)
+	}
+	if !reflect.DeepEqual(container, tempContainer) {
+		t.Errorf("Expected %#v, got %#v", container, tempContainer)
+	}
+	t.Log("Got Container from Datastore")
+	tempContainer = &Container{Id: container.Id}
+	err = n.Get(tempContainer)
+	if err != nil {
+		t.Fatalf("Err is - %v", err)
+	}
+	if !reflect.DeepEqual(container, tempContainer) {
+		t.Errorf("Expected %#v, got %#v", container, tempContainer)
+	}
+	t.Log("Got Container from local cache")
+	n.FlushLocalCache()
+	tempContainer = &Container{Id: container.Id}
+	err = n.Get(tempContainer)
+	if err != nil {
+		t.Fatalf("Err is - %v", err)
+	}
+	if !reflect.DeepEqual(container, tempContainer) {
+		t.Errorf("Expected %#v, got %#v", container, tempContainer)
+	}
+	t.Log("Got Container from memcache")
 }
