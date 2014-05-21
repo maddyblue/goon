@@ -19,6 +19,7 @@ package goon
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -1939,22 +1940,24 @@ func TestInterfaceTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Err is - %v", err)
 	}
-	t.Log("Put Container")
+	good := fmt.Sprintf("%#v", container)
+	t.Log("Put Container - %s", good)
 	tempContainer := &Container{Id: container.Id}
 	err = n.Get(tempContainer)
 	if err != nil {
 		t.Fatalf("Err is - %v", err)
 	}
-	if !reflect.DeepEqual(container, tempContainer) {
+	c.Debugf("Got %#v from Datastore", tempContainer)
+	if fmt.Sprintf("%#v", tempContainer) != good {
 		t.Errorf("Expected %#v, got %#v", container, tempContainer)
 	}
-	t.Log("Got Container from Datastore")
 	tempContainer = &Container{Id: container.Id}
 	err = n.Get(tempContainer)
 	if err != nil {
 		t.Fatalf("Err is - %v", err)
 	}
-	if !reflect.DeepEqual(container, tempContainer) {
+	c.Debugf("Got %#v from Datastore", tempContainer)
+	if fmt.Sprintf("%#v", tempContainer) != good {
 		t.Errorf("Expected %#v, got %#v", container, tempContainer)
 	}
 	t.Log("Got Container from local cache")
@@ -1964,7 +1967,8 @@ func TestInterfaceTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Err is - %v", err)
 	}
-	if !reflect.DeepEqual(container, tempContainer) {
+	c.Debugf("Got %#v from Datastore", tempContainer)
+	if fmt.Sprintf("%#v", tempContainer) != good {
 		t.Errorf("Expected %#v, got %#v", container, tempContainer)
 	}
 	t.Log("Got Container from memcache")
