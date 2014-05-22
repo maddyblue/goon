@@ -1882,9 +1882,9 @@ func TestMultis(t *testing.T) {
 }
 
 type Container struct {
-	Id      int64         `datastore:"-" goon:"id"`
-	Entry   interface{}   `datastore:"-"`
-	Entries []interface{} `datastore:"-"`
+	Id      int64 `datastore:"-" goon:"id"`
+	Entry   interface{}
+	Entries []interface{}
 }
 
 func (x *Container) Load(c <-chan datastore.Property) error {
@@ -1907,8 +1907,8 @@ func (x *Container) Load(c <-chan datastore.Property) error {
 func (x *Container) Save(c chan<- datastore.Property) error {
 	var data bytes.Buffer
 	err := gob.NewEncoder(&data).Encode(x)
+	defer close(c)
 	if err != nil {
-		close(c)
 		return err
 	}
 	c <- datastore.Property{
@@ -1916,7 +1916,7 @@ func (x *Container) Save(c chan<- datastore.Property) error {
 		Value:   data.Bytes(),
 		NoIndex: true,
 	}
-	return datastore.SaveStruct(x, c)
+	return nil
 }
 
 type InterfaceImpl struct {
