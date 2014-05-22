@@ -770,7 +770,7 @@ type MigrationA struct {
 	Car       string            `datastore:"car,noindex"`
 	Holiday   time.Time         `datastore:"holiday,noindex"`
 	α         int               `datastore:",noindex"`
-	Level     MigrationIntA     `datastore:"level,noindex`
+	Level     MigrationIntA     `datastore:"level,noindex"`
 	Floor     MigrationIntA     `datastore:"floor,noindex"`
 	Sub       MigrationSub      `datastore:"sub,noindex"`
 	Son       MigrationPerson   `datastore:"son,noindex"`
@@ -830,7 +830,7 @@ type MigrationB struct {
 	Cars           []string          `datastore:"car,noindex"`
 	Holidays       []time.Time       `datastore:"holiday,noindex"`
 	β              int               `datastore:"α,noindex"`
-	Level          MigrationIntB     `datastore:"level,noindex`
+	Level          MigrationIntB     `datastore:"level,noindex"`
 	Floors         []MigrationIntB   `datastore:"floor,noindex"`
 	Animal         string            `datastore:"sub.data,noindex"`
 	Music          []int             `datastore:"sub.noise,noindex"`
@@ -1091,7 +1091,7 @@ func TestGoon(t *testing.T) {
 
 	for _, kt := range keyTests {
 		if k, err := n.KeyError(kt.obj); err != nil {
-			t.Errorf("error:", err)
+			t.Errorf("error: %v", err)
 		} else if !k.Equal(kt.key) {
 			t.Errorf("keys not equal")
 		}
