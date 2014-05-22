@@ -230,9 +230,11 @@ func serializeStructMetaData(buf []byte, smd *structMetaData) {
 		copy(buf[pos:], metaData)
 		pos += len(metaData)
 		buf[pos] = '+'
-		pos += 1
+		pos++
 	}
-	buf[pos-1] = '|'
+	if pos > 0 {
+		buf[pos-1] = '|'
+	}
 }
 
 // deserializeStructMetaData is a fast decoder of struct metadata, which doesn't depend on gob.
