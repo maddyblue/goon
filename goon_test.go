@@ -19,7 +19,6 @@ package goon
 import (
 	"bytes"
 	"encoding/gob"
-	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -1925,7 +1924,7 @@ type InterfaceImpl struct {
 }
 
 func init() {
-	gob.Register(InterfaceImpl{})
+	gob.Register(&InterfaceImpl{})
 }
 
 func TestInterfaceTypes(t *testing.T) {
@@ -1935,41 +1934,35 @@ func TestInterfaceTypes(t *testing.T) {
 	}
 	defer c.Close()
 	n := FromContext(c)
-	container := &Container{Entry: InterfaceImpl{1}, Entries: []interface{}{InterfaceImpl{2}, InterfaceImpl{3}}}
+	container := &Container{Entry: &InterfaceImpl{1}, Entries: []interface{}{&InterfaceImpl{2}, &InterfaceImpl{3}}}
 	_, err = n.Put(container)
 	if err != nil {
 		t.Fatalf("Err is - %v", err)
 	}
-	good := fmt.Sprintf("%#v", container)
-	t.Log("Put Container - %s", good)
+	n.FlushLocalCache()
 	tempContainer := &Container{Id: container.Id}
 	err = n.Get(tempContainer)
 	if err != nil {
 		t.Fatalf("Err is - %v", err)
 	}
-	c.Debugf("Got %#v from Datastore", tempContainer)
-	if fmt.Sprintf("%#v", tempContainer) != good {
+	if !reflect.DeepEqual(container, tempContainer) {
 		t.Errorf("Expected %#v, got %#v", container, tempContainer)
 	}
-	tempContainer = &Container{Id: container.Id}
-	err = n.Get(tempContainer)
-	if err != nil {
-		t.Fatalf("Err is - %v", err)
-	}
-	c.Debugf("Got %#v from Datastore", tempContainer)
-	if fmt.Sprintf("%#v", tempContainer) != good {
-		t.Errorf("Expected %#v, got %#v", container, tempContainer)
-	}
-	t.Log("Got Container from local cache")
 	n.FlushLocalCache()
 	tempContainer = &Container{Id: container.Id}
 	err = n.Get(tempContainer)
 	if err != nil {
 		t.Fatalf("Err is - %v", err)
 	}
-	c.Debugf("Got %#v from Datastore", tempContainer)
-	if fmt.Sprintf("%#v", tempContainer) != good {
+	if !reflect.DeepEqual(container, tempContainer) {
 		t.Errorf("Expected %#v, got %#v", container, tempContainer)
 	}
-	t.Log("Got Container from memcache")
+	tempContainer = &Container{Id: container.Id}
+	err = n.Get(tempContainer)
+	if err != nil {
+		t.Fatalf("Err is - %v", err)
+	}
+	if !reflect.DeepEqual(container, tempContainer) {
+		t.Errorf("Expected %#v, got %#v", container, tempContainer)
+	}
 }
