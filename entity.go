@@ -225,9 +225,6 @@ func generateFieldInfoAndMetadata(t reflect.Type, namePrefix string, indexPrefix
 // serializeStructMetaData is a fast encoder of struct metadata, which doesn't depend on gob.
 // Struct metadata is just a slice of strings, which this function converts into a series of bytes.
 func serializeStructMetaData(buf []byte, smd *structMetaData) {
-	if len(buf) == 0 {
-		return
-	}
 	pos := 0
 	for _, metaData := range smd.metaDatas {
 		copy(buf[pos:], metaData)
@@ -235,7 +232,9 @@ func serializeStructMetaData(buf []byte, smd *structMetaData) {
 		buf[pos] = '+'
 		pos++
 	}
-	buf[pos-1] = '|'
+	if pos > 0 {
+		buf[pos-1] = '|'
+	}
 }
 
 // deserializeStructMetaData is a fast decoder of struct metadata, which doesn't depend on gob.
