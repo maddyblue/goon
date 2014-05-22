@@ -1927,7 +1927,7 @@ func init() {
 	gob.Register(&InterfaceImpl{})
 }
 
-func TestInterfaceTypes(t *testing.T) {
+func TestPropertyLoadSaver(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {
 		t.Fatalf("Could not start aetest - %v", err)
