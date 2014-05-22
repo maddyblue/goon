@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"sync"
 	"time"
 
@@ -81,7 +83,12 @@ func (g *Goon) error(err error) {
 	if !LogErrors {
 		return
 	}
-	g.context.Errorf("goon: %v", err)
+	_, filename, line, ok := runtime.Caller(1)
+	if ok {
+		g.context.Errorf("goon - %s:%d - %v", filepath.Base(filename), line, err)
+	} else {
+		g.context.Errorf("goon - %v", err)
+	}
 }
 
 func (g *Goon) timeoutError(err error) {
