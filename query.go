@@ -25,7 +25,7 @@ import (
 
 // Count returns the number of results for the query.
 func (g *Goon) Count(q *datastore.Query) (int, error) {
-	return q.Count(g.context)
+	return q.Count(g.Context)
 }
 
 // GetAll runs the query and returns all the keys that match the query, as well
@@ -54,7 +54,7 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 		vLenBefore = v.Len()
 	}
 
-	keys, err := q.GetAll(g.context, dst)
+	keys, err := q.GetAll(g.Context, dst)
 	if err != nil {
 		g.error(err)
 		return nil, err
@@ -120,7 +120,7 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 func (g *Goon) Run(q *datastore.Query) *Iterator {
 	return &Iterator{
 		g: g,
-		i: q.Run(g.context),
+		i: q.Run(g.Context),
 	}
 }
 
