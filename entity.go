@@ -755,7 +755,7 @@ func (g *Goon) getStructKey(src interface{}) (key *datastore.Key, hasStringId bo
 	if kind == "" {
 		kind = typeName(src)
 	}
-	key = datastore.NewKey(g.context, kind, stringID, intID, parent)
+	key = datastore.NewKey(g.Context, kind, stringID, intID, parent)
 	return
 }
 

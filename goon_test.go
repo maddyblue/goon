@@ -356,15 +356,15 @@ func getIVItemCopy(g *Goon, index int) *ivItem {
 		ivi.TimeSlice = append(ivi.TimeSlice, v)
 	}
 
-	ivi.Key = datastore.NewKey(g.context, ivItems[index].Key.Kind(), ivItems[index].Key.StringID(), ivItems[index].Key.IntID(), nil)
+	ivi.Key = datastore.NewKey(g.Context, ivItems[index].Key.Kind(), ivItems[index].Key.StringID(), ivItems[index].Key.IntID(), nil)
 
-	ivi.ChildKey = datastore.NewKey(g.context, ivItems[index].ChildKey.Kind(), ivItems[index].ChildKey.StringID(), ivItems[index].ChildKey.IntID(),
-		datastore.NewKey(g.context, ivItems[index].ChildKey.Parent().Kind(), ivItems[index].ChildKey.Parent().StringID(), ivItems[index].ChildKey.Parent().IntID(),
-			datastore.NewKey(g.context, ivItems[index].ChildKey.Parent().Parent().Kind(), ivItems[index].ChildKey.Parent().Parent().StringID(), ivItems[index].ChildKey.Parent().Parent().IntID(), nil)))
+	ivi.ChildKey = datastore.NewKey(g.Context, ivItems[index].ChildKey.Kind(), ivItems[index].ChildKey.StringID(), ivItems[index].ChildKey.IntID(),
+		datastore.NewKey(g.Context, ivItems[index].ChildKey.Parent().Kind(), ivItems[index].ChildKey.Parent().StringID(), ivItems[index].ChildKey.Parent().IntID(),
+			datastore.NewKey(g.Context, ivItems[index].ChildKey.Parent().Parent().Kind(), ivItems[index].ChildKey.Parent().Parent().StringID(), ivItems[index].ChildKey.Parent().Parent().IntID(), nil)))
 
 	ivi.KeySlice = []*datastore.Key{}
 	for _, key := range ivItems[index].KeySlice {
-		ivi.KeySlice = append(ivi.KeySlice, datastore.NewKey(g.context, key.Kind(), key.StringID(), key.IntID(), nil))
+		ivi.KeySlice = append(ivi.KeySlice, datastore.NewKey(g.Context, key.Kind(), key.StringID(), key.IntID(), nil))
 	}
 
 	ivi.KeySliceNil = []*datastore.Key{}
@@ -372,7 +372,7 @@ func getIVItemCopy(g *Goon, index int) *ivItem {
 		if key == nil {
 			ivi.KeySliceNil = append(ivi.KeySliceNil, nil)
 		} else {
-			ivi.KeySliceNil = append(ivi.KeySliceNil, datastore.NewKey(g.context, key.Kind(), key.StringID(), key.IntID(), nil))
+			ivi.KeySliceNil = append(ivi.KeySliceNil, datastore.NewKey(g.Context, key.Kind(), key.StringID(), key.IntID(), nil))
 		}
 	}
 
@@ -531,7 +531,7 @@ func ivWipe(t *testing.T, g *Goon, prettyInfo string) {
 
 	// Make sure the caches are clear, so any caching is done by our specific test
 	g.FlushLocalCache()
-	memcache.Flush(g.context)
+	memcache.Flush(g.Context)
 }
 
 func ivGetMulti(t *testing.T, g *Goon, ref, dst interface{}, prettyInfo string) error {
@@ -595,7 +595,7 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 
 	// Clear the caches, as we're going to precisely set the caches via Get
 	g.FlushLocalCache()
-	memcache.Flush(g.context)
+	memcache.Flush(g.Context)
 
 	// Set the caches into proper state based on given mode
 	switch mode {
@@ -666,12 +666,12 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 	switch mode {
 	case ivModeDatastore:
 		g.FlushLocalCache()
-		memcache.Flush(g.context)
+		memcache.Flush(g.Context)
 	case ivModeLocalcache:
 		// Entities already in local cache
 	case ivModeLocalcacheAndDatastore:
 		g.FlushLocalCache()
-		memcache.Flush(g.context)
+		memcache.Flush(g.Context)
 
 		subSrc := getInputVarietySrc(t, g, srcType, 0)
 
@@ -730,7 +730,7 @@ func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode in
 	switch mode {
 	case ivModeDatastore:
 		g.FlushLocalCache()
-		memcache.Flush(g.context)
+		memcache.Flush(g.Context)
 	}
 
 	// Get our data back and make sure it's correct
@@ -1204,7 +1204,7 @@ func TestGoon(t *testing.T) {
 
 	hi4 := &HasId{Id: hi.Id}
 	delete(n.cache, memkey(n.Key(hi4)))
-	if memcache.Flush(n.context) != nil {
+	if memcache.Flush(n.Context) != nil {
 		t.Errorf("Unable to flush memcache")
 	}
 	if err := n.Get(hi4); err != nil {
