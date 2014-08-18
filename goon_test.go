@@ -1267,12 +1267,14 @@ func TestGoon(t *testing.T) {
 	}
 
 	// Create some entities that we will query for
-	if _, err := n.PutMulti([]*QueryItem{{Id: 1, Data: "one"}, {Id: 2, Data: "two"}}); err != nil {
+	if getKeys, err := n.PutMulti([]*QueryItem{{Id: 1, Data: "one"}, {Id: 2, Data: "two"}}); err != nil {
 		t.Errorf("PutMulti: unexpected error: %v", err)
+	} else {
+		// do a datastore Get by *Key so that data is written to the datstore and indexes generated before subsequent query
+		if err := datastore.GetMulti(c, getKeys, make([]QueryItem, 2)); err != nil {
+			t.Error(err)
+		}
 	}
-
-	// Sleep a bit to wait for the HRD emulation to get out of our way
-	time.Sleep(1000 * time.Millisecond)
 
 	// Clear the local memory cache, because we want to test it being filled correctly by GetAll
 	n.FlushLocalCache()
