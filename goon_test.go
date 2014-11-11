@@ -955,6 +955,104 @@ func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, debugInfo string) 
 	}
 }
 
+func TestTXNRace(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+
+	// Create & store some test data
+	hid := &HasId{Id: 1, Name: "foo"}
+	if _, err := g.Put(hid); err != nil {
+		t.Errorf("Unexpected error on Put %v", err)
+	}
+
+	// Get this data back, to populate caches
+	if err := g.Get(hid); err != nil {
+		t.Errorf("Unexpected error on Get %v", err)
+	}
+
+	// Clear the local cache, as we are testing for proper memcache usage
+	g.FlushLocalCache()
+
+	// Update the test data inside a transction
+	if err := g.RunInTransaction(func(tg *Goon) error {
+		// Get the current data
+		thid := &HasId{Id: 1}
+		if err := tg.Get(thid); err != nil {
+			t.Errorf("Unexpected error on TXN Get %v", err)
+			return err
+		}
+
+		// Update the data
+		thid.Name = "bar"
+		if _, err := tg.Put(thid); err != nil {
+			t.Errorf("Unexpected error on TXN Put %v", err)
+			return err
+		}
+
+		// Concurrent request emulation
+		//   We are running this inside the transaction block to always get the correct timing for testing.
+		//   In the real world, this concurrent request may run in another instance.
+		//   The transaction block may contain multiple other operations after the preceding Put(),
+		//   allowing for ample time for the concurrent request to run before the transaction is committed.
+		if err := g.Get(hid); err != nil {
+			t.Errorf("Unexpected error on Get %v", err)
+		} else if hid.Name != "foo" {
+			t.Errorf("Expected 'foo', got %v", hid.Name)
+		}
+
+		// Commit the transaction
+		return nil
+	}, &datastore.TransactionOptions{XG: false}); err != nil {
+		t.Errorf("Unexpected error with TXN - %v", err)
+	}
+
+	// Clear the local cache, as we are testing for proper memcache usage
+	g.FlushLocalCache()
+
+	// Get the data back again, to confirm it was changed in the transaction
+	if err := g.Get(hid); err != nil {
+		t.Errorf("Unexpected error on Get %v", err)
+	} else if hid.Name != "bar" {
+		t.Errorf("Expected 'bar', got %v", hid.Name)
+	}
+
+	// Clear the local cache, as we are testing for proper memcache usage
+	g.FlushLocalCache()
+
+	// Delete the test data inside a transction
+	if err := g.RunInTransaction(func(tg *Goon) error {
+		thid := &HasId{Id: 1}
+		if err := tg.Delete(tg.Key(thid)); err != nil {
+			t.Errorf("Unexpected error on TXN Delete %v", err)
+			return err
+		}
+
+		// Concurrent request emulation
+		if err := g.Get(hid); err != nil {
+			t.Errorf("Unexpected error on Get %v", err)
+		} else if hid.Name != "bar" {
+			t.Errorf("Expected 'bar', got %v", hid.Name)
+		}
+
+		// Commit the transaction
+		return nil
+	}, &datastore.TransactionOptions{XG: false}); err != nil {
+		t.Errorf("Unexpected error with TXN - %v", err)
+	}
+
+	// Clear the local cache, as we are testing for proper memcache usage
+	g.FlushLocalCache()
+
+	// Attempt to get the data back again, to confirm it was deleted in the transaction
+	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
+		t.Errorf("Expected ErrNoSuchEntity, got %v", err)
+	}
+}
+
 func TestNegativeCacheHit(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {

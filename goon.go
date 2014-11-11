@@ -59,6 +59,7 @@ type Goon struct {
 	inTransaction bool
 	toSet         map[string]interface{}
 	toDelete      map[string]bool
+	toDeleteMC    map[string]bool
 }
 
 func memkey(k *datastore.Key) string {
@@ -158,11 +159,20 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			inTransaction: true,
 			toSet:         make(map[string]interface{}),
 			toDelete:      make(map[string]bool),
+			toDeleteMC:    make(map[string]bool),
 		}
 		return f(ng)
 	}, opts)
 
 	if err == nil {
+		if len(ng.toDeleteMC) > 0 {
+			var memkeys []string
+			for k := range ng.toDeleteMC {
+				memkeys = append(memkeys, k)
+			}
+			memcache.DeleteMulti(g.Context, memkeys)
+		}
+
 		g.cacheLock.Lock()
 		defer g.cacheLock.Unlock()
 		for k, v := range ng.toSet {
@@ -212,8 +222,16 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 		}
 	}
 
-	// Memcache needs to be updated after the datastore to prevent a common race condition
-	defer memcache.DeleteMulti(g.Context, memkeys)
+	// Memcache needs to be updated after the datastore to prevent a common race condition,
+	// where a concurrent request will fetch the not-yet-updated data from the datastore
+	// and populate memcache with it.
+	if g.inTransaction {
+		for _, mk := range memkeys {
+			g.toDeleteMC[mk] = true
+		}
+	} else {
+		defer memcache.DeleteMulti(g.Context, memkeys)
+	}
 
 	v := reflect.Indirect(reflect.ValueOf(src))
 	multiErr, any := make(appengine.MultiError, len(keys)), false
@@ -583,8 +601,16 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	}
 	g.cacheLock.Unlock()
 
-	// Memcache needs to be updated after the datastore to prevent a common race condition
-	defer memcache.DeleteMulti(g.Context, memkeys)
+	// Memcache needs to be updated after the datastore to prevent a common race condition,
+	// where a concurrent request will fetch the not-yet-updated data from the datastore
+	// and populate memcache with it.
+	if g.inTransaction {
+		for _, mk := range memkeys {
+			g.toDeleteMC[mk] = true
+		}
+	} else {
+		defer memcache.DeleteMulti(g.Context, memkeys)
+	}
 
 	multiErr, any := make(appengine.MultiError, len(keys)), false
 	goroutines := (len(keys)-1)/deleteMultiLimit + 1
