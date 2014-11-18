@@ -103,7 +103,7 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 			e = vi.Addr().Interface()
 		}
 
-		if err := setStructKey(e, k); err != nil {
+		if err := g.setStructKey(e, k); err != nil {
 			return nil, err
 		}
 
@@ -157,7 +157,7 @@ func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
 
 	if dst != nil {
 		// Update the struct to have correct key info
-		setStructKey(dst, k)
+		t.g.setStructKey(dst, k)
 
 		if !t.g.inTransaction {
 			t.g.cacheLock.Lock()
