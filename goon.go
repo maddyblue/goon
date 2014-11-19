@@ -60,6 +60,9 @@ type Goon struct {
 	toSet         map[string]interface{}
 	toDelete      map[string]bool
 	toDeleteMC    map[string]bool
+	// KindNameResolver is used to determine what Kind to give an Entity.
+	// Defaults to DefaultKindName
+	KindNameResolver KindNameResolver
 }
 
 func memkey(k *datastore.Key) string {
@@ -75,8 +78,9 @@ func NewGoon(r *http.Request) *Goon {
 // FromContext creates a new Goon object from the given appengine Context.
 func FromContext(c appengine.Context) *Goon {
 	return &Goon{
-		Context: c,
-		cache:   make(map[string]interface{}),
+		Context:          c,
+		cache:            make(map[string]interface{}),
+		KindNameResolver: DefaultKindName,
 	}
 }
 
@@ -160,6 +164,7 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			toSet:         make(map[string]interface{}),
 			toDelete:      make(map[string]bool),
 			toDeleteMC:    make(map[string]bool),
+			KindNameResolver: DefaultKindName,
 		}
 		return f(ng)
 	}, opts)
@@ -266,7 +271,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 				}
 				vi := v.Index(lo + i).Interface()
 				if key.Incomplete() {
-					setStructKey(vi, rkeys[i])
+					g.setStructKey(vi, rkeys[i])
 					keys[i] = rkeys[i]
 				}
 				if g.inTransaction {

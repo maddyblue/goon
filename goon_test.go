@@ -1906,6 +1906,51 @@ func TestPutGet(t *testing.T) {
 	}
 }
 
+func prefixKindName(src interface{}) string {
+	return "prefix." + DefaultKindName(src)
+}
+
+func TestCustomKindName(t *testing.T) {
+	opts := &aetest.Options{StronglyConsistentDatastore: true}
+	c, err := aetest.NewContext(opts)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
+
+	hi := HasId{Name: "Foo"}
+
+	//gate
+	if kind := g.Kind(hi); kind != "HasId" {
+		t.Fatal("HasId King should not have a prefix, but instead is, ", kind)
+	}
+
+	g.KindNameResolver = prefixKindName
+
+	if kind := g.Kind(hi); kind != "prefix.HasId" {
+		t.Fatal("HasId King should have a prefix, but instead is, ", kind)
+	}
+
+	_, err = g.Put(&hi)
+
+	if err != nil {
+		t.Fatal("Should be able to put a record: ", err)
+	}
+
+	reget1 := []HasId{}
+	query := datastore.NewQuery("prefix.HasId")
+	query.GetAll(c, &reget1)
+
+	if len(reget1) != 1 {
+		t.Fatal("Should have 1 record stored in datastore ", reget1)
+	}
+
+	if reget1[0].Name != "Foo" {
+		t.Fatal("Name should be Foo ", reget1[0].Name)
+	}
+}
+
 func TestMultis(t *testing.T) {
 	c, err := aetest.NewContext(nil)
 	if err != nil {

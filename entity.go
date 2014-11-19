@@ -45,6 +45,10 @@ type structMetaData struct {
 	totalLength int
 }
 
+// KindNameResolver takes an Entity and returns what the Kind should be for
+// Datastore.
+type KindNameResolver func(src interface{}) string
+
 // A special bootstrapping struct that contains all the datastore-supported types
 // that need to be registered with gob. Using this to initialize every encoder/decoder,
 // we get reusable encoders/decoders. Additionally, this cuts down on the serialized bytes length.
@@ -753,20 +757,22 @@ func (g *Goon) getStructKey(src interface{}) (key *datastore.Key, hasStringId bo
 
 	// if kind has not been manually set, fetch it from src's type
 	if kind == "" {
-		kind = typeName(src)
+		kind = g.KindNameResolver(src)
 	}
 	key = datastore.NewKey(g.Context, kind, stringID, intID, parent)
 	return
 }
 
-func typeName(src interface{}) string {
+// DefaultKindName is the default implementation to determine the Kind
+// an Entity has. Returns the basic Type of the src (no package name included).
+func DefaultKindName(src interface{}) string {
 	v := reflect.ValueOf(src)
 	v = reflect.Indirect(v)
 	t := v.Type()
 	return t.Name()
 }
 
-func setStructKey(src interface{}, key *datastore.Key) error {
+func (g *Goon) setStructKey(src interface{}, key *datastore.Key) error {
 	v := reflect.ValueOf(src)
 	t := v.Type()
 	k := t.Kind()
@@ -816,7 +822,7 @@ func setStructKey(src interface{}, key *datastore.Key) error {
 					return fmt.Errorf("goon: Only one field may be marked kind")
 				}
 				if vf.Kind() == reflect.String {
-					if (len(tagValues) <= 1 || key.Kind() != tagValues[1]) && typeName(src) != key.Kind() {
+					if (len(tagValues) <= 1 || key.Kind() != tagValues[1]) && g.KindNameResolver(src) != key.Kind() {
 						vf.Set(reflect.ValueOf(key.Kind()))
 					}
 					kindSet = true
