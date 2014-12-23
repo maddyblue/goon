@@ -76,6 +76,7 @@ func NewGoon(r *http.Request) *Goon {
 }
 
 // FromContext creates a new Goon object from the given appengine Context.
+// Useful with profiling packages like appstats.
 func FromContext(c appengine.Context) *Goon {
 	return &Goon{
 		Context:          c,
