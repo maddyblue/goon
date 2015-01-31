@@ -160,12 +160,12 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 	var ng *Goon
 	err := datastore.RunInTransaction(g.Context, func(tc appengine.Context) error {
 		ng = &Goon{
-			Context:       tc,
-			inTransaction: true,
-			toSet:         make(map[string]interface{}),
-			toDelete:      make(map[string]bool),
-			toDeleteMC:    make(map[string]bool),
-			KindNameResolver: DefaultKindName,
+			Context:          tc,
+			inTransaction:    true,
+			toSet:            make(map[string]interface{}),
+			toDelete:         make(map[string]bool),
+			toDeleteMC:       make(map[string]bool),
+			KindNameResolver: g.KindNameResolver,
 		}
 		return f(ng)
 	}, opts)
