@@ -744,12 +744,13 @@ func (g *Goon) getStructKey(src interface{}) (key *datastore.Key, hasStringId bo
 					}
 				}
 			} else if tagValue == "parent" {
-				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
+				dskeyType := reflect.TypeOf(&datastore.Key{})
+				if vf.Type().ConvertibleTo(dskeyType) {
 					if parent != nil {
 						err = fmt.Errorf("goon: Only one field may be marked parent")
 						return
 					}
-					parent = vf.Interface().(*datastore.Key)
+					parent = vf.Convert(dskeyType).Interface().(*datastore.Key)
 				}
 			}
 		}
@@ -831,8 +832,10 @@ func (g *Goon) setStructKey(src interface{}, key *datastore.Key) error {
 				if parentSet {
 					return fmt.Errorf("goon: Only one field may be marked parent")
 				}
-				if vf.Type() == reflect.TypeOf(&datastore.Key{}) {
-					vf.Set(reflect.ValueOf(key.Parent()))
+				dskeyType := reflect.TypeOf(&datastore.Key{})
+				vfType := vf.Type()
+				if vfType.ConvertibleTo(dskeyType) {
+					vf.Set(reflect.ValueOf(key.Parent()).Convert(vfType))
 					parentSet = true
 				}
 			}
