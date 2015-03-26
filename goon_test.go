@@ -2023,3 +2023,68 @@ func TestMultis(t *testing.T) {
 		}
 	}
 }
+
+type root struct {
+	Id   int64 `datastore:"-" goon:"id"`
+	Data int
+}
+
+type normalChild struct {
+	Id     int64          `datastore:"-" goon:"id"`
+	Parent *datastore.Key `datastore:"-" goon:"parent"`
+	Data   int
+}
+
+type coolKey *datastore.Key
+
+type derivedChild struct {
+	Id     int64   `datastore:"-" goon:"id"`
+	Parent coolKey `datastore:"-" goon:"parent"`
+	Data   int
+}
+
+func TestParents(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	n := FromContext(c)
+
+	r := &root{1, 10}
+	rootKey, err := n.Put(r)
+	if err != nil {
+		t.Fatalf("couldn't Put(%+v)", r)
+	}
+
+	// Put exercises both get and set, since Id is uninitialized
+	nc := &normalChild{0, rootKey, 20}
+	nk, err := n.Put(nc)
+	if err != nil {
+		t.Fatalf("couldn't Put(%+v)", nc)
+	}
+	if nc.Parent == rootKey {
+		t.Fatalf("derived parent key pointer value didn't change")
+	}
+	if !(*datastore.Key)(nc.Parent).Equal(rootKey) {
+		t.Fatalf("parent of key not equal '%s' v '%s'! ", (*datastore.Key)(nc.Parent), rootKey)
+	}
+	if !nk.Parent().Equal(rootKey) {
+		t.Fatalf("parent of key not equal '%s' v '%s'! ", nk, rootKey)
+	}
+
+	dc := &derivedChild{0, (coolKey)(rootKey), 12}
+	dk, err := n.Put(dc)
+	if err != nil {
+		t.Fatalf("couldn't Put(%+v)", dc)
+	}
+	if dc.Parent == rootKey {
+		t.Fatalf("derived parent key pointer value didn't change")
+	}
+	if !(*datastore.Key)(dc.Parent).Equal(rootKey) {
+		t.Fatalf("parent of key not equal '%s' v '%s'! ", (*datastore.Key)(dc.Parent), rootKey)
+	}
+	if !dk.Parent().Equal(rootKey) {
+		t.Fatalf("parent of key not equal '%s' v '%s'! ", dk, rootKey)
+	}
+}
