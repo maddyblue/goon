@@ -1749,65 +1749,92 @@ type PutGet struct {
 	Value int32
 }
 
-// Commenting out for issue https://code.google.com/p/googleappengine/issues/detail?id=10493
-//func TestMemcachePutTimeout(t *testing.T) {
-//	c, err := aetest.NewContext(nil)
-//	if err != nil {
-//		t.Fatalf("Could not start aetest - %v", err)
-//	}
-//	defer c.Close()
-//	g := FromContext(c)
-//	MemcachePutTimeoutSmall = time.Second
-//	// put a HasId resource, then test pulling it from memory, memcache, and datastore
-//	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
-//	if _, err := g.Put(hi); err != nil {
-//		t.Errorf("put: unexpected error - %v", err)
-//	}
+func timeoutMemcacheOperations(yes bool) {
+	if yes {
+		MemcacheGetTimeout = 1
+		MemcachePutTimeoutSmall = 1
+		MemcachePutTimeoutLarge = 1
+	} else {
+		MemcacheGetTimeout = time.Second
+		MemcachePutTimeoutSmall = time.Second
+		MemcachePutTimeoutLarge = time.Second
+	}
+}
 
-//	MemcachePutTimeoutSmall = 0
-//	MemcacheGetTimeout = 0
-//	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
-//		t.Errorf("Request should timeout - err = %v", err)
-//	}
-//	MemcachePutTimeoutSmall = time.Second
-//	MemcachePutTimeoutThreshold = 0
-//	MemcachePutTimeoutLarge = 0
-//	if err := g.putMemcache([]interface{}{hi}); !appengine.IsTimeoutError(err) {
-//		t.Errorf("Request should timeout - err = %v", err)
-//	}
+func TestMemcacheTimeout(t *testing.T) {
+	c, err := aetest.NewContext(nil)
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer c.Close()
+	g := FromContext(c)
 
-//	MemcachePutTimeoutLarge = time.Second
-//	if err := g.putMemcache([]interface{}{hi}); err != nil {
-//		t.Errorf("putMemcache: unexpected error - %v", err)
-//	}
+	LogTimeoutErrors = true
+	LogErrors = true
 
-//	g.FlushLocalCache()
-//	memcache.Flush(c)
-//	// time out Get
-//	MemcacheGetTimeout = 0
-//	// time out Put too
-//	MemcachePutTimeoutSmall = 0
-//	MemcachePutTimeoutThreshold = 0
-//	MemcachePutTimeoutLarge = 0
-//	hiResult := &HasId{Id: hi.Id}
-//	if err := g.Get(hiResult); err != nil {
-//		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
-//		// Put timing out should also error, but it won't be returned here, just logged
-//	}
-//	if !reflect.DeepEqual(hi, hiResult) {
-//		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
-//	}
+	// put a HasId resource, then test pulling it from memory, memcache, and datastore
+	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
+	if _, err := g.Put(hi); err != nil {
+		t.Errorf("put: unexpected error - %v", err)
+	}
 
-//	hiResult = &HasId{Id: hi.Id}
-//	g.FlushLocalCache()
-//	MemcacheGetTimeout = time.Second
-//	if err := g.Get(hiResult); err != nil {
-//		t.Errorf("Request should not timeout cause we'll fetch from memcache successfully but got error %v", err)
-//	}
-//	if !reflect.DeepEqual(hi, hiResult) {
-//		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
-//	}
-//}
+	g.FlushLocalCache()
+	memcache.Flush(c)
+	timeoutMemcacheOperations(true)
+	hiResult := &HasId{Id: hi.Id}
+	if err := g.Get(hiResult); err != nil {
+		t.Errorf("Request should not timeout cause we'll fetch from the datastore but got error  %v", err)
+		// Put timing out should also error, but it won't be returned here, just logged
+	}
+	if !reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Fetched object isn't accurate - want %v, fetched %v", hi, hiResult)
+	}
+
+	// poison the cache, then fetch result from cache and make sure it was poisoned
+	g.FlushLocalCache()
+	timeoutMemcacheOperations(false)
+	poisoned := &HasId{Id: hi.Id, Name: "poisoned"}
+	if err := g.putMemcache([]interface{}{poisoned}, []byte{1}); err != nil {
+		t.Errorf("Got error putting poisoned object - %v", err)
+	}
+
+	g.FlushLocalCache()
+	hiResult = &HasId{Id: hi.Id}
+	if err := g.Get(hiResult); err != nil {
+		t.Errorf("Request should not timeout cause but got error  %v", err)
+	}
+	if reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Result should have been poisoned but got %v instead, expected %v", hiResult, poisoned)
+	}
+
+	// now timeout the memcache Get and make sure the request goes to the
+	// non-poisoned datastore entity
+	g.FlushLocalCache()
+	timeoutMemcacheOperations(true)
+	hiResult = &HasId{Id: hi.Id}
+	if err := g.Get(hiResult); err != nil {
+		t.Errorf("Request should not timeout cause but got error  %v", err)
+	}
+	if !reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Result is poisoned, got %v instead, expected %v", hiResult, hi)
+	}
+
+	// now fix the cache, then fetch result from cache and make sure it was fixed
+	timeoutMemcacheOperations(false)
+	g.FlushLocalCache()
+	if err := g.putMemcache([]interface{}{hi}, []byte{1}); err != nil {
+		t.Errorf("Got error putting fixed object - %v", err)
+	}
+
+	g.FlushLocalCache()
+	hiResult = &HasId{Id: hi.Id}
+	if err := g.Get(hiResult); err != nil {
+		t.Errorf("Request should not timeout cause but got error  %v", err)
+	}
+	if !reflect.DeepEqual(hi, hiResult) {
+		t.Errorf("Result should have been fixed but got %v instead, expected %v", hiResult, hi)
+	}
+}
 
 // This test won't fail but if run with -race flag, it will show known race conditions
 // Using multiple goroutines per http request is recommended here:
