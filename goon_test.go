@@ -2090,3 +2090,53 @@ func TestParents(t *testing.T) {
 		t.Fatalf("parent of key not equal '%s' v '%s'! ", dk, rootKey)
 	}
 }
+
+type ContainerStruct struct {
+	Id string `datastore:"-" goon:"id"`
+	embeddedStruct
+}
+
+type embeddedStruct struct {
+	X int
+	y int
+}
+
+func TestEmbeddedStruct(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+	g := FromContext(c)
+
+	// Store some data with an embedded unexported struct
+	pcs := &ContainerStruct{Id: "foo"}
+	pcs.X = 1
+	pcs.y = 2
+	_, err = g.Put(pcs)
+	if err != nil {
+		t.Errorf("Unexpected error on put - %v", err)
+	}
+
+	// First run fetches from the datastore (as Put() only caches to the local cache)
+	// Second run fetches from memcache (as our first run here called Get() which caches into memcache)
+	for i := 1; i <= 2; i++ {
+		// Clear the local cache
+		g.FlushLocalCache()
+
+		// Fetch it and confirm the values
+		gcs := &ContainerStruct{Id: pcs.Id}
+		err = g.Get(gcs)
+		if err != nil {
+			t.Errorf("#%v - Unexpected error on get - %v", i, err)
+		}
+		// The exported field must have the correct value
+		if gcs.X != pcs.X {
+			t.Errorf("#%v - Expected - %v, got %v", i, pcs.X, gcs.X)
+		}
+		// The unexported field must be zero-valued
+		if gcs.y != 0 {
+			t.Errorf("#%v - Expected - %v, got %v", i, 0, gcs.y)
+		}
+	}
+}

@@ -177,7 +177,7 @@ func generateFieldInfoAndMetadata(t reflect.Type, namePrefix string, indexPrefix
 	numFields := t.NumField()
 	for i := 0; i < numFields; i++ {
 		tf := t.Field(i)
-		if tf.PkgPath != "" {
+		if tf.PkgPath != "" && !tf.Anonymous {
 			continue
 		}
 
