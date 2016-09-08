@@ -180,7 +180,6 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			}
 			memcache.DeleteMulti(g.Context, memkeys)
 		}
-
 		g.cacheLock.Lock()
 		defer g.cacheLock.Unlock()
 		for k, v := range ng.toSet {
@@ -223,24 +222,6 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 		return nil, err
 	}
 
-	var memkeys []string
-	for _, key := range keys {
-		if !key.Incomplete() {
-			memkeys = append(memkeys, memkey(key))
-		}
-	}
-
-	// Memcache needs to be updated after the datastore to prevent a common race condition,
-	// where a concurrent request will fetch the not-yet-updated data from the datastore
-	// and populate memcache with it.
-	if g.inTransaction {
-		for _, mk := range memkeys {
-			g.toDeleteMC[mk] = true
-		}
-	} else {
-		defer memcache.DeleteMulti(g.Context, memkeys)
-	}
-
 	v := reflect.Indirect(reflect.ValueOf(src))
 	multiErr, any := make(appengine.MultiError, len(keys)), false
 	goroutines := (len(keys)-1)/putMultiLimit + 1
@@ -281,6 +262,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 					mk := memkey(rkeys[i])
 					delete(g.toDelete, mk)
 					g.toSet[mk] = vi
+					g.toDeleteMC[mk] = true
 				} else {
 					g.putMemory(vi)
 				}
@@ -288,6 +270,18 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 		}(i)
 	}
 	wg.Wait()
+
+	// Memcache needs to be updated after the datastore to prevent a common race condition,
+	// where a concurrent request will fetch the not-yet-updated data from the datastore
+	// and populate memcache with it.
+	if !g.inTransaction {
+		var memkeys []string
+		for _, key := range keys {
+			memkeys = append(memkeys, memkey(key))
+		}
+		memcache.DeleteMulti(g.Context, memkeys)
+	}
+
 	if any {
 		return keys, realError(multiErr)
 	}
