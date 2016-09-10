@@ -156,7 +156,8 @@ type ivItemI interface {
 var ivItems []ivItem
 
 func initializeIvItems(c context.Context) {
-	t1 := time.Now().Truncate(time.Microsecond)
+	// We force UTC, because the datastore API will always return UTC
+	t1 := time.Now().UTC().Truncate(time.Microsecond)
 	t2 := t1.Add(time.Second * 1)
 	t3 := t1.Add(time.Second * 2)
 
@@ -856,7 +857,7 @@ func TestMigration(t *testing.T) {
 
 	// Create & save an entity with the original structure
 	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
-		Holiday: time.Now().Truncate(time.Microsecond), α: 1, Level: 9001, Floor: 5,
+		Holiday: time.Now().UTC().Truncate(time.Microsecond), α: 1, Level: 9001, Floor: 5,
 		Sub: MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
 		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
 		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
