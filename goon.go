@@ -277,7 +277,9 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	if !g.inTransaction {
 		var memkeys []string
 		for _, key := range keys {
-			memkeys = append(memkeys, memkey(key))
+			if !key.Incomplete() {
+				memkeys = append(memkeys, memkey(key))
+			}
 		}
 		memcache.DeleteMulti(g.Context, memkeys)
 	}
