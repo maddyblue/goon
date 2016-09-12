@@ -1080,6 +1080,59 @@ func TestNegativeCacheHit(t *testing.T) {
 	}
 }
 
+func TestNegativeCacheClear(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+	g := FromContext(c)
+
+	hid := &HasId{Name: "one"}
+	var id int64
+
+	puted := make(chan bool)
+	cached := make(chan bool)
+	ended := make(chan bool)
+
+	go func() {
+		err := g.RunInTransaction(func(tg *Goon) error {
+			tg.Put(hid)
+			id = hid.Id
+			puted <- true
+			<-cached
+			return nil
+		}, nil)
+		if err != nil {
+			t.Errorf("Unexpected error on RunInTransaction: %v", err)
+		}
+		ended <- true
+	}()
+
+	// simulate negative cache (yet commit)
+	{
+		<-puted
+		negative := &HasId{Id: id}
+		g.FlushLocalCache()
+		if err := g.Get(negative); err != datastore.ErrNoSuchEntity {
+			t.Errorf("Expected ErrNoSuchEntity, got %v", err)
+		}
+		cached <- true
+	}
+
+	{
+		<-ended
+		want := &HasId{Id: id}
+		g.FlushLocalCache()
+		if err := g.Get(want); err != nil {
+			t.Errorf("Unexpected error on get: %v", err)
+		}
+		if want.Name != hid.Name {
+			t.Errorf("Expected Get Entity got : %v", want)
+		}
+	}
+}
+
 func TestCaches(t *testing.T) {
 	c, done, err := aetest.NewContext()
 	if err != nil {
