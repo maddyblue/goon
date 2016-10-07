@@ -67,7 +67,8 @@ type Goon struct {
 	KindNameResolver KindNameResolver
 }
 
-func memkey(k *datastore.Key) string {
+// MemcacheKey returns key string of Memcache.
+var MemcacheKey = func(k *datastore.Key) string {
 	// Versioning, so that incompatible changes to the cache system won't cause problems
 	return "g2:" + k.Encode()
 }
@@ -259,7 +260,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 					keys[i] = rkeys[i]
 				}
 				if g.inTransaction {
-					mk := memkey(rkeys[i])
+					mk := MemcacheKey(rkeys[i])
 					delete(g.toDelete, mk)
 					g.toSet[mk] = vi
 					g.toDeleteMC[mk] = true
@@ -278,7 +279,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 		var memkeys []string
 		for _, key := range keys {
 			if !key.Incomplete() {
-				memkeys = append(memkeys, memkey(key))
+				memkeys = append(memkeys, MemcacheKey(key))
 			}
 		}
 		memcache.DeleteMulti(g.Context, memkeys)
@@ -304,7 +305,7 @@ func (g *Goon) putMemory(src interface{}) {
 	key, _, _ := g.getStructKey(src)
 	g.cacheLock.Lock()
 	defer g.cacheLock.Unlock()
-	g.cache[memkey(key)] = src
+	g.cache[MemcacheKey(key)] = src
 }
 
 // FlushLocalCache clears the local memory cache.
@@ -334,7 +335,7 @@ func (g *Goon) putMemcache(srcs []interface{}, exists []byte) error {
 		// payloadSize will overflow if we push 2+ gigs on a 32bit machine
 		payloadSize += len(data)
 		items[i] = &memcache.Item{
-			Key:   memkey(key),
+			Key:   MemcacheKey(key),
 			Value: data,
 		}
 	}
@@ -411,7 +412,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 	g.cacheLock.RLock()
 	for i, key := range keys {
-		m := memkey(key)
+		m := MemcacheKey(key)
 		vi := v.Index(i)
 
 		if vi.Kind() == reflect.Struct {
@@ -597,7 +598,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 
 	g.cacheLock.Lock()
 	for i, k := range keys {
-		mk := memkey(k)
+		mk := MemcacheKey(k)
 		memkeys[i] = mk
 
 		if g.inTransaction {

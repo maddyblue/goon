@@ -109,7 +109,7 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 
 		if updateCache {
 			// Cache lock is handled before the for loop
-			g.cache[memkey(k)] = e
+			g.cache[MemcacheKey(k)] = e
 		}
 	}
 
@@ -161,7 +161,7 @@ func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
 
 		if !t.g.inTransaction {
 			t.g.cacheLock.Lock()
-			t.g.cache[memkey(k)] = dst
+			t.g.cache[MemcacheKey(k)] = dst
 			t.g.cacheLock.Unlock()
 		}
 	}
