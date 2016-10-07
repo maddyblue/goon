@@ -1343,11 +1343,11 @@ func TestGoon(t *testing.T) {
 		t.Errorf("get: unexpected error - %v", err)
 	}
 	if hi2.Name != hi.Name {
-		t.Errorf("Could not fetch HasId object from memory - %#v != %#v, memory=%#v", hi, hi2, n.cache[memkey(n.Key(hi2))])
+		t.Errorf("Could not fetch HasId object from memory - %#v != %#v, memory=%#v", hi, hi2, n.cache[MemcacheKey(n.Key(hi2))])
 	}
 
 	hi3 := &HasId{Id: hi.Id}
-	delete(n.cache, memkey(n.Key(hi)))
+	delete(n.cache, MemcacheKey(n.Key(hi)))
 	if err := n.Get(hi3); err != nil {
 		t.Errorf("get: unexpected error - %v", err)
 	}
@@ -1356,7 +1356,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	hi4 := &HasId{Id: hi.Id}
-	delete(n.cache, memkey(n.Key(hi4)))
+	delete(n.cache, MemcacheKey(n.Key(hi4)))
 	if memcache.Flush(n.Context) != nil {
 		t.Errorf("Unable to flush memcache")
 	}
@@ -1374,7 +1374,7 @@ func TestGoon(t *testing.T) {
 	// hi in datastore Name = hasid
 	hiPull := &HasId{Id: hi.Id}
 	n.cacheLock.Lock()
-	n.cache[memkey(n.Key(hi))].(*HasId).Name = "changedincache"
+	n.cache[MemcacheKey(n.Key(hi))].(*HasId).Name = "changedincache"
 	n.cacheLock.Unlock()
 	if err := n.Get(hiPull); err != nil {
 		t.Errorf("get: unexpected error - %v", err)
@@ -1386,7 +1386,7 @@ func TestGoon(t *testing.T) {
 	hiPush := &HasId{Id: hi.Id, Name: "changedinmemcache"}
 	n.putMemcache([]interface{}{hiPush}, []byte{1})
 	n.cacheLock.Lock()
-	delete(n.cache, memkey(n.Key(hi)))
+	delete(n.cache, MemcacheKey(n.Key(hi)))
 	n.cacheLock.Unlock()
 
 	hiPull = &HasId{Id: hi.Id}
@@ -2192,5 +2192,39 @@ func TestEmbeddedStruct(t *testing.T) {
 		if gcs.y != 0 {
 			t.Errorf("#%v - Expected - %v, got %v", i, 0, gcs.y)
 		}
+	}
+}
+
+func TestChangeMemcacheKey(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+
+	originalMemcacheKey := MemcacheKey
+	defer func() {
+		MemcacheKey = originalMemcacheKey
+	}()
+	verID := appengine.VersionID(c)
+	MemcacheKey = func(k *datastore.Key) string {
+		return "g2:" + verID + ":" + k.Encode()
+	}
+
+	g := FromContext(c)
+
+	key, err := g.Put(&PutGet{ID: 12, Value: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.FlushLocalCache()
+	err = g.Get(&PutGet{ID: 12})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = memcache.Get(c, "g2:"+verID+":"+key.Encode())
+	if err != nil {
+		t.Fatal("Memcache key should have 'g2:`versionID`:prefix", err)
 	}
 }
