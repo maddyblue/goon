@@ -17,11 +17,13 @@
 package goon
 
 import (
+	"errors"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"golang.org/x/net/context"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/aetest"
@@ -1915,6 +1917,47 @@ func TestRace(t *testing.T) {
 		if hi.Name != "Race" {
 			t.Errorf("Object #%d not fetched properly, fetched instead - %v", x, hi)
 		}
+	}
+
+	// in case of datastore failure
+	errInternalCall := errors.New("internal call error")
+	withErrorContext := func (ctx context.Context, multiLimit int) context.Context {
+		return appengine.WithAPICallFunc(ctx, func(ctx context.Context, service, method string, in, out proto.Message) error {
+			if service != "datastore_v3" {
+				return nil
+			}
+			if method != "Put" && method != "Get" && method != "Delete" {
+				return nil
+			}
+			errs := make(appengine.MultiError, multiLimit)
+			for x := 0; x < multiLimit; x++ {
+				errs[x] = errInternalCall
+			}
+			return errs
+		})
+	}
+
+	g.Context = withErrorContext(g.Context, putMultiLimit)
+	_, err = g.PutMulti(hasIdSlice)
+	if err != errInternalCall {
+		t.Fatalf("Expected %v, got %v", errInternalCall, err)
+	}
+
+	g.FlushLocalCache()
+	g.Context = withErrorContext(g.Context, getMultiLimit)
+	err = g.GetMulti(hasIdSlice)
+	if err != errInternalCall {
+		t.Fatalf("Expected %v, got %v", errInternalCall, err)
+	}
+
+	keys := make([]*datastore.Key, len(hasIdSlice))
+	for x, hasId := range hasIdSlice {
+		keys[x] = g.Key(hasId)
+	}
+	g.Context = withErrorContext(g.Context, deleteMultiLimit)
+	err = g.DeleteMulti(keys)
+	if err != errInternalCall {
+		t.Fatalf("Expected %v, got %v", errInternalCall, err)
 	}
 }
 
