@@ -224,6 +224,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	}
 
 	v := reflect.Indirect(reflect.ValueOf(src))
+	mu := new(sync.Mutex)
 	multiErr, any := make(appengine.MultiError, len(keys)), false
 	goroutines := (len(keys)-1)/putMultiLimit + 1
 	var wg sync.WaitGroup
@@ -238,7 +239,9 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 			}
 			rkeys, pmerr := datastore.PutMulti(g.Context, keys[lo:hi], v.Slice(lo, hi).Interface())
 			if pmerr != nil {
+				mu.Lock()
 				any = true // this flag tells PutMulti to return multiErr later
+				mu.Unlock()
 				merr, ok := pmerr.(appengine.MultiError)
 				if !ok {
 					g.error(pmerr)
@@ -488,6 +491,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		}
 	}
 
+	mu := new(sync.Mutex)
 	goroutines := (len(dskeys)-1)/getMultiLimit + 1
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
@@ -503,7 +507,9 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			}
 			gmerr := datastore.GetMulti(g.Context, dskeys[lo:hi], dsdst[lo:hi])
 			if gmerr != nil {
+				mu.Lock()
 				any = true // this flag tells GetMulti to return multiErr later
+				mu.Unlock()
 				merr, ok := gmerr.(appengine.MultiError)
 				if !ok {
 					g.error(gmerr)
@@ -621,6 +627,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 		defer memcache.DeleteMulti(g.Context, memkeys)
 	}
 
+	mu := new(sync.Mutex)
 	multiErr, any := make(appengine.MultiError, len(keys)), false
 	goroutines := (len(keys)-1)/deleteMultiLimit + 1
 	var wg sync.WaitGroup
@@ -635,7 +642,9 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 			}
 			dmerr := datastore.DeleteMulti(g.Context, keys[lo:hi])
 			if dmerr != nil {
+				mu.Lock()
 				any = true // this flag tells DeleteMulti to return multiErr later
+				mu.Unlock()
 				merr, ok := dmerr.(appengine.MultiError)
 				if !ok {
 					g.error(dmerr)
