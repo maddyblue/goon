@@ -260,7 +260,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 				vi := v.Index(lo + i).Interface()
 				if key.Incomplete() {
 					g.setStructKey(vi, rkeys[i])
-					keys[i] = rkeys[i]
+					keys[lo+i] = rkeys[i]
 				}
 				if g.inTransaction {
 					mk := MemcacheKey(rkeys[i])
