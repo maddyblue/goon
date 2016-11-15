@@ -51,6 +51,10 @@ var (
 	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
 	// requests.
 	MemcacheGetTimeout = time.Millisecond * 10
+
+	// DatastoreBatchPutDelay is the amount of time to wait between datastore
+	// batch put requests.
+	DatastoreBatchPutDelay = time.Millisecond * 100
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -232,6 +236,10 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	for i := 0; i < goroutines; i++ {
 		go func(i int) {
 			defer wg.Done()
+
+			// add delay to avoid datastore contention
+			time.Sleep(time.Duration(i) * DatastoreBatchPutDelay)
+
 			lo := i * putMultiLimit
 			hi := (i + 1) * putMultiLimit
 			if hi > len(keys) {
