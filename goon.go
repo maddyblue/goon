@@ -59,6 +59,7 @@ type Goon struct {
 	cache         map[string]interface{}
 	cacheLock     sync.RWMutex // protect the cache from concurrent goroutines to speed up RPC access
 	inTransaction bool
+	txnCacheLock  sync.Mutex // protects toSet / toDelete / toDeleteMC
 	toSet         map[string]interface{}
 	toDelete      map[string]bool
 	toDeleteMC    map[string]bool
@@ -174,6 +175,8 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 	}, opts)
 
 	if err == nil {
+		ng.txnCacheLock.Lock()
+		defer ng.txnCacheLock.Unlock()
 		if len(ng.toDeleteMC) > 0 {
 			var memkeys []string
 			for k := range ng.toDeleteMC {
@@ -186,7 +189,6 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 		for k, v := range ng.toSet {
 			g.cache[k] = v
 		}
-
 		for k := range ng.toDelete {
 			delete(g.cache, k)
 		}
@@ -264,9 +266,11 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 				}
 				if g.inTransaction {
 					mk := MemcacheKey(rkeys[i])
+					g.txnCacheLock.Lock()
 					delete(g.toDelete, mk)
 					g.toSet[mk] = vi
 					g.toDeleteMC[mk] = true
+					g.txnCacheLock.Unlock()
 				} else {
 					g.putMemory(vi)
 				}
@@ -608,8 +612,10 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 		memkeys[i] = mk
 
 		if g.inTransaction {
+			g.txnCacheLock.Lock()
 			delete(g.toSet, mk)
 			g.toDelete[mk] = true
+			g.txnCacheLock.Unlock()
 		} else {
 			delete(g.cache, mk)
 		}
@@ -620,9 +626,11 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	// where a concurrent request will fetch the not-yet-updated data from the datastore
 	// and populate memcache with it.
 	if g.inTransaction {
+		g.txnCacheLock.Lock()
 		for _, mk := range memkeys {
 			g.toDeleteMC[mk] = true
 		}
+		g.txnCacheLock.Unlock()
 	} else {
 		defer memcache.DeleteMulti(g.Context, memkeys)
 	}
