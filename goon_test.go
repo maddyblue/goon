@@ -2219,12 +2219,18 @@ func TestParents(t *testing.T) {
 
 type ContainerStruct struct {
 	Id string `datastore:"-" goon:"id"`
-	embeddedStruct
+	embeddedStructA
+	embeddedStructB `datastore:"w"`
 }
 
-type embeddedStruct struct {
+type embeddedStructA struct {
 	X int
 	y int
+}
+
+type embeddedStructB struct {
+	Z1 int
+	Z2 int `datastore:"z2fancy"`
 }
 
 func TestEmbeddedStruct(t *testing.T) {
@@ -2237,8 +2243,7 @@ func TestEmbeddedStruct(t *testing.T) {
 
 	// Store some data with an embedded unexported struct
 	pcs := &ContainerStruct{Id: "foo"}
-	pcs.X = 1
-	pcs.y = 2
+	pcs.X, pcs.y, pcs.Z1, pcs.Z2 = 1, 2, 3, 4
 	_, err = g.Put(pcs)
 	if err != nil {
 		t.Errorf("Unexpected error on put - %v", err)
@@ -2259,6 +2264,12 @@ func TestEmbeddedStruct(t *testing.T) {
 		// The exported field must have the correct value
 		if gcs.X != pcs.X {
 			t.Errorf("#%v - Expected - %v, got %v", i, pcs.X, gcs.X)
+		}
+		if gcs.Z1 != pcs.Z1 {
+			t.Errorf("#%v - Expected - %v, got %v", i, pcs.Z1, gcs.Z1)
+		}
+		if gcs.Z2 != pcs.Z2 {
+			t.Errorf("#%v - Expected - %v, got %v", i, pcs.Z2, gcs.Z2)
 		}
 		// The unexported field must be zero-valued
 		if gcs.y != 0 {
