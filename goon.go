@@ -51,6 +51,9 @@ var (
 	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
 	// requests.
 	MemcacheGetTimeout = time.Millisecond * 10
+
+	// Ignore ErrFieldMismatch
+	IgnoreFieldMismatch = false
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -523,7 +526,11 @@ func (g *Goon) GetMulti(dst interface{}) error {
 					return
 				}
 				for i, idx := range dixs[lo:hi] {
-					if merr[i] == nil {
+					isFieldMismatch := false
+					if _, ok := merr[i].(*datastore.ErrFieldMismatch); ok {
+						isFieldMismatch = true
+					}
+					if merr[i] == nil || isFieldMismatch && IgnoreFieldMismatch {
 						toCache = append(toCache, dsdst[lo+i])
 						exists = append(exists, 1)
 					} else {

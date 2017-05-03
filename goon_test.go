@@ -2311,3 +2311,59 @@ func TestChangeMemcacheKey(t *testing.T) {
 		t.Fatal("Memcache key should have 'g2:`versionID`:prefix", err)
 	}
 }
+
+func TestIgnoreMissingField(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+	g := FromContext(c)
+
+	type v1 struct {
+		_kind string `goon:"kind,Data"`
+		Id    int64  `datastore:"-" goon:"id"`
+		Base  string `datastore:"base"`
+	}
+	type v2 struct {
+		_kind string `goon:"kind,Data"`
+		Id    int64  `datastore:"-" goon:"id"`
+		Base  string `datastore:"base"`
+		Extra string `datastore:"extra"`
+	}
+
+	tests := []struct {
+		name    string
+		init    func()
+		wantErr bool
+	}{
+		{
+			name: "got error if IgnoreFieldMismatch is false",
+			init: func() {
+				IgnoreFieldMismatch = false
+			},
+			wantErr: true,
+		},
+		{
+			name: "ignore ErrFieldMismatch if IgnoreFieldMismatch is true",
+			init: func() {
+				IgnoreFieldMismatch = true
+			},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		tt.init()
+		_, err := g.Put(&v2{Id: 1})
+		if err != nil {
+			t.Fatal("Unexpected error for put: %v", err)
+		}
+
+		g.FlushLocalCache()
+
+		err = g.Get(&v1{Id: 1})
+		if (err != nil) != tt.wantErr {
+			t.Errorf("g.Get() got error unexpectedly: %v", err)
+		}
+	}
+}
