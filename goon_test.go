@@ -18,6 +18,7 @@ package goon
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -767,23 +768,25 @@ func TestInputVariety(t *testing.T) {
 }
 
 type MigrationA struct {
-	_kind     string            `goon:"kind,Migration"`
-	Id        int64             `datastore:"-" goon:"id"`
-	Number    int32             `datastore:"number,noindex"`
-	Word      string            `datastore:"word,noindex"`
-	Car       string            `datastore:"car,noindex"`
-	Holiday   time.Time         `datastore:"holiday,noindex"`
-	α         int               `datastore:",noindex"`
-	Level     MigrationIntA     `datastore:"level,noindex"`
-	Floor     MigrationIntA     `datastore:"floor,noindex"`
-	Sub       MigrationSub      `datastore:"sub,noindex"`
-	Son       MigrationPerson   `datastore:"son,noindex"`
-	Daughter  MigrationPerson   `datastore:"daughter,noindex"`
-	Parents   []MigrationPerson `datastore:"parents,noindex"`
-	DeepSlice MigrationDeepA    `datastore:"deep,noindex"`
-	ZZs       []ZigZag          `datastore:"zigzag,noindex"`
-	ZeroKey   *datastore.Key    `datastore:",noindex"`
-	File      []byte
+	_kind            string            `goon:"kind,Migration"`
+	Id               int64             `datastore:"-" goon:"id"`
+	Number           int32             `datastore:"number"`
+	Word             string            `datastore:"word,noindex"`
+	Car              string            `datastore:"car,noindex"`
+	Holiday          time.Time         `datastore:"holiday,noindex"`
+	α                int               `datastore:",noindex"`
+	Level            MigrationIntA     `datastore:"level,noindex"`
+	Floor            MigrationIntA     `datastore:"floor,noindex"`
+	Sub              MigrationSub      `datastore:"sub,noindex"`
+	Son              MigrationPerson   `datastore:"son,noindex"`
+	Daughter         MigrationPerson   `datastore:"daughter,noindex"`
+	Parents          []MigrationPerson `datastore:"parents,noindex"`
+	DeepSlice        MigrationDeepA    `datastore:"deep,noindex"`
+	ZZs              []ZigZag          `datastore:"zigzag,noindex"`
+	ZeroKey          *datastore.Key    `datastore:",noindex"`
+	File             []byte
+	DeprecatedField  string       `datastore:"depf,noindex"`
+	DeprecatedStruct MigrationSub `datastore:"deps,noindex"`
 }
 
 type MigrationSub struct {
@@ -829,7 +832,7 @@ type MigrationIntB int
 type MigrationB struct {
 	_kind          string            `goon:"kind,Migration"`
 	Identification int64             `datastore:"-" goon:"id"`
-	FancyNumber    int32             `datastore:"number,noindex"`
+	FancyNumber    int32             `datastore:"number"`
 	Slang          string            `datastore:"word,noindex"`
 	Cars           []string          `datastore:"car,noindex"`
 	Holidays       []time.Time       `datastore:"holiday,noindex"`
@@ -849,6 +852,14 @@ type MigrationB struct {
 	Files          [][]byte          `datastore:"File,noindex"`
 }
 
+const (
+	migrationMethodGet = iota
+	migrationMethodGetAll
+	migrationMethodGetAllMulti
+	migrationMethodNext
+	migrationMethodCount
+)
+
 func TestMigration(t *testing.T) {
 	c, done, err := aetest.NewContext()
 	if err != nil {
@@ -864,39 +875,98 @@ func TestMigration(t *testing.T) {
 		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
 		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
 		DeepSlice: MigrationDeepA{Deep: MigrationDeepB{Deep: MigrationDeepC{Slice: []int{1, 2, 3}}}},
-		ZZs:       []ZigZag{{Zig: 1}, {Zag: 1}}, File: []byte{0xF0, 0x0D}}
+		ZZs:       []ZigZag{{Zig: 1}, {Zag: 1}}, File: []byte{0xF0, 0x0D},
+		DeprecatedField: "dep", DeprecatedStruct: MigrationSub{Data: "dep"}}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
-
-	// Clear the local cache, because we want this data in memcache
-	g.FlushLocalCache()
-
-	// Get it back, so it's in the cache
-	migA = &MigrationA{Id: 1}
-	if err := g.Get(migA); err != nil {
-		t.Errorf("Unexpected error on Get: %v", err)
+	// Also save an already migrated structure
+	migB := &MigrationB{Identification: migA.Id + 1, FancyNumber: migA.Number + 1}
+	if _, err := g.Put(migB); err != nil {
+		t.Errorf("Unexpected error on Put: %v", err)
 	}
 
-	// Clear the local cache, because it doesn't need to support migration
-	g.FlushLocalCache()
+	// Due to eventual consistency, we need to wait a bit.
+	time.Sleep(1 * time.Second)
 
-	// Test whether memcache supports migration
-	verifyMigration(t, g, migA, "MC")
+	// Run migration tests with both IgnoreFieldMismatch on & off
+	for i := 0; i < 2; i++ {
+		IgnoreFieldMismatch = (i == 0)
 
-	// Clear all the caches
-	g.FlushLocalCache()
-	memcache.Flush(c)
+		// Clear all the caches
+		g.FlushLocalCache()
+		memcache.Flush(c)
 
-	// Test whether datastore supports migration
-	verifyMigration(t, g, migA, "DS")
+		// Get it back, so it's in the cache
+		migA = &MigrationA{Id: 1}
+		if err := g.Get(migA); err != nil {
+			t.Errorf("Unexpected error on Get: %v", err)
+		}
+
+		// Clear the local cache, because it doesn't need to support migration
+		g.FlushLocalCache()
+
+		// Test whether memcache supports migration
+		verifyMigration(t, g, migA, migrationMethodGet, fmt.Sprintf("MC-%v", IgnoreFieldMismatch))
+
+		for method := 0; method < migrationMethodCount; method++ {
+			// Clear all the caches
+			g.FlushLocalCache()
+			memcache.Flush(c)
+
+			// Test whether datastore supports migration
+			verifyMigration(t, g, migA, method, fmt.Sprintf("DS-%v-%v", method, IgnoreFieldMismatch))
+		}
+	}
 }
 
-func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, debugInfo string) {
+func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, method int, debugInfo string) {
 	migB := &MigrationB{Identification: migA.Id}
-	if err := g.Get(migB); err != nil {
-		t.Errorf("%v > Unexpected error on Get: %v", debugInfo, err)
-	} else if migA.Id != migB.Identification {
+
+	switch method {
+	case migrationMethodGet:
+		if err := g.Get(migB); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
+			t.Errorf("%v > Unexpected error on Get: %v", debugInfo, err)
+			return
+		}
+		break
+	case migrationMethodGetAll:
+		migBs := []*MigrationB{}
+		if _, err := g.GetAll(datastore.NewQuery("Migration").Filter("number=", migA.Number), &migBs); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
+			t.Errorf("%v > Unexpected error on GetAll: %v", debugInfo, err)
+			return
+		} else if len(migBs) != 1 {
+			t.Errorf("%v > Unexpected query result, expected %v entities, got %v", debugInfo, 1, len(migBs))
+			return
+		}
+		migB = migBs[0]
+		break
+	case migrationMethodGetAllMulti:
+		// Get both Migration entities
+		migBs := []*MigrationB{}
+		if _, err := g.GetAll(datastore.NewQuery("Migration").Order("number"), &migBs); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
+			t.Errorf("%v > Unexpected error on GetAll: %v", debugInfo, err)
+			return
+		} else if len(migBs) != 2 {
+			t.Errorf("%v > Unexpected query result, expected %v entities, got %v", debugInfo, 2, len(migBs))
+			return
+		}
+		migB = migBs[0]
+		break
+	case migrationMethodNext:
+		it := g.Run(datastore.NewQuery("Migration").Filter("number=", migA.Number))
+		if _, err := it.Next(migB); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
+			t.Errorf("%v > Unexpected error on Next: %v", debugInfo, err)
+			return
+		}
+		// Make sure the iterator ends correctly
+		if _, err := it.Next(&MigrationB{}); err != datastore.Done {
+			t.Errorf("Next: expected iterator to end with the error datastore.Done, got %v", err)
+		}
+		break
+	}
+
+	if migA.Id != migB.Identification {
 		t.Errorf("%v > Ids don't match: %v != %v", debugInfo, migA.Id, migB.Identification)
 	} else if migA.Number != migB.FancyNumber {
 		t.Errorf("%v > Numbers don't match: %v != %v", debugInfo, migA.Number, migB.FancyNumber)

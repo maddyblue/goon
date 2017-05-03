@@ -51,6 +51,10 @@ var (
 	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
 	// requests.
 	MemcacheGetTimeout = time.Millisecond * 10
+
+	// IgnoreFieldMismatch decides whether *datastore.ErrFieldMismatch errors
+	// should be silently ignored. This allows you to easily remove fields from structs.
+	IgnoreFieldMismatch = true
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -430,7 +434,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			if vi.Kind() == reflect.Interface {
 				vi = vi.Elem()
 			}
-
 			reflect.Indirect(vi).Set(reflect.Indirect(reflect.ValueOf(s)))
 		} else {
 			memkeys = append(memkeys, m)
@@ -446,7 +449,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		return nil
 	}
 
-	multiErr, any := make(appengine.MultiError, len(keys)), false
+	multiErr, anyErr := make(appengine.MultiError, len(keys)), false
 
 	tc, cf := context.WithTimeout(g.Context, MemcacheGetTimeout)
 	memvalues, err := memcache.GetMulti(tc, memkeys)
@@ -472,14 +475,14 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			}
 			if s, present := memvalues[m]; present {
 				err := deserializeStruct(d, s.Value)
-				if err == datastore.ErrNoSuchEntity {
-					any = true // this flag tells GetMulti to return multiErr later
+				if err == nil || (IgnoreFieldMismatch && errFieldMismatch(err)) {
+					g.putMemory(d)
+				} else if err == datastore.ErrNoSuchEntity || errFieldMismatch(err) {
+					anyErr = true // this flag tells GetMulti to return multiErr later
 					multiErr[mixs[i]] = err
-				} else if err != nil {
+				} else {
 					g.error(err)
 					return err
-				} else {
-					g.putMemory(d)
 				}
 			} else {
 				dskeys = append(dskeys, keys[mixs[i]])
@@ -488,7 +491,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			}
 		}
 		if len(dskeys) == 0 {
-			if any {
+			if anyErr {
 				return realError(multiErr)
 			}
 			return nil
@@ -512,7 +515,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			gmerr := datastore.GetMulti(g.Context, dskeys[lo:hi], dsdst[lo:hi])
 			if gmerr != nil {
 				mu.Lock()
-				any = true // this flag tells GetMulti to return multiErr later
+				anyErr = true // this flag tells GetMulti to return multiErr later
 				mu.Unlock()
 				merr, ok := gmerr.(appengine.MultiError)
 				if !ok {
@@ -523,7 +526,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 					return
 				}
 				for i, idx := range dixs[lo:hi] {
-					if merr[i] == nil {
+					if merr[i] == nil || (IgnoreFieldMismatch && errFieldMismatch(merr[i])) {
 						toCache = append(toCache, dsdst[lo+i])
 						exists = append(exists, 1)
 					} else {
@@ -549,7 +552,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		}(i)
 	}
 	wg.Wait()
-	if any {
+	if anyErr {
 		return realError(multiErr)
 	}
 	return nil
@@ -678,4 +681,10 @@ func NotFound(err error, idx int) bool {
 		return idx < len(merr) && merr[idx] == datastore.ErrNoSuchEntity
 	}
 	return false
+}
+
+// errFieldMismatch returns true if err is *datastore.ErrFieldMismatch
+func errFieldMismatch(err error) bool {
+	_, ok := err.(*datastore.ErrFieldMismatch)
+	return ok
 }
