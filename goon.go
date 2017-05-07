@@ -473,6 +473,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			if v.Index(mixs[i]).Kind() == reflect.Struct {
 				d = v.Index(mixs[i]).Addr().Interface()
 			}
+			fetched := true
 			if s, present := memvalues[m]; present {
 				err := deserializeStruct(d, s.Value)
 				if err == nil || (IgnoreFieldMismatch && errFieldMismatch(err)) {
@@ -480,11 +481,15 @@ func (g *Goon) GetMulti(dst interface{}) error {
 				} else if err == datastore.ErrNoSuchEntity || errFieldMismatch(err) {
 					anyErr = true // this flag tells GetMulti to return multiErr later
 					multiErr[mixs[i]] = err
+				} else if err == errCacheFetchFailed {
+					fetched = false
 				} else {
+					fetched = false
 					g.error(err)
 					return err
 				}
-			} else {
+			}
+			if !fetched {
 				dskeys = append(dskeys, keys[mixs[i]])
 				dsdst = append(dsdst, d)
 				dixs = append(dixs, mixs[i])
