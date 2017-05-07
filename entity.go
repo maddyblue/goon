@@ -132,6 +132,23 @@ func init() {
 	//       * The usage is removed during a code update
 	//    b) Register a same type as us, but in an inconsistent order between multiple executions
 	freeSerializationDecoder(getSerializationDecoder([]byte{}))
+
+	// register gob types
+	gob.Register(seBoot.v01)
+	gob.Register(seBoot.v02)
+	gob.Register(seBoot.v03)
+	gob.Register(seBoot.v04)
+	gob.Register(seBoot.v05)
+	gob.Register(seBoot.v06)
+	gob.Register(seBoot.v07)
+	gob.Register(seBoot.v08)
+	gob.Register(seBoot.v09)
+	gob.Register(seBoot.v10)
+	gob.Register(seBoot.v11)
+	gob.Register(seBoot.v12)
+	gob.Register(seBoot.v13)
+	gob.Register(seBoot.v14)
+	gob.Register(seBoot.v15)
 }
 
 // getFieldInfoAndMetadata returns metadata about a struct. Its main purpose is to cut down
