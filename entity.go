@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"container/list"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -115,6 +116,7 @@ var (
 	seBoot                    = seBootstrap{v01: &datastore.Key{}}
 	seBootBytes               []byte
 	seBootBytesLock           sync.RWMutex
+	errCacheFetchFailed       = errors.New("goon: cache fetch failed")
 )
 
 func init() {
@@ -628,9 +630,13 @@ func deserializeStruct(dst interface{}, b []byte) error {
 		return fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	if header := b[0]; header == serializationStateEmpty {
+	header := b[0]
+	switch header {
+	case serializationStateEmpty:
 		return datastore.ErrNoSuchEntity
-	} else if header != serializationStateNormal {
+	case serializationStateNormal, serializationStatePropertyList:
+		// supported header. keep going.
+	default:
 		return fmt.Errorf("goon: Unrecognized cache header: %v", header)
 	}
 
@@ -642,21 +648,45 @@ func deserializeStruct(dst interface{}, b []byte) error {
 	fieldMap, _ := getFieldInfoAndMetadata(t)
 	var notFoundField string
 
-	for _, metaData := range smd.metaDatas {
-		fieldName, slice, zeroValue := metaData, false, false
-		if metaData[0] == '$' {
-			fieldName, slice = metaData[1:], true
-		} else if metaData[0] == '!' {
-			fieldName, zeroValue = metaData[1:], true
+	pls, hasPLS := dst.(datastore.PropertyLoadSaver)
+	switch header {
+	case serializationStateNormal:
+		if hasPLS {
+			// unfortunately fetching PropertyList cache to non-PLS is not supported
+			// and should falls back to datastore
+			return errCacheFetchFailed
 		}
-		nameParts := strings.Split(fieldName, ".")
+		for _, metaData := range smd.metaDatas {
+			fieldName, slice, zeroValue := metaData, false, false
+			if metaData[0] == '$' {
+				fieldName, slice = metaData[1:], true
+			} else if metaData[0] == '!' {
+				fieldName, zeroValue = metaData[1:], true
+			}
+			nameParts := strings.Split(fieldName, ".")
 
-		if fi, ok := fieldMap[fieldName]; ok {
-			if err := deserializeStructInternal(sd.dec, fi, fieldName, nameParts, slice, zeroValue, structHistory, v, t); err != nil {
+			if fi, ok := fieldMap[fieldName]; ok {
+				if err := deserializeStructInternal(sd.dec, fi, fieldName, nameParts, slice, zeroValue, structHistory, v, t); err != nil {
+					return err
+				}
+			} else {
+				notFoundField = fieldName
+			}
+		}
+	case serializationStatePropertyList:
+		var props []datastore.Property
+		if err := sd.dec.Decode(&props); err != nil {
+			return errCacheFetchFailed
+		}
+		if hasPLS {
+			if err := pls.Load(props); err != nil {
 				return err
 			}
 		} else {
-			notFoundField = fieldName
+			// fetching PropertyList cache to non-PLS struct can be handled by LoadStruct()
+			if err := datastore.LoadStruct(dst, props); err != nil {
+				return err
+			}
 		}
 	}
 
