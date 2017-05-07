@@ -81,6 +81,10 @@ type serializationDecoder struct {
 	dec *gob.Decoder
 }
 
+type nilType struct {
+	GoonNilValue string
+}
+
 type serializationReader struct {
 	r *bytes.Reader
 }
@@ -94,8 +98,9 @@ func (sr *serializationReader) ReadByte() (c byte, err error) {
 }
 
 const (
-	serializationStateEmpty  = 0x00
-	serializationStateNormal = 0x01
+	serializationStateEmpty        = 0x00
+	serializationStateNormal       = 0x01
+	serializationStatePropertyList = 0x02
 )
 
 var (
@@ -149,6 +154,7 @@ func init() {
 	gob.Register(seBoot.v13)
 	gob.Register(seBoot.v14)
 	gob.Register(seBoot.v15)
+	gob.Register(nilType{})
 }
 
 // getFieldInfoAndMetadata returns metadata about a struct. Its main purpose is to cut down
@@ -408,22 +414,36 @@ func serializeStruct(src interface{}) ([]byte, error) {
 
 	se := getSerializationEncoder()
 	defer freeSerializationEncoder(se)
-	smd := &structMetaData{metaDatas: make([]string, 0, 16)}
-	_, fms := getFieldInfoAndMetadata(t) // Use this function to force generation if needed
 
-	if err := serializeStructInternal(se.enc, smd, fms, "", v); err != nil {
-		return nil, err
+	if ls, ok := src.(datastore.PropertyLoadSaver); ok {
+		se.buf.Write([]byte{serializationStatePropertyList})
+		props, err := ls.Save()
+		if err != nil {
+			return nil, err
+		}
+		for _, prop := range props {
+			v := reflect.ValueOf(prop.Value)
+			if v.Kind() == reflect.Ptr && v.IsNil() {
+				prop.Value = nilType{}
+			}
+		}
+		return se.buf.Bytes(), nil
+	} else {
+		smd := &structMetaData{metaDatas: make([]string, 0, 16)}
+		_, fms := getFieldInfoAndMetadata(t) // Use this function to force generation if needed
+		if err := serializeStructInternal(se.enc, smd, fms, "", v); err != nil {
+			return nil, err
+		}
+
+		bufSize := se.buf.Len()
+		// final size = header + all metadatas + separators for metadata + data
+		finalBufSize := 1 + smd.totalLength + len(smd.metaDatas) + bufSize
+		finalBuf := make([]byte, finalBufSize)
+		finalBuf[0] = byte(serializationStateNormal)          // Set the header
+		serializeStructMetaData(finalBuf[1:], smd)            // Serialize the metadata
+		copy(finalBuf[finalBufSize-bufSize:], se.buf.Bytes()) // Copy the actual data
+		return finalBuf, nil
 	}
-
-	bufSize := se.buf.Len()
-	// final size = header + all metadatas + separators for metadata + data
-	finalBufSize := 1 + smd.totalLength + len(smd.metaDatas) + bufSize
-	finalBuf := make([]byte, finalBufSize)
-	finalBuf[0] = byte(serializationStateNormal)          // Set the header
-	serializeStructMetaData(finalBuf[1:], smd)            // Serialize the metadata
-	copy(finalBuf[finalBufSize-bufSize:], se.buf.Bytes()) // Copy the actual data
-
-	return finalBuf, nil
 }
 
 // serializeStructInternal is a helper function for serializeStruct, mainly for easier recursion.
