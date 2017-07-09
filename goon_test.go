@@ -769,6 +769,7 @@ func TestInputVariety(t *testing.T) {
 
 type MigrationA struct {
 	_kind            string            `goon:"kind,Migration"`
+	Parent           *datastore.Key    `datastore:"-" goon:"parent"`
 	Id               int64             `datastore:"-" goon:"id"`
 	Number           int32             `datastore:"number"`
 	Word             string            `datastore:"word,noindex"`
@@ -831,6 +832,7 @@ type MigrationIntB int
 
 type MigrationB struct {
 	_kind          string            `goon:"kind,Migration"`
+	Parent         *datastore.Key    `datastore:"-" goon:"parent"`
 	Identification int64             `datastore:"-" goon:"id"`
 	FancyNumber    int32             `datastore:"number"`
 	Slang          string            `datastore:"word,noindex"`
@@ -869,7 +871,8 @@ func TestMigration(t *testing.T) {
 	g := FromContext(c)
 
 	// Create & save an entity with the original structure
-	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
+	parentKey := g.Key(&HasId{Id: 9999})
+	migA := &MigrationA{Parent: parentKey, Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
 		Holiday: time.Now().UTC().Truncate(time.Microsecond), α: 1, Level: 9001, Floor: 5,
 		Sub: MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
 		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
@@ -881,13 +884,10 @@ func TestMigration(t *testing.T) {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
 	// Also save an already migrated structure
-	migB := &MigrationB{Identification: migA.Id + 1, FancyNumber: migA.Number + 1}
+	migB := &MigrationB{Parent: migA.Parent, Identification: migA.Id + 1, FancyNumber: migA.Number + 1}
 	if _, err := g.Put(migB); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
-
-	// Due to eventual consistency, we need to wait a bit.
-	time.Sleep(1 * time.Second)
 
 	// Run migration tests with both IgnoreFieldMismatch on & off
 	for i := 0; i < 2; i++ {
@@ -898,7 +898,7 @@ func TestMigration(t *testing.T) {
 		memcache.Flush(c)
 
 		// Get it back, so it's in the cache
-		migA = &MigrationA{Id: 1}
+		migA = &MigrationA{Parent: parentKey, Id: 1}
 		if err := g.Get(migA); err != nil {
 			t.Errorf("Unexpected error on Get: %v", err)
 		}
@@ -909,19 +909,31 @@ func TestMigration(t *testing.T) {
 		// Test whether memcache supports migration
 		verifyMigration(t, g, migA, migrationMethodGet, fmt.Sprintf("MC-%v", IgnoreFieldMismatch))
 
+		// Test whether datastore supports migration
 		for method := 0; method < migrationMethodCount; method++ {
-			// Clear all the caches
-			g.FlushLocalCache()
-			memcache.Flush(c)
+			// Test both inside a transaction and outside
+			for tx := 0; tx < 2; tx++ {
+				// Clear all the caches
+				g.FlushLocalCache()
+				memcache.Flush(c)
 
-			// Test whether datastore supports migration
-			verifyMigration(t, g, migA, method, fmt.Sprintf("DS-%v-%v", method, IgnoreFieldMismatch))
+				if tx == 1 {
+					if err := g.RunInTransaction(func(tg *Goon) error {
+						verifyMigration(t, tg, migA, method, fmt.Sprintf("DS-%v-%v-%v", tx, method, IgnoreFieldMismatch))
+						return nil
+					}, &datastore.TransactionOptions{XG: false}); err != nil {
+						t.Errorf("Unexpected error with TXN - %v", err)
+					}
+				} else {
+					verifyMigration(t, g, migA, method, fmt.Sprintf("DS-%v-%v-%v", tx, method, IgnoreFieldMismatch))
+				}
+			}
 		}
 	}
 }
 
 func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, method int, debugInfo string) {
-	migB := &MigrationB{Identification: migA.Id}
+	migB := &MigrationB{Parent: migA.Parent, Identification: migA.Id}
 
 	switch method {
 	case migrationMethodGet:
@@ -932,7 +944,7 @@ func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, method int, debugI
 		break
 	case migrationMethodGetAll:
 		migBs := []*MigrationB{}
-		if _, err := g.GetAll(datastore.NewQuery("Migration").Filter("number=", migA.Number), &migBs); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
+		if _, err := g.GetAll(datastore.NewQuery("Migration").Ancestor(migA.Parent).Filter("number=", migA.Number), &migBs); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
 			t.Errorf("%v > Unexpected error on GetAll: %v", debugInfo, err)
 			return
 		} else if len(migBs) != 1 {
@@ -944,7 +956,7 @@ func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, method int, debugI
 	case migrationMethodGetAllMulti:
 		// Get both Migration entities
 		migBs := []*MigrationB{}
-		if _, err := g.GetAll(datastore.NewQuery("Migration").Order("number"), &migBs); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
+		if _, err := g.GetAll(datastore.NewQuery("Migration").Ancestor(migA.Parent).Order("number"), &migBs); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
 			t.Errorf("%v > Unexpected error on GetAll: %v", debugInfo, err)
 			return
 		} else if len(migBs) != 2 {
@@ -954,7 +966,7 @@ func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, method int, debugI
 		migB = migBs[0]
 		break
 	case migrationMethodNext:
-		it := g.Run(datastore.NewQuery("Migration").Filter("number=", migA.Number))
+		it := g.Run(datastore.NewQuery("Migration").Ancestor(migA.Parent).Filter("number=", migA.Number))
 		if _, err := it.Next(migB); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
 			t.Errorf("%v > Unexpected error on Next: %v", debugInfo, err)
 			return
