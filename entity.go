@@ -619,6 +619,7 @@ func deserializeStruct(dst interface{}, b []byte) error {
 				return err
 			}
 		} else {
+			sd.dec.Decode(nil) // Discard the value
 			notFoundField = fieldName
 		}
 	}
