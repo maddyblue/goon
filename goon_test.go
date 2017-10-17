@@ -788,6 +788,7 @@ type MigrationA struct {
 	File             []byte
 	DeprecatedField  string       `datastore:"depf,noindex"`
 	DeprecatedStruct MigrationSub `datastore:"deps,noindex"`
+	FinalField       string       `datastore:"final,noindex"` // This should always be last, to test deprecating middle properties
 }
 
 type MigrationSub struct {
@@ -852,6 +853,7 @@ type MigrationB struct {
 	ZZs            ZigZags           `datastore:"zigzag,noindex"`
 	Keys           []*datastore.Key  `datastore:"ZeroKey,noindex"`
 	Files          [][]byte          `datastore:"File,noindex"`
+	FinalField     string            `datastore:"final,noindex"`
 }
 
 const (
@@ -879,7 +881,7 @@ func TestMigration(t *testing.T) {
 		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
 		DeepSlice: MigrationDeepA{Deep: MigrationDeepB{Deep: MigrationDeepC{Slice: []int{1, 2, 3}}}},
 		ZZs:       []ZigZag{{Zig: 1}, {Zag: 1}}, File: []byte{0xF0, 0x0D},
-		DeprecatedField: "dep", DeprecatedStruct: MigrationSub{Data: "dep"}}
+		DeprecatedField: "dep", DeprecatedStruct: MigrationSub{Data: "dep", Noise: []int{1, 2, 3}}, FinalField: "fin"}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
@@ -1038,6 +1040,8 @@ func verifyMigration(t *testing.T, g *Goon, migA *MigrationA, method int, debugI
 		t.Errorf("%v > Expected 1 file, got %v", debugInfo, len(migB.Files))
 	} else if !reflect.DeepEqual(migA.File, migB.Files[0]) {
 		t.Errorf("%v > Files don't match: %v != %v", debugInfo, migA.File, migB.Files[0])
+	} else if migA.FinalField != migB.FinalField {
+		t.Errorf("%v > FinalField doesn't match: %v != %v", debugInfo, migA.FinalField, migB.FinalField)
 	}
 }
 
