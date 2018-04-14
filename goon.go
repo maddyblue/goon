@@ -492,18 +492,19 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			if v.Index(mixs[i]).Kind() == reflect.Struct {
 				d = v.Index(mixs[i]).Addr().Interface()
 			}
-			fetched := true
+			fetched := false
 			if s, present := memvalues[m]; present {
 				err := deserializeStruct(d, s.Value)
 				if err == nil || (IgnoreFieldMismatch && errFieldMismatch(err)) {
 					g.putMemory(d)
+					fetched = true
 				} else if err == datastore.ErrNoSuchEntity || errFieldMismatch(err) {
 					anyErr = true // this flag tells GetMulti to return multiErr later
 					multiErr[mixs[i]] = err
+					fetched = true // success to fetch negative cache. no need to fallback to datastore
 				} else if err == errCacheFetchFailed {
-					fetched = false
+					// NOP
 				} else {
-					fetched = false
 					g.error(err)
 					return err
 				}
