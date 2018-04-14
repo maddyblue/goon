@@ -409,9 +409,30 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 	v := reflect.Indirect(reflect.ValueOf(dst))
 
+	multiErr, anyErr := make(appengine.MultiError, len(keys)), false
+
 	if g.inTransaction {
 		// todo: support getMultiLimit in transactions
-		return datastore.GetMulti(g.Context, keys, v.Interface())
+		if err := datastore.GetMulti(g.Context, keys, v.Interface()); err != nil {
+			if merr, ok := err.(appengine.MultiError); ok {
+				for i := 0; i < len(keys); i++ {
+					if merr[i] != nil && (!IgnoreFieldMismatch || !errFieldMismatch(merr[i])) {
+						anyErr = true // this flag tells GetMulti to return multiErr later
+						multiErr[i] = merr[i]
+					}
+				}
+			} else {
+				g.error(err)
+				anyErr = true // this flag tells GetMulti to return multiErr later
+				for i := 0; i < len(keys); i++ {
+					multiErr[i] = err
+				}
+			}
+			if anyErr {
+				return realError(multiErr)
+			}
+		}
+		return nil
 	}
 
 	var dskeys []*datastore.Key
@@ -448,8 +469,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	if len(memkeys) == 0 {
 		return nil
 	}
-
-	multiErr, anyErr := make(appengine.MultiError, len(keys)), false
 
 	tc, cf := context.WithTimeout(g.Context, MemcacheGetTimeout)
 	memvalues, err := memcache.GetMulti(tc, memkeys)

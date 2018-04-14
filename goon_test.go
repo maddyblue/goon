@@ -767,8 +767,14 @@ func TestInputVariety(t *testing.T) {
 	}
 }
 
+type MigrationEntity interface {
+	number() int32
+	parent() *datastore.Key
+}
+
 type MigrationA struct {
 	_kind            string            `goon:"kind,Migration"`
+	Parent           *datastore.Key    `datastore:"-" goon:"parent"`
 	Id               int64             `datastore:"-" goon:"id"`
 	Number           int32             `datastore:"number"`
 	Word             string            `datastore:"word,noindex"`
@@ -787,6 +793,15 @@ type MigrationA struct {
 	File             []byte
 	DeprecatedField  string       `datastore:"depf,noindex"`
 	DeprecatedStruct MigrationSub `datastore:"deps,noindex"`
+	FinalField       string       `datastore:"final,noindex"` // This should always be last, to test deprecating middle properties
+}
+
+func (m MigrationA) parent() *datastore.Key {
+	return m.Parent
+}
+
+func (m MigrationA) number() int32 {
+	return m.Number
 }
 
 type MigrationSub struct {
@@ -831,6 +846,7 @@ type MigrationIntB int
 
 type MigrationB struct {
 	_kind          string            `goon:"kind,Migration"`
+	Parent         *datastore.Key    `datastore:"-" goon:"parent"`
 	Identification int64             `datastore:"-" goon:"id"`
 	FancyNumber    int32             `datastore:"number"`
 	Slang          string            `datastore:"word,noindex"`
@@ -850,6 +866,15 @@ type MigrationB struct {
 	ZZs            ZigZags           `datastore:"zigzag,noindex"`
 	Keys           []*datastore.Key  `datastore:"ZeroKey,noindex"`
 	Files          [][]byte          `datastore:"File,noindex"`
+	FinalField     string            `datastore:"final,noindex"`
+}
+
+func (m MigrationB) parent() *datastore.Key {
+	return m.Parent
+}
+
+func (m MigrationB) number() int32 {
+	return m.FancyNumber
 }
 
 // MigrationA with PropertyLoadSaver interface
@@ -858,6 +883,12 @@ type MigrationPlsA MigrationA
 // MigrationB with PropertyLoadSaver interface
 type MigrationPlsB MigrationB
 
+func (m MigrationPlsA) parent() *datastore.Key {
+	return m.Parent
+}
+func (m MigrationPlsA) number() int32 {
+	return m.Number
+}
 func (m *MigrationPlsA) Save() ([]datastore.Property, error) {
 	return datastore.SaveStruct(m)
 }
@@ -865,6 +896,12 @@ func (m *MigrationPlsA) Load(props []datastore.Property) error {
 	return datastore.LoadStruct(m, props)
 }
 
+func (m MigrationPlsB) parent() *datastore.Key {
+	return m.Parent
+}
+func (m MigrationPlsB) number() int32 {
+	return m.FancyNumber
+}
 func (m *MigrationPlsB) Save() ([]datastore.Property, error) {
 	return datastore.SaveStruct(m)
 }
@@ -892,63 +929,61 @@ func TestMigration(t *testing.T) {
 	g := FromContext(c)
 
 	// Create & save an entity with the original structure
-	migA := &MigrationA{Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
+	parentKey := g.Key(&HasId{Id: 9999})
+	migA := &MigrationA{Parent: parentKey, Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
 		Holiday: time.Now().UTC().Truncate(time.Microsecond), α: 1, Level: 9001, Floor: 5,
 		Sub: MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
 		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
 		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
 		DeepSlice: MigrationDeepA{Deep: MigrationDeepB{Deep: MigrationDeepC{Slice: []int{1, 2, 3}}}},
 		ZZs:       []ZigZag{{Zig: 1}, {Zag: 1}}, File: []byte{0xF0, 0x0D},
-		DeprecatedField: "dep", DeprecatedStruct: MigrationSub{Data: "dep"}}
+		DeprecatedField: "dep", DeprecatedStruct: MigrationSub{Data: "dep", Noise: []int{1, 2, 3}}, FinalField: "fin"}
 	if _, err := g.Put(migA); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
 	// Also save an already migrated structure
-	migB := &MigrationB{Identification: migA.Id + 1, FancyNumber: migA.Number + 1}
+	migB := &MigrationB{Parent: migA.Parent, Identification: migA.Id + 1, FancyNumber: migA.Number + 1}
 	if _, err := g.Put(migB); err != nil {
 		t.Errorf("Unexpected error on Put: %v", err)
 	}
-
-	// Due to eventual consistency, we need to wait a bit.
-	time.Sleep(1 * time.Second)
 
 	// Run migration tests with both IgnoreFieldMismatch on & off
 	testcase := []struct {
 		name                string
 		ignoreFieldMismatch bool
-		src, dst            interface{}
+		src, dst            MigrationEntity
 	}{
 		{
 			name:                "NormalCache -> NormalCache (IgnoreFieldMismatch:true)",
 			ignoreFieldMismatch: true,
-			src:                 &MigrationA{Id: 1},
-			dst:                 &MigrationB{Identification: 1},
+			src:                 &MigrationA{Parent: parentKey, Id: 1},
+			dst:                 &MigrationB{Parent: parentKey, Identification: 1},
 		},
 		{
 			name:                "NormalCache -> NormalCache (IgnoreFieldMismatch:false)",
 			ignoreFieldMismatch: false,
-			src:                 &MigrationA{Id: 1},
-			dst:                 &MigrationB{Identification: 1},
+			src:                 &MigrationA{Parent: parentKey, Id: 1},
+			dst:                 &MigrationB{Parent: parentKey, Identification: 1},
 		},
 		{
 			// struct can fetch PropertyListCache
 			name:                "PropertyListCache -> NormalCache (IgnoreFieldMismatch:true)",
 			ignoreFieldMismatch: true,
-			src:                 &MigrationPlsA{Id: 1},
-			dst:                 &MigrationB{Identification: 1},
+			src:                 &MigrationPlsA{Parent: parentKey, Id: 1},
+			dst:                 &MigrationB{Parent: parentKey, Identification: 1},
 		},
 		{
 			name:                "PropertyListCache -> PropertyListCache (IgnoreFieldMismatch:true)",
 			ignoreFieldMismatch: true,
-			src:                 &MigrationPlsA{Id: 1},
-			dst:                 &MigrationPlsB{Identification: 1},
+			src:                 &MigrationPlsA{Parent: parentKey, Id: 1},
+			dst:                 &MigrationPlsB{Parent: parentKey, Identification: 1},
 		},
 		{
 			// PropertyLoadSaver should not fetch NormalCache but simply falls back to datastore
 			name:                "NormalCache -> PropertyListCache (IgnoreFieldMismatch:true)",
 			ignoreFieldMismatch: true,
-			src:                 &MigrationA{Id: 1},
-			dst:                 &MigrationPlsB{Identification: 1},
+			src:                 &MigrationA{Parent: parentKey, Id: 1},
+			dst:                 &MigrationPlsB{Parent: parentKey, Identification: 1},
 		},
 	}
 	for _, tt := range testcase {
@@ -967,24 +1002,37 @@ func TestMigration(t *testing.T) {
 		g.FlushLocalCache()
 
 		// Test whether memcache supports migration
+		var fetched MigrationEntity
 		debugInfo := fmt.Sprintf("%s - MC", tt.name)
-		verifyMigration(t, g, tt.src, tt.dst, migrationMethodGet, debugInfo)
-		checkMigrationResult(t, g, tt.src, tt.dst, debugInfo)
+		fetched = verifyMigration(t, g, tt.src, tt.dst, migrationMethodGet, debugInfo)
+		checkMigrationResult(t, g, tt.src, fetched, debugInfo)
 
+		// Test whether datastore supports migration
 		for method := 0; method < migrationMethodCount; method++ {
-			// Clear all the caches
-			g.FlushLocalCache()
-			memcache.Flush(c)
+			// Test both inside a transaction and outside
+			for tx := 0; tx < 2; tx++ {
+				// Clear all the caches
+				g.FlushLocalCache()
+				memcache.Flush(c)
 
-			// Test whether datastore supports migration
-			debugInfo := fmt.Sprintf("%s DS-%v", tt.name, method)
-			verifyMigration(t, g, tt.src, tt.dst, method, debugInfo)
-			checkMigrationResult(t, g, tt.src, tt.dst, debugInfo)
+				debugInfo := fmt.Sprintf("%s DS-%v-%v-%v", tt.name, tx, method, IgnoreFieldMismatch)
+				if tx == 1 {
+					if err := g.RunInTransaction(func(tg *Goon) error {
+						fetched = verifyMigration(t, tg, tt.src, tt.dst, method, debugInfo)
+						return nil
+					}, &datastore.TransactionOptions{XG: false}); err != nil {
+						t.Errorf("Unexpected error with TXN - %v", err)
+					}
+				} else {
+					fetched = verifyMigration(t, g, tt.src, tt.dst, method, debugInfo)
+				}
+				checkMigrationResult(t, g, tt.src, fetched, debugInfo)
+			}
 		}
 	}
 }
 
-func verifyMigration(t *testing.T, g *Goon, src, dst interface{}, method int, debugInfo string) {
+func verifyMigration(t *testing.T, g *Goon, src, dst MigrationEntity, method int, debugInfo string) (fetched MigrationEntity) {
 	sliceType := reflect.SliceOf(reflect.TypeOf(dst))
 	slicePtr := reflect.New(sliceType)
 	slicePtr.Elem().Set(reflect.MakeSlice(sliceType, 0, 10))
@@ -997,30 +1045,28 @@ func verifyMigration(t *testing.T, g *Goon, src, dst interface{}, method int, de
 			t.Errorf("%v > Unexpected error on Get: %v", debugInfo, err)
 			return
 		}
-		break
+		return dst
 	case migrationMethodGetAll:
-		if _, err := g.GetAll(datastore.NewQuery("Migration").Filter("number=", 123), slice); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
+		if _, err := g.GetAll(datastore.NewQuery("Migration").Ancestor(src.parent()).Filter("number=", src.number()), slice); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
 			t.Errorf("%v > Unexpected error on GetAll: %v", debugInfo, err)
 			return
 		} else if sliceVal.Len() != 1 {
 			t.Errorf("%v > Unexpected query result, expected %v entities, got %v", debugInfo, 1, sliceVal.Len())
 			return
 		}
-		dst = sliceVal.Index(0)
-		break
+		return sliceVal.Index(0).Interface().(MigrationEntity)
 	case migrationMethodGetAllMulti:
 		// Get both Migration entities
-		if _, err := g.GetAll(datastore.NewQuery("Migration").Order("number"), slice); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
+		if _, err := g.GetAll(datastore.NewQuery("Migration").Ancestor(src.parent()).Order("number"), slice); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
 			t.Errorf("%v > Unexpected error on GetAll: %v", debugInfo, err)
 			return
 		} else if sliceVal.Len() != 2 {
 			t.Errorf("%v > Unexpected query result, expected %v entities, got %v", debugInfo, 2, sliceVal.Len())
 			return
 		}
-		dst = sliceVal.Index(0)
-		break
+		return sliceVal.Index(0).Interface().(MigrationEntity)
 	case migrationMethodNext:
-		it := g.Run(datastore.NewQuery("Migration").Filter("number=", 123))
+		it := g.Run(datastore.NewQuery("Migration").Ancestor(src.parent()).Filter("number=", src.number()))
 		if _, err := it.Next(dst); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
 			t.Errorf("%v > Unexpected error on Next: %v", debugInfo, err)
 			return
@@ -1029,11 +1075,12 @@ func verifyMigration(t *testing.T, g *Goon, src, dst interface{}, method int, de
 		if _, err := it.Next(dst); err != datastore.Done {
 			t.Errorf("Next: expected iterator to end with the error datastore.Done, got %v", err)
 		}
-		break
+		return dst
 	}
+	return nil
 }
 
-func checkMigrationResult(t *testing.T, g *Goon, src interface{}, dst interface{}, debugInfo string) {
+func checkMigrationResult(t *testing.T, g *Goon, src, fetched interface{}, debugInfo string) {
 	var migA *MigrationA
 	switch v := src.(type) {
 	case *MigrationA:
@@ -1042,7 +1089,7 @@ func checkMigrationResult(t *testing.T, g *Goon, src interface{}, dst interface{
 		migA = (*MigrationA)(v)
 	}
 	var migB *MigrationB
-	switch v := dst.(type) {
+	switch v := fetched.(type) {
 	case *MigrationB:
 		migB = v
 	case *MigrationPlsB:
@@ -1109,6 +1156,8 @@ func checkMigrationResult(t *testing.T, g *Goon, src interface{}, dst interface{
 		t.Errorf("%v > Expected 1 file, got %v", debugInfo, len(migB.Files))
 	} else if !reflect.DeepEqual(migA.File, migB.Files[0]) {
 		t.Errorf("%v > Files don't match: %v != %v", debugInfo, migA.File, migB.Files[0])
+	} else if migA.FinalField != migB.FinalField {
+		t.Errorf("%v > FinalField doesn't match: %v != %v", debugInfo, migA.FinalField, migB.FinalField)
 	}
 }
 
