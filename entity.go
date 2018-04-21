@@ -423,10 +423,10 @@ func serializeStruct(src interface{}) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, prop := range props {
-			v := reflect.ValueOf(prop.Value)
+		for i := 0; i < len(props); i++ {
+			v := reflect.ValueOf(props[i].Value)
 			if v.Kind() == reflect.Ptr && v.IsNil() {
-				prop.Value = nilType{}
+				props[i].Value = nilType{}
 			}
 		}
 		if err := se.enc.Encode(props); err != nil {
@@ -681,6 +681,12 @@ func deserializeStruct(dst interface{}, b []byte) error {
 		var props []datastore.Property
 		if err := sd.dec.Decode(&props); err != nil {
 			return errCacheFetchFailed
+		}
+		for i := 0; i < len(props); i++ {
+			nilVal := nilType{}
+			if props[i].Value == nilVal {
+				props[i].Value = nil
+			}
 		}
 		if hasPLS {
 			if err := pls.Load(props); err != nil {
