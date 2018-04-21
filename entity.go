@@ -429,6 +429,9 @@ func serializeStruct(src interface{}) ([]byte, error) {
 				prop.Value = nilType{}
 			}
 		}
+		if err := se.enc.Encode(props); err != nil {
+			return nil, fmt.Errorf("goon: Failed to encode PropertyList - %v", err)
+		}
 		return se.buf.Bytes(), nil
 	} else {
 		smd := &structMetaData{metaDatas: make([]string, 0, 16)}
