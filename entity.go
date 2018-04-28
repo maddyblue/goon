@@ -420,7 +420,7 @@ func serializeStruct(src interface{}) ([]byte, error) {
 	defer freeSerializationEncoder(se)
 
 	if ls, ok := src.(datastore.PropertyLoadSaver); ok {
-		se.buf.Write([]byte{serializationStatePropertyList})
+		se.buf.WriteByte(serializationStatePropertyList)
 		props, err := ls.Save()
 		if err != nil {
 			return nil, err
