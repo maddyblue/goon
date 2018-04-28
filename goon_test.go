@@ -949,30 +949,31 @@ func TestMigration(t *testing.T) {
 
 	// Run migration tests with both IgnoreFieldMismatch on & off
 	testcase := []struct {
-		name     string
-		src, dst MigrationEntity
+		name string
+		src  MigrationEntity
+		dst  func() MigrationEntity
 	}{
 		{
 			name: "NormalCache -> NormalCache",
 			src:  &MigrationA{Parent: parentKey, Id: 1},
-			dst:  &MigrationB{Parent: parentKey, Identification: 1},
+			dst:  func() MigrationEntity { return &MigrationB{Parent: parentKey, Identification: 1} },
 		},
 		{
 			// struct can fetch PropertyListCache
 			name: "PropertyListCache -> NormalCache",
 			src:  &MigrationPlsA{Parent: parentKey, Id: 1},
-			dst:  &MigrationB{Parent: parentKey, Identification: 1},
+			dst:  func() MigrationEntity { return &MigrationB{Parent: parentKey, Identification: 1} },
 		},
 		{
 			name: "PropertyListCache -> PropertyListCache",
 			src:  &MigrationPlsA{Parent: parentKey, Id: 1},
-			dst:  &MigrationPlsB{Parent: parentKey, Identification: 1},
+			dst:  func() MigrationEntity { return &MigrationPlsB{Parent: parentKey, Identification: 1} },
 		},
 		{
 			// PropertyLoadSaver should not fetch NormalCache but simply falls back to datastore
 			name: "NormalCache -> PropertyListCache",
 			src:  &MigrationA{Parent: parentKey, Id: 1},
-			dst:  &MigrationPlsB{Parent: parentKey, Identification: 1},
+			dst:  func() MigrationEntity { return &MigrationPlsB{Parent: parentKey, Identification: 1} },
 		},
 	}
 	for _, tt := range testcase {
@@ -991,8 +992,9 @@ func TestMigration(t *testing.T) {
 
 			// Test whether memcache supports migration
 			var fetched MigrationEntity
+			dst := tt.dst()
 			debugInfo := fmt.Sprintf("%s - field mismatch: %v - MC", tt.name, IgnoreFieldMismatch)
-			fetched = verifyMigration(t, g, tt.src, tt.dst, migrationMethodGet, debugInfo)
+			fetched = verifyMigration(t, g, tt.src, dst, migrationMethodGet, debugInfo)
 			checkMigrationResult(t, g, tt.src, fetched, debugInfo)
 
 			// Test whether datastore supports migration
@@ -1006,13 +1008,13 @@ func TestMigration(t *testing.T) {
 					debugInfo := fmt.Sprintf("%s DS-%v-%v-%v", tt.name, tx, method, IgnoreFieldMismatch)
 					if tx == 1 {
 						if err := g.RunInTransaction(func(tg *Goon) error {
-							fetched = verifyMigration(t, tg, tt.src, tt.dst, method, debugInfo)
+							fetched = verifyMigration(t, tg, tt.src, dst, method, debugInfo)
 							return nil
 						}, &datastore.TransactionOptions{XG: false}); err != nil {
 							t.Errorf("Unexpected error with TXN - %v", err)
 						}
 					} else {
-						fetched = verifyMigration(t, g, tt.src, tt.dst, method, debugInfo)
+						fetched = verifyMigration(t, g, tt.src, dst, method, debugInfo)
 					}
 					checkMigrationResult(t, g, tt.src, fetched, debugInfo)
 				}
