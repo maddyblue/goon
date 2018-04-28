@@ -909,7 +909,7 @@ func (m *MigrationPlsB) Load(props []datastore.Property) error {
 	return datastore.LoadStruct(m, props)
 }
 
-// Make sure that MigrationC implements datastore.PropertyLoadSaver
+// Make sure these implement datastore.PropertyLoadSaver
 var _, _ datastore.PropertyLoadSaver = &MigrationPlsA{}, &MigrationPlsB{}
 
 const (
@@ -949,84 +949,73 @@ func TestMigration(t *testing.T) {
 
 	// Run migration tests with both IgnoreFieldMismatch on & off
 	testcase := []struct {
-		name                string
-		ignoreFieldMismatch bool
-		src, dst            MigrationEntity
+		name     string
+		src, dst MigrationEntity
 	}{
 		{
-			name:                "NormalCache -> NormalCache (IgnoreFieldMismatch:true)",
-			ignoreFieldMismatch: true,
-			src:                 &MigrationA{Parent: parentKey, Id: 1},
-			dst:                 &MigrationB{Parent: parentKey, Identification: 1},
-		},
-		{
-			name:                "NormalCache -> NormalCache (IgnoreFieldMismatch:false)",
-			ignoreFieldMismatch: false,
-			src:                 &MigrationA{Parent: parentKey, Id: 1},
-			dst:                 &MigrationB{Parent: parentKey, Identification: 1},
+			name: "NormalCache -> NormalCache",
+			src:  &MigrationA{Parent: parentKey, Id: 1},
+			dst:  &MigrationB{Parent: parentKey, Identification: 1},
 		},
 		{
 			// struct can fetch PropertyListCache
-			name:                "PropertyListCache -> NormalCache (IgnoreFieldMismatch:true)",
-			ignoreFieldMismatch: true,
-			src:                 &MigrationPlsA{Parent: parentKey, Id: 1},
-			dst:                 &MigrationB{Parent: parentKey, Identification: 1},
+			name: "PropertyListCache -> NormalCache",
+			src:  &MigrationPlsA{Parent: parentKey, Id: 1},
+			dst:  &MigrationB{Parent: parentKey, Identification: 1},
 		},
 		{
-			name:                "PropertyListCache -> PropertyListCache (IgnoreFieldMismatch:true)",
-			ignoreFieldMismatch: true,
-			src:                 &MigrationPlsA{Parent: parentKey, Id: 1},
-			dst:                 &MigrationPlsB{Parent: parentKey, Identification: 1},
+			name: "PropertyListCache -> PropertyListCache",
+			src:  &MigrationPlsA{Parent: parentKey, Id: 1},
+			dst:  &MigrationPlsB{Parent: parentKey, Identification: 1},
 		},
 		{
 			// PropertyLoadSaver should not fetch NormalCache but simply falls back to datastore
-			name:                "NormalCache -> PropertyListCache (IgnoreFieldMismatch:true)",
-			ignoreFieldMismatch: true,
-			src:                 &MigrationA{Parent: parentKey, Id: 1},
-			dst:                 &MigrationPlsB{Parent: parentKey, Identification: 1},
+			name: "NormalCache -> PropertyListCache",
+			src:  &MigrationA{Parent: parentKey, Id: 1},
+			dst:  &MigrationPlsB{Parent: parentKey, Identification: 1},
 		},
 	}
 	for _, tt := range testcase {
-		IgnoreFieldMismatch = tt.ignoreFieldMismatch
+		for _, IgnoreFieldMismatch = range []bool{true, false} {
+			// Clear all the caches
+			g.FlushLocalCache()
+			memcache.Flush(c)
 
-		// Clear all the caches
-		g.FlushLocalCache()
-		memcache.Flush(c)
+			// Get it back, so it's in the cache
+			if err := g.Get(tt.src); err != nil {
+				t.Errorf("Unexpected error on Get: %v", err)
+			}
 
-		// Get it back, so it's in the cache
-		if err := g.Get(tt.src); err != nil {
-			t.Errorf("Unexpected error on Get: %v", err)
-		}
+			// Clear the local cache, because it doesn't need to support migration
+			g.FlushLocalCache()
 
-		// Clear the local cache, because it doesn't need to support migration
-		g.FlushLocalCache()
+			// Test whether memcache supports migration
+			var fetched MigrationEntity
+			debugInfo := fmt.Sprintf("%s - field mismatch: %v - MC", tt.name, IgnoreFieldMismatch)
+			fetched = verifyMigration(t, g, tt.src, tt.dst, migrationMethodGet, debugInfo)
+			checkMigrationResult(t, g, tt.src, fetched, debugInfo)
 
-		// Test whether memcache supports migration
-		var fetched MigrationEntity
-		debugInfo := fmt.Sprintf("%s - MC", tt.name)
-		fetched = verifyMigration(t, g, tt.src, tt.dst, migrationMethodGet, debugInfo)
-		checkMigrationResult(t, g, tt.src, fetched, debugInfo)
+			// Test whether datastore supports migration
+			for method := 0; method < migrationMethodCount; method++ {
+				// Test both inside a transaction and outside
+				for tx := 0; tx < 2; tx++ {
+					// Clear all the caches
+					g.FlushLocalCache()
+					memcache.Flush(c)
 
-		// Test whether datastore supports migration
-		for method := 0; method < migrationMethodCount; method++ {
-			// Test both inside a transaction and outside
-			for tx := 0; tx < 2; tx++ {
-				// Clear all the caches
-				g.FlushLocalCache()
-				memcache.Flush(c)
-
-				debugInfo := fmt.Sprintf("%s DS-%v-%v-%v", tt.name, tx, method, IgnoreFieldMismatch)
-				if tx == 1 {
-					if err := g.RunInTransaction(func(tg *Goon) error {
-						fetched = verifyMigration(t, tg, tt.src, tt.dst, method, debugInfo)
-						return nil
-					}, &datastore.TransactionOptions{XG: false}); err != nil {
-						t.Errorf("Unexpected error with TXN - %v", err)
+					debugInfo := fmt.Sprintf("%s DS-%v-%v-%v", tt.name, tx, method, IgnoreFieldMismatch)
+					if tx == 1 {
+						if err := g.RunInTransaction(func(tg *Goon) error {
+							fetched = verifyMigration(t, tg, tt.src, tt.dst, method, debugInfo)
+							return nil
+						}, &datastore.TransactionOptions{XG: false}); err != nil {
+							t.Errorf("Unexpected error with TXN - %v", err)
+						}
+					} else {
+						fetched = verifyMigration(t, g, tt.src, tt.dst, method, debugInfo)
 					}
-				} else {
-					fetched = verifyMigration(t, g, tt.src, tt.dst, method, debugInfo)
+					checkMigrationResult(t, g, tt.src, fetched, debugInfo)
 				}
-				checkMigrationResult(t, g, tt.src, fetched, debugInfo)
 			}
 		}
 	}
