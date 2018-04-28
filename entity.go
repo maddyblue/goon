@@ -86,6 +86,8 @@ type nilType struct {
 	GoonNilValue string
 }
 
+var nilValue = nilType{}
+
 type serializationReader struct {
 	r *bytes.Reader
 }
@@ -156,7 +158,7 @@ func init() {
 	gob.Register(seBoot.v13)
 	gob.Register(seBoot.v14)
 	gob.Register(seBoot.v15)
-	gob.Register(nilType{})
+	gob.Register(nilValue)
 }
 
 // getFieldInfoAndMetadata returns metadata about a struct. Its main purpose is to cut down
@@ -426,7 +428,7 @@ func serializeStruct(src interface{}) ([]byte, error) {
 		for i := 0; i < len(props); i++ {
 			v := reflect.ValueOf(props[i].Value)
 			if v.Kind() == reflect.Ptr && v.IsNil() {
-				props[i].Value = nilType{}
+				props[i].Value = nilValue
 			}
 		}
 		if err := se.enc.Encode(props); err != nil {
@@ -683,8 +685,7 @@ func deserializeStruct(dst interface{}, b []byte) error {
 			return errCacheFetchFailed
 		}
 		for i := 0; i < len(props); i++ {
-			nilVal := nilType{}
-			if props[i].Value == nilVal {
+			if props[i].Value == nilValue {
 				props[i].Value = nil
 			}
 		}
