@@ -948,7 +948,7 @@ func TestMigration(t *testing.T) {
 	}
 
 	// Run migration tests with both IgnoreFieldMismatch on & off
-	for _, IgnoreFieldMismatch := range []bool{true, false} {
+	for _, IgnoreFieldMismatch = range []bool{true, false} {
 		testcase := []struct {
 			name string
 			src  MigrationEntity
