@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"container/list"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -81,6 +82,12 @@ type serializationDecoder struct {
 	dec *gob.Decoder
 }
 
+type nilType struct {
+	GoonNilValue string
+}
+
+var nilValue = nilType{}
+
 type serializationReader struct {
 	r *bytes.Reader
 }
@@ -94,8 +101,9 @@ func (sr *serializationReader) ReadByte() (c byte, err error) {
 }
 
 const (
-	serializationStateEmpty  = 0x00
-	serializationStateNormal = 0x01
+	serializationStateEmpty        = 0x00
+	serializationStateNormal       = 0x01
+	serializationStatePropertyList = 0x02
 )
 
 var (
@@ -110,6 +118,7 @@ var (
 	seBoot                    = seBootstrap{v01: &datastore.Key{}}
 	seBootBytes               []byte
 	seBootBytesLock           sync.RWMutex
+	errCacheFetchFailed       = errors.New("goon: cache fetch failed")
 )
 
 func init() {
@@ -132,6 +141,24 @@ func init() {
 	//       * The usage is removed during a code update
 	//    b) Register a same type as us, but in an inconsistent order between multiple executions
 	freeSerializationDecoder(getSerializationDecoder([]byte{}))
+
+	// register gob types
+	gob.Register(seBoot.v01)
+	gob.Register(seBoot.v02)
+	gob.Register(seBoot.v03)
+	gob.Register(seBoot.v04)
+	gob.Register(seBoot.v05)
+	gob.Register(seBoot.v06)
+	gob.Register(seBoot.v07)
+	gob.Register(seBoot.v08)
+	gob.Register(seBoot.v09)
+	gob.Register(seBoot.v10)
+	gob.Register(seBoot.v11)
+	gob.Register(seBoot.v12)
+	gob.Register(seBoot.v13)
+	gob.Register(seBoot.v14)
+	gob.Register(seBoot.v15)
+	gob.Register(nilValue)
 }
 
 // getFieldInfoAndMetadata returns metadata about a struct. Its main purpose is to cut down
@@ -391,22 +418,39 @@ func serializeStruct(src interface{}) ([]byte, error) {
 
 	se := getSerializationEncoder()
 	defer freeSerializationEncoder(se)
-	smd := &structMetaData{metaDatas: make([]string, 0, 16)}
-	_, fms := getFieldInfoAndMetadata(t) // Use this function to force generation if needed
 
-	if err := serializeStructInternal(se.enc, smd, fms, "", v); err != nil {
-		return nil, err
+	if ls, ok := src.(datastore.PropertyLoadSaver); ok {
+		se.buf.WriteByte(serializationStatePropertyList)
+		props, err := ls.Save()
+		if err != nil {
+			return nil, err
+		}
+		for i := 0; i < len(props); i++ {
+			v := reflect.ValueOf(props[i].Value)
+			if v.Kind() == reflect.Ptr && v.IsNil() {
+				props[i].Value = nilValue
+			}
+		}
+		if err := se.enc.Encode(props); err != nil {
+			return nil, fmt.Errorf("goon: Failed to encode PropertyList - %v", err)
+		}
+		return se.buf.Bytes(), nil
+	} else {
+		smd := &structMetaData{metaDatas: make([]string, 0, 16)}
+		_, fms := getFieldInfoAndMetadata(t) // Use this function to force generation if needed
+		if err := serializeStructInternal(se.enc, smd, fms, "", v); err != nil {
+			return nil, err
+		}
+
+		bufSize := se.buf.Len()
+		// final size = header + all metadatas + separators for metadata + data
+		finalBufSize := 1 + smd.totalLength + len(smd.metaDatas) + bufSize
+		finalBuf := make([]byte, finalBufSize)
+		finalBuf[0] = byte(serializationStateNormal)          // Set the header
+		serializeStructMetaData(finalBuf[1:], smd)            // Serialize the metadata
+		copy(finalBuf[finalBufSize-bufSize:], se.buf.Bytes()) // Copy the actual data
+		return finalBuf, nil
 	}
-
-	bufSize := se.buf.Len()
-	// final size = header + all metadatas + separators for metadata + data
-	finalBufSize := 1 + smd.totalLength + len(smd.metaDatas) + bufSize
-	finalBuf := make([]byte, finalBufSize)
-	finalBuf[0] = byte(serializationStateNormal)          // Set the header
-	serializeStructMetaData(finalBuf[1:], smd)            // Serialize the metadata
-	copy(finalBuf[finalBufSize-bufSize:], se.buf.Bytes()) // Copy the actual data
-
-	return finalBuf, nil
 }
 
 // serializeStructInternal is a helper function for serializeStruct, mainly for easier recursion.
@@ -591,9 +635,13 @@ func deserializeStruct(dst interface{}, b []byte) error {
 		return fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	if header := b[0]; header == serializationStateEmpty {
+	header := b[0]
+	switch header {
+	case serializationStateEmpty:
 		return datastore.ErrNoSuchEntity
-	} else if header != serializationStateNormal {
+	case serializationStateNormal, serializationStatePropertyList:
+		// supported header. keep going.
+	default:
 		return fmt.Errorf("goon: Unrecognized cache header: %v", header)
 	}
 
@@ -605,22 +653,51 @@ func deserializeStruct(dst interface{}, b []byte) error {
 	fieldMap, _ := getFieldInfoAndMetadata(t)
 	var notFoundField string
 
-	for _, metaData := range smd.metaDatas {
-		fieldName, slice, zeroValue := metaData, false, false
-		if metaData[0] == '$' {
-			fieldName, slice = metaData[1:], true
-		} else if metaData[0] == '!' {
-			fieldName, zeroValue = metaData[1:], true
+	pls, hasPLS := dst.(datastore.PropertyLoadSaver)
+	switch header {
+	case serializationStateNormal:
+		if hasPLS {
+			// unfortunately fetching PropertyList cache to non-PLS is not supported
+			// and should falls back to datastore
+			return errCacheFetchFailed
 		}
-		nameParts := strings.Split(fieldName, ".")
+		for _, metaData := range smd.metaDatas {
+			fieldName, slice, zeroValue := metaData, false, false
+			if metaData[0] == '$' {
+				fieldName, slice = metaData[1:], true
+			} else if metaData[0] == '!' {
+				fieldName, zeroValue = metaData[1:], true
+			}
+			nameParts := strings.Split(fieldName, ".")
 
-		if fi, ok := fieldMap[fieldName]; ok {
-			if err := deserializeStructInternal(sd.dec, fi, fieldName, nameParts, slice, zeroValue, structHistory, v, t); err != nil {
+			if fi, ok := fieldMap[fieldName]; ok {
+				if err := deserializeStructInternal(sd.dec, fi, fieldName, nameParts, slice, zeroValue, structHistory, v, t); err != nil {
+					return err
+				}
+			} else {
+				sd.dec.Decode(nil) // Discard the value
+				notFoundField = fieldName
+			}
+		}
+	case serializationStatePropertyList:
+		var props []datastore.Property
+		if err := sd.dec.Decode(&props); err != nil {
+			return errCacheFetchFailed
+		}
+		for i := 0; i < len(props); i++ {
+			if props[i].Value == nilValue {
+				props[i].Value = nil
+			}
+		}
+		if hasPLS {
+			if err := pls.Load(props); err != nil {
 				return err
 			}
 		} else {
-			sd.dec.Decode(nil) // Discard the value
-			notFoundField = fieldName
+			// fetching PropertyList cache to non-PLS struct can be handled by LoadStruct()
+			if err := datastore.LoadStruct(dst, props); err != nil {
+				return err
+			}
 		}
 	}
 
