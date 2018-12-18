@@ -51,6 +51,9 @@ var (
 	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
 	// requests.
 	MemcacheGetTimeout = time.Millisecond * 10
+	// MemcacheExpiration is the expiration duration of the caches.
+	// zero means no expiration.
+	MemcacheExpiration = time.Duration(0)
 
 	// IgnoreFieldMismatch decides whether *datastore.ErrFieldMismatch errors
 	// should be silently ignored. This allows you to easily remove fields from structs.
@@ -346,8 +349,9 @@ func (g *Goon) putMemcache(srcs []interface{}, exists []byte) error {
 		// payloadSize will overflow if we push 2+ gigs on a 32bit machine
 		payloadSize += len(data)
 		items[i] = &memcache.Item{
-			Key:   MemcacheKey(key),
-			Value: data,
+			Key:        MemcacheKey(key),
+			Value:      data,
+			Expiration: MemcacheExpiration,
 		}
 	}
 	memcacheTimeout := MemcachePutTimeoutSmall
