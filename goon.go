@@ -375,10 +375,19 @@ func (g *Goon) putMemcache(srcs []interface{}, exists []byte) error {
 	return err
 }
 
+// GetWithoutCache loads the entity based on dst's key into dst without cache.
+func (g *Goon) GetWithoutCache(dst interface{}) error {
+	return g.get(dst, false)
+}
+
 // Get loads the entity based on dst's key into dst
 // If there is no such entity for the key, Get returns
 // datastore.ErrNoSuchEntity.
 func (g *Goon) Get(dst interface{}) error {
+	return g.get(dst, true)
+}
+
+func (g *Goon) get(dst interface{}, withCache bool) error {
 	set := reflect.ValueOf(dst)
 	if set.Kind() != reflect.Ptr {
 		return fmt.Errorf("goon: expected pointer to a struct, got %#v", dst)
@@ -387,7 +396,7 @@ func (g *Goon) Get(dst interface{}) error {
 		set = set.Elem()
 	}
 	dsts := []interface{}{dst}
-	if err := g.GetMulti(dsts); err != nil {
+	if err := g.getMulti(dsts, withCache); err != nil {
 		// Look for an embedded error if it's multi
 		if me, ok := err.(appengine.MultiError); ok {
 			return me[0]
@@ -401,11 +410,20 @@ func (g *Goon) Get(dst interface{}) error {
 
 const getMultiLimit = 1000
 
+// GetMultiWithoutCache is a batch version of Get, which ignores cache.
+func (g *Goon) GetMultiWithoutCache(dst interface{}) error {
+	return g.getMulti(dst, false)
+}
+
 // GetMulti is a batch version of Get.
 //
 // dst must be a *[]S, *[]*S, *[]I, []S, []*S, or []I, for some struct type S,
 // or some interface type I. If *[]I or []I, each element must be a struct pointer.
 func (g *Goon) GetMulti(dst interface{}) error {
+	return g.getMulti(dst, true)
+}
+
+func (g *Goon) getMulti(dst interface{}, withCache bool) error {
 	keys, err := g.extractKeys(dst, false) // don't allow incomplete keys on a Get request
 	if err != nil {
 		return err
@@ -415,7 +433,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 
 	multiErr, anyErr := make(appengine.MultiError, len(keys)), false
 
-	if g.inTransaction {
+	if g.inTransaction || !withCache {
 		// todo: support getMultiLimit in transactions
 		if err := datastore.GetMulti(g.Context, keys, v.Interface()); err != nil {
 			if merr, ok := err.(appengine.MultiError); ok {
