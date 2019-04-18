@@ -53,24 +53,47 @@ type KindNameResolver func(src interface{}) string
 // A special bootstrapping struct that contains all the datastore-supported types
 // that need to be registered with gob. Using this to initialize every encoder/decoder,
 // we get reusable encoders/decoders. Additionally, this cuts down on the serialized bytes length.
-// https://developers.google.com/appengine/docs/go/datastore/reference
+// https://cloud.google.com/appengine/docs/standard/go/datastore/reference
+//
+// Of the datastore supported types, gob internally already registers:
+// - signed integers (int, int8, int16, int32 and int64),
+// - bool,
+// - string,
+// - float32 and float64,
+// - []byte,
+//
+// We need to manually register:
+// - datastore.ByteString,
+// - *datastore.Key,
+// - time.Time,
+// - appengine.BlobKey,
+// - appengine.GeoPoint,
+// - slices of any of the above, including internally supported types.
+//
 type seBootstrap struct {
-	v01 *datastore.Key
-	v02 time.Time
-	v03 appengine.BlobKey
-	v04 []*datastore.Key
-	v05 []time.Time
+	v01 datastore.ByteString
+	v02 *datastore.Key
+	v03 time.Time
+	v04 appengine.BlobKey
+	v05 appengine.GeoPoint
 	v06 []int
 	v07 []int8
 	v08 []int16
 	v09 []int32
 	v10 []int64
-	v11 []float32
-	v12 []float64
-	v13 []bool
-	v14 []string
+	v11 []bool
+	v12 []string
+	v13 []float32
+	v14 []float64
 	v15 [][]byte
+	v16 []datastore.ByteString
+	v17 []*datastore.Key
+	v18 []time.Time
+	v19 []appengine.BlobKey
+	v20 []appengine.GeoPoint
 }
+
+const seBootstrapFieldCount = 20 // The number of fields in seBootstrap
 
 type serializationEncoder struct {
 	buf *bytes.Buffer
@@ -115,13 +138,36 @@ var (
 	serializationEncodersLock sync.Mutex
 	serializationDecoders     = list.New()
 	serializationDecodersLock sync.Mutex
-	seBoot                    = seBootstrap{v01: &datastore.Key{}}
+	seBoot                    = seBootstrap{v02: &datastore.Key{}}
 	seBootBytes               []byte
 	seBootBytesLock           sync.RWMutex
 	errCacheFetchFailed       = errors.New("goon: cache fetch failed")
 )
 
 func init() {
+	// Register gob interface types, required by our current PropertyLoadSave implementation
+	gob.Register(seBoot.v01)
+	gob.Register(seBoot.v02)
+	gob.Register(seBoot.v03)
+	gob.Register(seBoot.v04)
+	gob.Register(seBoot.v05)
+	gob.Register(seBoot.v06)
+	gob.Register(seBoot.v07)
+	gob.Register(seBoot.v08)
+	gob.Register(seBoot.v09)
+	gob.Register(seBoot.v10)
+	gob.Register(seBoot.v11)
+	gob.Register(seBoot.v12)
+	gob.Register(seBoot.v13)
+	gob.Register(seBoot.v14)
+	gob.Register(seBoot.v15)
+	gob.Register(seBoot.v16)
+	gob.Register(seBoot.v17)
+	gob.Register(seBoot.v18)
+	gob.Register(seBoot.v19)
+	gob.Register(seBoot.v20)
+	gob.Register(nilValue)
+
 	// The serialization type cache bootstrapping optimization suffers from a race condition.
 	// Because encoding/gob uses a partial global type cache of its own, it is possible that
 	// some other piece of code uses encoding/gob before we do our bootstrapping. To be exact,
@@ -141,24 +187,6 @@ func init() {
 	//       * The usage is removed during a code update
 	//    b) Register a same type as us, but in an inconsistent order between multiple executions
 	freeSerializationDecoder(getSerializationDecoder([]byte{}))
-
-	// register gob types
-	gob.Register(seBoot.v01)
-	gob.Register(seBoot.v02)
-	gob.Register(seBoot.v03)
-	gob.Register(seBoot.v04)
-	gob.Register(seBoot.v05)
-	gob.Register(seBoot.v06)
-	gob.Register(seBoot.v07)
-	gob.Register(seBoot.v08)
-	gob.Register(seBoot.v09)
-	gob.Register(seBoot.v10)
-	gob.Register(seBoot.v11)
-	gob.Register(seBoot.v12)
-	gob.Register(seBoot.v13)
-	gob.Register(seBoot.v14)
-	gob.Register(seBoot.v15)
-	gob.Register(nilValue)
 }
 
 // getFieldInfoAndMetadata returns metadata about a struct. Its main purpose is to cut down
@@ -307,6 +335,11 @@ func bootstrapSerializationEncoder(se *serializationEncoder, updateSEBootBytes b
 	se.enc.Encode(seBoot.v13)
 	se.enc.Encode(seBoot.v14)
 	se.enc.Encode(seBoot.v15)
+	se.enc.Encode(seBoot.v16)
+	se.enc.Encode(seBoot.v17)
+	se.enc.Encode(seBoot.v18)
+	se.enc.Encode(seBoot.v19)
+	se.enc.Encode(seBoot.v20)
 
 	if updateSEBootBytes {
 		seBootBytes = make([]byte, se.buf.Len())
@@ -336,7 +369,7 @@ func bootstrapSerializationDecoder(sd *serializationDecoder) {
 	}
 
 	sd.sr.r = bytes.NewReader(seBootBytes)
-	for i := 0; i < 15; i++ {
+	for i := 0; i < seBootstrapFieldCount; i++ {
 		sd.dec.Decode(nil)
 	}
 }
@@ -470,7 +503,16 @@ func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, fms []fieldM
 		}
 
 		if vf.Kind() == reflect.Slice {
-			elemType = vf.Type().Elem()
+			{
+				vfType := vf.Type()
+				elemType = vfType.Elem()
+				// Convert custom slice types to the underlying slice type, e.g.
+				// type MyInts []int  =>  []int
+				if vfType.Name() != "" && vfType.Name() != vf.Kind().String() {
+					vf = vf.Convert(reflect.SliceOf(elemType))
+				}
+				// We end the vfType scope here, because it might not be valid (after conversion)
+			}
 			if elemType != timeType {
 				// Unroll slices of structs
 				if elemType.Kind() == reflect.Struct {
@@ -514,7 +556,7 @@ func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, fms []fieldM
 						}
 						continue
 					}
-				} else if elemType.Kind().String() != elemType.Name() {
+				} else if elemType.Name() != "" && elemType.Name() != elemType.Kind().String() {
 					// For slices of custom non-struct types, encode them as slices of the underlying type.
 					// This is required to be able to re-use a global gob encoding machine,
 					// as custom types require the type info to be declared by gob for every encoded struct!
@@ -522,59 +564,68 @@ func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, fms []fieldM
 					vfLen := vf.Len()
 					switch elemType.Kind() {
 					case reflect.String:
-						copy := make([]string, vfLen, vfLen)
+						dupe := make([]string, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = vf.Index(i).String()
+							dupe[i] = vf.Index(i).String()
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
 					case reflect.Bool:
-						copy := make([]bool, vfLen, vfLen)
+						dupe := make([]bool, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = vf.Index(i).Bool()
+							dupe[i] = vf.Index(i).Bool()
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
 					case reflect.Int:
-						copy := make([]int, vfLen, vfLen)
+						dupe := make([]int, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = int(vf.Index(i).Int())
+							dupe[i] = int(vf.Index(i).Int())
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
 					case reflect.Int8:
-						copy := make([]int8, vfLen, vfLen)
+						dupe := make([]int8, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = int8(vf.Index(i).Int())
+							dupe[i] = int8(vf.Index(i).Int())
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
 					case reflect.Int16:
-						copy := make([]int16, vfLen, vfLen)
+						dupe := make([]int16, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = int16(vf.Index(i).Int())
+							dupe[i] = int16(vf.Index(i).Int())
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
 					case reflect.Int32:
-						copy := make([]int32, vfLen, vfLen)
+						dupe := make([]int32, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = int32(vf.Index(i).Int())
+							dupe[i] = int32(vf.Index(i).Int())
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
 					case reflect.Int64:
-						copy := make([]int64, vfLen, vfLen)
+						dupe := make([]int64, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = vf.Index(i).Int()
+							dupe[i] = vf.Index(i).Int()
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
 					case reflect.Float32:
-						copy := make([]float32, vfLen, vfLen)
+						dupe := make([]float32, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = float32(vf.Index(i).Float())
+							dupe[i] = float32(vf.Index(i).Float())
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
 					case reflect.Float64:
-						copy := make([]float64, vfLen, vfLen)
+						dupe := make([]float64, vfLen, vfLen)
 						for i := 0; i < vfLen; i++ {
-							copy[i] = vf.Index(i).Float()
+							dupe[i] = vf.Index(i).Float()
 						}
-						vf = reflect.ValueOf(copy)
+						vf = reflect.ValueOf(dupe)
+					case reflect.Slice:
+						// We only support slices of byte slices
+						if elemType.Elem().Kind() == reflect.Uint8 {
+							dupe := make([][]byte, vfLen, vfLen)
+							for i := 0; i < vfLen; i++ {
+								dupe[i] = vf.Index(i).Bytes()
+							}
+							vf = reflect.ValueOf(dupe)
+						}
 					}
 				}
 			}
