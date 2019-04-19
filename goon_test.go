@@ -709,7 +709,7 @@ func ivWipe(t *testing.T, g *Goon, prettyInfo string) {
 	// TODO: Batch this once goon gets more convenient batch delete support
 	for _, ivi := range ivItems {
 		if err := g.Delete(g.Key(ivi)); err != nil {
-			t.Errorf("%s > Unexpected error on delete - %v", prettyInfo, err)
+			t.Fatalf("%s > Unexpected error on delete - %v", prettyInfo, err)
 		}
 	}
 
@@ -739,7 +739,6 @@ func ivGetMulti(t *testing.T, g *Goon, ref, dst interface{}, prettyInfo string) 
 				reflect.Indirect(reflect.ValueOf(dst)).Index(2).Interface())
 		}
 	}
-
 	return nil
 }
 
@@ -757,9 +756,9 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 		for _, index := range indices {
 			ivi := &ivItem{Id: ivItems[index].Id}
 			if err := g.Get(ivi); err != nil {
-				t.Errorf("%s > Unexpected error on get - %v", prettyInfo, err)
+				t.Fatalf("%s > Unexpected error on get - %v", prettyInfo, err)
 			} else if !reflect.DeepEqual(ivItems[index], *ivi) {
-				t.Errorf("%s > Expected - %v, got %v", prettyInfo, ivItems[index], *ivi)
+				t.Fatalf("%s > Expected - %v, got %v", prettyInfo, ivItems[index], *ivi)
 			}
 		}
 	}
@@ -774,7 +773,7 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 
 	// Save our test data
 	if _, err := g.PutMulti(src); err != nil {
-		t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+		t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
 	}
 
 	// Clear the caches, as we're going to precisely set the caches via Get
@@ -843,7 +842,7 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 		_, err := tg.PutMulti(src)
 		return err
 	}, &datastore.TransactionOptions{XG: true}); err != nil {
-		t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+		t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
 	}
 
 	// Set the caches into proper state based on given mode
@@ -863,7 +862,7 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 			_, err := tg.PutMulti(subSrc)
 			return err
 		}, &datastore.TransactionOptions{XG: true}); err != nil {
-			t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+			t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
 		}
 	}
 
@@ -906,7 +905,7 @@ func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode in
 
 	// Save our test data
 	if _, err := g.PutMulti(src); err != nil {
-		t.Errorf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+		t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
 	}
 
 	// Set the caches into proper state based on given mode
@@ -921,7 +920,7 @@ func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode in
 	if err := g.RunInTransaction(func(tg *Goon) error {
 		return ivGetMulti(t, tg, ref, dst, prettyInfo)
 	}, &datastore.TransactionOptions{XG: true}); err != nil {
-		t.Errorf("%s > Unexpected error on transaction - %v", prettyInfo, err)
+		t.Fatalf("%s > Unexpected error on transaction - %v", prettyInfo, err)
 	}
 }
 
@@ -970,6 +969,7 @@ func TestSerialization(t *testing.T) {
 		if !reflect.DeepEqual(ivItems[i], ivi) {
 			t.Errorf("Invalid result! Expected %+v but got %+v", ivItems[i], ivi)
 		}
+		t.Logf("ivItems[%d] size: %v", i, len(data))
 	}
 
 	// Then as PropertyLoadSave interface
@@ -989,6 +989,7 @@ func TestSerialization(t *testing.T) {
 		if !reflect.DeepEqual(iviplsOut, iviplsIn) {
 			t.Errorf("Invalid result! Expected %+v but got %+v", iviplsOut, iviplsIn)
 		}
+		t.Logf("ivItems[%d] PLS size: %v", i, len(data))
 	}
 }
 
@@ -1172,12 +1173,12 @@ func TestMigration(t *testing.T) {
 		ZZs:       []ZigZag{{Zig: 1}, {Zag: 1}}, File: []byte{0xF0, 0x0D},
 		DeprecatedField: "dep", DeprecatedStruct: MigrationSub{Data: "dep", Noise: []int{1, 2, 3}}, FinalField: "fin"}
 	if _, err := g.Put(migA); err != nil {
-		t.Errorf("Unexpected error on Put: %v", err)
+		t.Fatalf("Unexpected error on Put: %v", err)
 	}
 	// Also save an already migrated structure
 	migB := &MigrationB{Parent: migA.Parent, Identification: migA.Id + 1, FancyNumber: migA.Number + 1}
 	if _, err := g.Put(migB); err != nil {
-		t.Errorf("Unexpected error on Put: %v", err)
+		t.Fatalf("Unexpected error on Put: %v", err)
 	}
 
 	// Run migration tests with both IgnoreFieldMismatch on & off
@@ -1193,7 +1194,6 @@ func TestMigration(t *testing.T) {
 				dst:  &MigrationB{Parent: parentKey, Identification: 1},
 			},
 			{
-				// struct can fetch PropertyListCache
 				name: "PropertyListCache -> NormalCache",
 				src:  &MigrationPlsA{Parent: parentKey, Id: 1},
 				dst:  &MigrationB{Parent: parentKey, Identification: 1},
@@ -1204,7 +1204,6 @@ func TestMigration(t *testing.T) {
 				dst:  &MigrationPlsB{Parent: parentKey, Identification: 1},
 			},
 			{
-				// PropertyLoadSaver should not fetch NormalCache but simply falls back to datastore
 				name: "NormalCache -> PropertyListCache",
 				src:  &MigrationA{Parent: parentKey, Id: 1},
 				dst:  &MigrationPlsB{Parent: parentKey, Identification: 1},
@@ -1217,7 +1216,7 @@ func TestMigration(t *testing.T) {
 
 			// Get it back, so it's in the cache
 			if err := g.Get(tt.src); err != nil {
-				t.Errorf("Unexpected error on Get: %v", err)
+				t.Fatalf("Unexpected error on Get: %v", err)
 			}
 
 			// Clear the local cache, because it doesn't need to support migration
@@ -1243,7 +1242,7 @@ func TestMigration(t *testing.T) {
 							fetched = verifyMigration(t, tg, tt.src, tt.dst, method, debugInfo)
 							return nil
 						}, &datastore.TransactionOptions{XG: false}); err != nil {
-							t.Errorf("Unexpected error with TXN - %v", err)
+							t.Fatalf("Unexpected error with TXN - %v", err)
 						}
 					} else {
 						fetched = verifyMigration(t, g, tt.src, tt.dst, method, debugInfo)
@@ -1265,38 +1264,38 @@ func verifyMigration(t *testing.T, g *Goon, src, dst MigrationEntity, method int
 	switch method {
 	case migrationMethodGet:
 		if err := g.Get(dst); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
-			t.Errorf("%v > Unexpected error on Get: %v", debugInfo, err)
+			t.Fatalf("%v > Unexpected error on Get: %v", debugInfo, err)
 			return
 		}
 		return dst
 	case migrationMethodGetAll:
 		if _, err := g.GetAll(datastore.NewQuery("Migration").Ancestor(src.parent()).Filter("number=", src.number()), slice); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
-			t.Errorf("%v > Unexpected error on GetAll: %v", debugInfo, err)
+			t.Fatalf("%v > Unexpected error on GetAll: %v", debugInfo, err)
 			return
 		} else if sliceVal.Len() != 1 {
-			t.Errorf("%v > Unexpected query result, expected %v entities, got %v", debugInfo, 1, sliceVal.Len())
+			t.Fatalf("%v > Unexpected query result, expected %v entities, got %v", debugInfo, 1, sliceVal.Len())
 			return
 		}
 		return sliceVal.Index(0).Interface().(MigrationEntity)
 	case migrationMethodGetAllMulti:
 		// Get both Migration entities
 		if _, err := g.GetAll(datastore.NewQuery("Migration").Ancestor(src.parent()).Order("number"), slice); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
-			t.Errorf("%v > Unexpected error on GetAll: %v", debugInfo, err)
+			t.Fatalf("%v > Unexpected error on GetAll: %v", debugInfo, err)
 			return
 		} else if sliceVal.Len() != 2 {
-			t.Errorf("%v > Unexpected query result, expected %v entities, got %v", debugInfo, 2, sliceVal.Len())
+			t.Fatalf("%v > Unexpected query result, expected %v entities, got %v", debugInfo, 2, sliceVal.Len())
 			return
 		}
 		return sliceVal.Index(0).Interface().(MigrationEntity)
 	case migrationMethodNext:
 		it := g.Run(datastore.NewQuery("Migration").Ancestor(src.parent()).Filter("number=", src.number()))
 		if _, err := it.Next(dst); err != nil && (IgnoreFieldMismatch || !errFieldMismatch(err)) {
-			t.Errorf("%v > Unexpected error on Next: %v", debugInfo, err)
+			t.Fatalf("%v > Unexpected error on Next: %v", debugInfo, err)
 			return
 		}
 		// Make sure the iterator ends correctly
 		if _, err := it.Next(dst); err != datastore.Done {
-			t.Errorf("Next: expected iterator to end with the error datastore.Done, got %v", err)
+			t.Fatalf("Next: expected iterator to end with the error datastore.Done, got %v", err)
 		}
 		return dst
 	}
@@ -1326,11 +1325,11 @@ func checkMigrationResult(t *testing.T, g *Goon, src, fetched interface{}, debug
 	} else if migA.Word != migB.Slang {
 		t.Errorf("%v > Words don't match: %v != %v", debugInfo, migA.Word, migB.Slang)
 	} else if len(migB.Cars) != 1 {
-		t.Errorf("%v > Expected 1 car! Got: %v", debugInfo, len(migB.Cars))
+		t.Fatalf("%v > Expected 1 car! Got: %v", debugInfo, len(migB.Cars))
 	} else if migA.Car != migB.Cars[0] {
 		t.Errorf("%v > Cars don't match: %v != %v", debugInfo, migA.Car, migB.Cars[0])
 	} else if len(migB.Holidays) != 1 {
-		t.Errorf("%v > Expected 1 holiday! Got: %v", debugInfo, len(migB.Holidays))
+		t.Fatalf("%v > Expected 1 holiday! Got: %v", debugInfo, len(migB.Holidays))
 	} else if migA.Holiday != migB.Holidays[0] {
 		t.Errorf("%v > Holidays don't match: %v != %v", debugInfo, migA.Holiday, migB.Holidays[0])
 	} else if migA.α != migB.β {
@@ -1338,11 +1337,11 @@ func checkMigrationResult(t *testing.T, g *Goon, src, fetched interface{}, debug
 	} else if int(migA.Level) != int(migB.Level) {
 		t.Errorf("%v > Level doesn't match: %v != %v", debugInfo, migA.Level, migB.Level)
 	} else if len(migB.Floors) != 1 {
-		t.Errorf("%v > Expected 1 floor! Got: %v", debugInfo, len(migB.Floors))
+		t.Fatalf("%v > Expected 1 floor! Got: %v", debugInfo, len(migB.Floors))
 	} else if int(migA.Floor) != int(migB.Floors[0]) {
 		t.Errorf("%v > Floor doesn't match: %v != %v", debugInfo, migA.Floor, migB.Floors[0])
 	} else if len(migA.BunchOfBytes) != len(migB.BunchOfBytes) || len(migA.BunchOfBytes) != 2 {
-		t.Errorf("%v > BunchOfBytes len doesn't match (expected 2): %v != %v", debugInfo, len(migA.BunchOfBytes), len(migB.BunchOfBytes))
+		t.Fatalf("%v > BunchOfBytes len doesn't match (expected 2): %v != %v", debugInfo, len(migA.BunchOfBytes), len(migB.BunchOfBytes))
 	} else if !reflect.DeepEqual([]byte(migA.BunchOfBytes[0]), []byte(migB.BunchOfBytes[0])) ||
 		!reflect.DeepEqual([]byte(migA.BunchOfBytes[1]), []byte(migB.BunchOfBytes[1])) {
 		t.Errorf("%v > BunchOfBytes doesn't match: %+v != %+v", debugInfo, migA.BunchOfBytes, migB.BunchOfBytes)
@@ -1353,7 +1352,7 @@ func checkMigrationResult(t *testing.T, g *Goon, src, fetched interface{}, debug
 	} else if migA.Sub.Sub.Data != migB.Flower {
 		t.Errorf("%v > Flower doesn't match: %v != %v", debugInfo, migA.Sub.Sub.Data, migB.Flower)
 	} else if len(migB.Sons) != 1 {
-		t.Errorf("%v > Expected 1 son! Got: %v", debugInfo, len(migB.Sons))
+		t.Fatalf("%v > Expected 1 son! Got: %v", debugInfo, len(migB.Sons))
 	} else if migA.Son.Name != migB.Sons[0].Name {
 		t.Errorf("%v > Son names don't match: %v != %v", debugInfo, migA.Son.Name, migB.Sons[0].Name)
 	} else if migA.Son.Age != migB.Sons[0].Age {
@@ -1367,9 +1366,9 @@ func checkMigrationResult(t *testing.T, g *Goon, src, fetched interface{}, debug
 	} else if !reflect.DeepEqual(migA.DeepSlice, migB.FarSlice) {
 		t.Errorf("%v > Deep slice doesn't match: %v != %v", debugInfo, migA.DeepSlice, migB.FarSlice)
 	} else if len(migB.ZZs.Zig) != 2 {
-		t.Errorf("%v > Expected 2 Zigs, got: %v", debugInfo, len(migB.ZZs.Zig))
+		t.Fatalf("%v > Expected 2 Zigs, got: %v", debugInfo, len(migB.ZZs.Zig))
 	} else if len(migB.ZZs.Zag) != 2 {
-		t.Errorf("%v > Expected 2 Zags, got: %v", debugInfo, len(migB.ZZs.Zag))
+		t.Fatalf("%v > Expected 2 Zags, got: %v", debugInfo, len(migB.ZZs.Zag))
 	} else if migA.ZZs[0].Zig != migB.ZZs.Zig[0] {
 		t.Errorf("%v > Invalid zig #1: %v != %v", debugInfo, migA.ZZs[0].Zig, migB.ZZs.Zig[0])
 	} else if migA.ZZs[1].Zig != migB.ZZs.Zig[1] {
@@ -1379,9 +1378,9 @@ func checkMigrationResult(t *testing.T, g *Goon, src, fetched interface{}, debug
 	} else if migA.ZZs[1].Zag != migB.ZZs.Zag[1] {
 		t.Errorf("%v > Invalid zag #2: %v != %v", debugInfo, migA.ZZs[1].Zag, migB.ZZs.Zag[1])
 	} else if len(migB.Keys) != 1 {
-		t.Errorf("%v > Expected 1 keys, got %v", debugInfo, len(migB.Keys))
+		t.Fatalf("%v > Expected 1 keys, got %v", debugInfo, len(migB.Keys))
 	} else if len(migB.Files) != 1 {
-		t.Errorf("%v > Expected 1 file, got %v", debugInfo, len(migB.Files))
+		t.Fatalf("%v > Expected 1 file, got %v", debugInfo, len(migB.Files))
 	} else if !reflect.DeepEqual(migA.File, migB.Files[0]) {
 		t.Errorf("%v > Files don't match: %v != %v", debugInfo, migA.File, migB.Files[0])
 	} else if migA.FinalField != migB.FinalField {
@@ -1400,12 +1399,12 @@ func TestTXNRace(t *testing.T) {
 	// Create & store some test data
 	hid := &HasId{Id: 1, Name: "foo"}
 	if _, err := g.Put(hid); err != nil {
-		t.Errorf("Unexpected error on Put %v", err)
+		t.Fatalf("Unexpected error on Put %v", err)
 	}
 
 	// Get this data back, to populate caches
 	if err := g.Get(hid); err != nil {
-		t.Errorf("Unexpected error on Get %v", err)
+		t.Fatalf("Unexpected error on Get %v", err)
 	}
 
 	// Clear the local cache, as we are testing for proper memcache usage
@@ -1416,14 +1415,14 @@ func TestTXNRace(t *testing.T) {
 		// Get the current data
 		thid := &HasId{Id: 1}
 		if err := tg.Get(thid); err != nil {
-			t.Errorf("Unexpected error on TXN Get %v", err)
+			t.Fatalf("Unexpected error on TXN Get %v", err)
 			return err
 		}
 
 		// Update the data
 		thid.Name = "bar"
 		if _, err := tg.Put(thid); err != nil {
-			t.Errorf("Unexpected error on TXN Put %v", err)
+			t.Fatalf("Unexpected error on TXN Put %v", err)
 			return err
 		}
 
@@ -1433,15 +1432,15 @@ func TestTXNRace(t *testing.T) {
 		//   The transaction block may contain multiple other operations after the preceding Put(),
 		//   allowing for ample time for the concurrent request to run before the transaction is committed.
 		if err := g.Get(hid); err != nil {
-			t.Errorf("Unexpected error on Get %v", err)
+			t.Fatalf("Unexpected error on Get %v", err)
 		} else if hid.Name != "foo" {
-			t.Errorf("Expected 'foo', got %v", hid.Name)
+			t.Fatalf("Expected 'foo', got %v", hid.Name)
 		}
 
 		// Commit the transaction
 		return nil
 	}, &datastore.TransactionOptions{XG: false}); err != nil {
-		t.Errorf("Unexpected error with TXN - %v", err)
+		t.Fatalf("Unexpected error with TXN - %v", err)
 	}
 
 	// Clear the local cache, as we are testing for proper memcache usage
@@ -1449,9 +1448,9 @@ func TestTXNRace(t *testing.T) {
 
 	// Get the data back again, to confirm it was changed in the transaction
 	if err := g.Get(hid); err != nil {
-		t.Errorf("Unexpected error on Get %v", err)
+		t.Fatalf("Unexpected error on Get %v", err)
 	} else if hid.Name != "bar" {
-		t.Errorf("Expected 'bar', got %v", hid.Name)
+		t.Fatalf("Expected 'bar', got %v", hid.Name)
 	}
 
 	// Clear the local cache, as we are testing for proper memcache usage
@@ -1461,21 +1460,21 @@ func TestTXNRace(t *testing.T) {
 	if err := g.RunInTransaction(func(tg *Goon) error {
 		thid := &HasId{Id: 1}
 		if err := tg.Delete(tg.Key(thid)); err != nil {
-			t.Errorf("Unexpected error on TXN Delete %v", err)
+			t.Fatalf("Unexpected error on TXN Delete %v", err)
 			return err
 		}
 
 		// Concurrent request emulation
 		if err := g.Get(hid); err != nil {
-			t.Errorf("Unexpected error on Get %v", err)
+			t.Fatalf("Unexpected error on Get %v", err)
 		} else if hid.Name != "bar" {
-			t.Errorf("Expected 'bar', got %v", hid.Name)
+			t.Fatalf("Expected 'bar', got %v", hid.Name)
 		}
 
 		// Commit the transaction
 		return nil
 	}, &datastore.TransactionOptions{XG: false}); err != nil {
-		t.Errorf("Unexpected error with TXN - %v", err)
+		t.Fatalf("Unexpected error with TXN - %v", err)
 	}
 
 	// Clear the local cache, as we are testing for proper memcache usage
@@ -1498,12 +1497,12 @@ func TestNegativeCacheHit(t *testing.T) {
 	hid := &HasId{Id: 1}
 
 	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
-		t.Errorf("Expected ErrNoSuchEntity, got %v", err)
+		t.Fatalf("Expected ErrNoSuchEntity, got %v", err)
 	}
 
 	// Do a sneaky save straight to the datastore
 	if _, err := datastore.Put(c, datastore.NewKey(c, "HasId", "", 1, nil), &HasId{Id: 1, Name: "one"}); err != nil {
-		t.Errorf("Unexpected error on datastore.Put: %v", err)
+		t.Fatalf("Unexpected error on datastore.Put: %v", err)
 	}
 
 	// Get the entity again via goon, to make sure we cached the non-existance
@@ -1536,7 +1535,7 @@ func TestNegativeCacheClear(t *testing.T) {
 			return nil
 		}, nil)
 		if err != nil {
-			t.Errorf("Unexpected error on RunInTransaction: %v", err)
+			t.Fatalf("Unexpected error on RunInTransaction: %v", err)
 		}
 		ended <- true
 	}()
@@ -1547,7 +1546,7 @@ func TestNegativeCacheClear(t *testing.T) {
 		negative := &HasId{Id: id}
 		g.FlushLocalCache()
 		if err := g.Get(negative); err != datastore.ErrNoSuchEntity {
-			t.Errorf("Expected ErrNoSuchEntity, got %v", err)
+			t.Fatalf("Expected ErrNoSuchEntity, got %v", err)
 		}
 		cached <- true
 	}
@@ -1557,10 +1556,10 @@ func TestNegativeCacheClear(t *testing.T) {
 		want := &HasId{Id: id}
 		g.FlushLocalCache()
 		if err := g.Get(want); err != nil {
-			t.Errorf("Unexpected error on get: %v", err)
+			t.Fatalf("Unexpected error on get: %v", err)
 		}
 		if want.Name != hid.Name {
-			t.Errorf("Expected Get Entity got : %v", want)
+			t.Fatalf("Expected Get Entity got : %v", want)
 		}
 	}
 }
@@ -1577,27 +1576,27 @@ func TestCaches(t *testing.T) {
 	phid := &HasId{Name: "cacheFail"}
 	_, err = g.Put(phid)
 	if err != nil {
-		t.Errorf("Unexpected error on put - %v", err)
+		t.Fatalf("Unexpected error on put - %v", err)
 	}
 
 	// fetch *struct{} from cache
 	ghid := &HasId{Id: phid.Id}
 	err = g.Get(ghid)
 	if err != nil {
-		t.Errorf("Unexpected error on get - %v", err)
+		t.Fatalf("Unexpected error on get - %v", err)
 	}
 	if !reflect.DeepEqual(phid, ghid) {
-		t.Errorf("Expected - %v, got %v", phid, ghid)
+		t.Fatalf("Expected - %v, got %v", phid, ghid)
 	}
 
 	// fetch []struct{} from cache
 	ghids := []HasId{{Id: phid.Id}}
 	err = g.GetMulti(&ghids)
 	if err != nil {
-		t.Errorf("Unexpected error on get - %v", err)
+		t.Fatalf("Unexpected error on get - %v", err)
 	}
 	if !reflect.DeepEqual(*phid, ghids[0]) {
-		t.Errorf("Expected - %v, got %v", *phid, ghids[0])
+		t.Fatalf("Expected - %v, got %v", *phid, ghids[0])
 	}
 
 	// Now flush localcache and fetch them again
@@ -1606,10 +1605,10 @@ func TestCaches(t *testing.T) {
 	ghid = &HasId{Id: phid.Id}
 	err = g.Get(ghid)
 	if err != nil {
-		t.Errorf("Unexpected error on get - %v", err)
+		t.Fatalf("Unexpected error on get - %v", err)
 	}
 	if !reflect.DeepEqual(phid, ghid) {
-		t.Errorf("Expected - %v, got %v", phid, ghid)
+		t.Fatalf("Expected - %v, got %v", phid, ghid)
 	}
 
 	g.FlushLocalCache()
@@ -1617,10 +1616,10 @@ func TestCaches(t *testing.T) {
 	ghids = []HasId{{Id: phid.Id}}
 	err = g.GetMulti(&ghids)
 	if err != nil {
-		t.Errorf("Unexpected error on get - %v", err)
+		t.Fatalf("Unexpected error on get - %v", err)
 	}
 	if !reflect.DeepEqual(*phid, ghids[0]) {
-		t.Errorf("Expected - %v, got %v", *phid, ghids[0])
+		t.Fatalf("Expected - %v, got %v", *phid, ghids[0])
 	}
 }
 
@@ -1640,10 +1639,10 @@ func TestGoon(t *testing.T) {
 	// key tests
 	noid := NoId{}
 	if k, err := n.KeyError(noid); err == nil && !k.Incomplete() {
-		t.Error("expected incomplete on noid")
+		t.Fatalf("expected incomplete on noid")
 	}
 	if n.Key(noid) == nil {
-		t.Error("expected to find a key")
+		t.Fatalf("expected to find a key")
 	}
 
 	var keyTests = []keyTest{
@@ -1676,14 +1675,14 @@ func TestGoon(t *testing.T) {
 
 	for _, kt := range keyTests {
 		if k, err := n.KeyError(kt.obj); err != nil {
-			t.Errorf("error: %v", err)
+			t.Fatalf("error: %v", err)
 		} else if !k.Equal(kt.key) {
-			t.Errorf("keys not equal")
+			t.Fatalf("keys not equal")
 		}
 	}
 
 	if _, err := n.KeyError(TwoId{IntId: 1, StringId: "1"}); err == nil {
-		t.Errorf("expected key error")
+		t.Fatalf("expected key error")
 	}
 
 	// datastore tests
@@ -1691,14 +1690,14 @@ func TestGoon(t *testing.T) {
 	datastore.DeleteMulti(c, keys)
 	memcache.Flush(c)
 	if err := n.Get(&HasId{Id: 0}); err == nil {
-		t.Errorf("ds: expected error, we're fetching from the datastore on an incomplete key!")
+		t.Fatalf("ds: expected error, we're fetching from the datastore on an incomplete key!")
 	}
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
-		t.Errorf("ds: expected no such entity")
+		t.Fatalf("ds: expected no such entity")
 	}
 	// run twice to make sure autocaching works correctly
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
-		t.Errorf("ds: expected no such entity")
+		t.Fatalf("ds: expected no such entity")
 	}
 	es := []*HasId{
 		{Id: 1, Name: "one"},
@@ -1713,90 +1712,90 @@ func TestGoon(t *testing.T) {
 		{Id: 2},
 	}
 	if err := n.GetMulti(es); err == nil {
-		t.Errorf("ds: expected error")
+		t.Fatalf("ds: expected error")
 	} else if !NotFound(err, 0) {
-		t.Errorf("ds: not found error 0")
+		t.Fatalf("ds: not found error 0")
 	} else if !NotFound(err, 1) {
-		t.Errorf("ds: not found error 1")
+		t.Fatalf("ds: not found error 1")
 	} else if NotFound(err, 2) {
-		t.Errorf("ds: not found error 2")
+		t.Fatalf("ds: not found error 2")
 	}
 
 	if keys, err := n.PutMulti(es); err != nil {
-		t.Errorf("put: unexpected error")
+		t.Fatalf("put: unexpected error")
 	} else if len(keys) != len(esk) {
-		t.Errorf("put: got unexpected number of keys")
+		t.Fatalf("put: got unexpected number of keys")
 	} else {
 		for i, k := range keys {
 			if !k.Equal(esk[i]) {
-				t.Errorf("put: got unexpected keys")
+				t.Fatalf("put: got unexpected keys")
 			}
 		}
 	}
 	if err := n.GetMulti(nes); err != nil {
-		t.Errorf("put: unexpected error")
+		t.Fatalf("put: unexpected error")
 	} else if *es[0] != *nes[0] || *es[1] != *nes[1] {
-		t.Errorf("put: bad results")
+		t.Fatalf("put: bad results")
 	} else {
 		nesk0 := n.Key(nes[0])
 		if !nesk0.Equal(datastore.NewKey(c, "HasId", "", 1, nil)) {
-			t.Errorf("put: bad key")
+			t.Fatalf("put: bad key")
 		}
 		nesk1 := n.Key(nes[1])
 		if !nesk1.Equal(datastore.NewKey(c, "HasId", "", 2, nil)) {
-			t.Errorf("put: bad key")
+			t.Fatalf("put: bad key")
 		}
 	}
 	if _, err := n.Put(HasId{Id: 3}); err == nil {
-		t.Errorf("put: expected error")
+		t.Fatalf("put: expected error")
 	}
 	// force partial fetch from memcache and then datastore
 	memcache.Flush(c)
 	if err := n.Get(nes[0]); err != nil {
-		t.Errorf("get: unexpected error")
+		t.Fatalf("get: unexpected error")
 	}
 	if err := n.GetMulti(nes); err != nil {
-		t.Errorf("get: unexpected error")
+		t.Fatalf("get: unexpected error")
 	}
 
 	// put a HasId resource, then test pulling it from memory, memcache, and datastore
 	hi := &HasId{Name: "hasid"} // no id given, should be automatically created by the datastore
 	if _, err := n.Put(hi); err != nil {
-		t.Errorf("put: unexpected error - %v", err)
+		t.Fatalf("put: unexpected error - %v", err)
 	}
 	if n.Key(hi) == nil {
-		t.Errorf("key should not be nil")
+		t.Fatalf("key should not be nil")
 	} else if n.Key(hi).Incomplete() {
-		t.Errorf("key should not be incomplete")
+		t.Fatalf("key should not be incomplete")
 	}
 
 	hi2 := &HasId{Id: hi.Id}
 	if err := n.Get(hi2); err != nil {
-		t.Errorf("get: unexpected error - %v", err)
+		t.Fatalf("get: unexpected error - %v", err)
 	}
 	if hi2.Name != hi.Name {
-		t.Errorf("Could not fetch HasId object from memory - %#v != %#v, memory=%#v", hi, hi2, n.cache[MemcacheKey(n.Key(hi2))])
+		t.Fatalf("Could not fetch HasId object from memory - %#v != %#v, memory=%#v", hi, hi2, n.cache[MemcacheKey(n.Key(hi2))])
 	}
 
 	hi3 := &HasId{Id: hi.Id}
 	delete(n.cache, MemcacheKey(n.Key(hi)))
 	if err := n.Get(hi3); err != nil {
-		t.Errorf("get: unexpected error - %v", err)
+		t.Fatalf("get: unexpected error - %v", err)
 	}
 	if hi3.Name != hi.Name {
-		t.Errorf("Could not fetch HasId object from memory - %#v != %#v", hi, hi3)
+		t.Fatalf("Could not fetch HasId object from memory - %#v != %#v", hi, hi3)
 	}
 
 	hi4 := &HasId{Id: hi.Id}
 	delete(n.cache, MemcacheKey(n.Key(hi4)))
 	if memcache.Flush(n.Context) != nil {
-		t.Errorf("Unable to flush memcache")
+		t.Fatalf("Unable to flush memcache")
 	}
 	if err := n.Get(hi4); err != nil {
-		t.Errorf("get: unexpected error - %v", err)
+		t.Fatalf("get: unexpected error - %v", err)
 	}
 	if hi4.Name != hi.Name {
-		t.Errorf("Could not fetch HasId object from datastore- %#v != %#v", hi, hi4)
+		t.Fatalf("Could not fetch HasId object from datastore- %#v != %#v", hi, hi4)
 	}
 
 	// Now do the opposite also using hi
@@ -1809,10 +1808,10 @@ func TestGoon(t *testing.T) {
 	n.cache[MemcacheKey(n.Key(hi))].(*HasId).Name = "changedincache"
 	n.cacheLock.Unlock()
 	if err := n.Get(hiPull); err != nil {
-		t.Errorf("get: unexpected error - %v", err)
+		t.Fatalf("get: unexpected error - %v", err)
 	}
 	if hiPull.Name != "changedincache" {
-		t.Errorf("hiPull.Name should be 'changedincache' but got %s", hiPull.Name)
+		t.Fatalf("hiPull.Name should be 'changedincache' but got %s", hiPull.Name)
 	}
 
 	hiPush := &HasId{Id: hi.Id, Name: "changedinmemcache"}
@@ -1823,22 +1822,22 @@ func TestGoon(t *testing.T) {
 
 	hiPull = &HasId{Id: hi.Id}
 	if err := n.Get(hiPull); err != nil {
-		t.Errorf("get: unexpected error - %v", err)
+		t.Fatalf("get: unexpected error - %v", err)
 	}
 	if hiPull.Name != "changedinmemcache" {
-		t.Errorf("hiPull.Name should be 'changedinmemcache' but got %s", hiPull.Name)
+		t.Fatalf("hiPull.Name should be 'changedinmemcache' but got %s", hiPull.Name)
 	}
 
 	// Since the datastore can't assign a key to a String ID, test to make sure goon stops it from happening
 	hasString := new(HasString)
 	_, err = n.Put(hasString)
 	if err == nil {
-		t.Errorf("Cannot put an incomplete string Id object as the datastore will populate an int64 id instead- %v", hasString)
+		t.Fatalf("Cannot put an incomplete string Id object as the datastore will populate an int64 id instead- %v", hasString)
 	}
 	hasString.Id = "hello"
 	_, err = n.Put(hasString)
 	if err != nil {
-		t.Errorf("Error putting hasString object - %v", hasString)
+		t.Fatalf("Error putting hasString object - %v", hasString)
 	}
 
 	// Test queries!
@@ -1846,14 +1845,14 @@ func TestGoon(t *testing.T) {
 	// Test that zero result queries work properly
 	qiZRes := []QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem"), &qiZRes); err != nil {
-		t.Errorf("GetAll Zero: unexpected error: %v", err)
+		t.Fatalf("GetAll Zero: unexpected error: %v", err)
 	} else if len(dskeys) != 0 {
-		t.Errorf("GetAll Zero: expected 0 keys, got %v", len(dskeys))
+		t.Fatalf("GetAll Zero: expected 0 keys, got %v", len(dskeys))
 	}
 
 	// Create some entities that we will query for
 	if getKeys, err := n.PutMulti([]*QueryItem{{Id: 1, Data: "one"}, {Id: 2, Data: "two"}}); err != nil {
-		t.Errorf("PutMulti: unexpected error: %v", err)
+		t.Fatalf("PutMulti: unexpected error: %v", err)
 	} else {
 		// do a datastore Get by *Key so that data is written to the datstore and indexes generated before subsequent query
 		if err := datastore.GetMulti(c, getKeys, make([]QueryItem, 2)); err != nil {
@@ -1867,27 +1866,27 @@ func TestGoon(t *testing.T) {
 	// Get the entity using a slice of structs
 	qiSRes := []QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "one"), &qiSRes); err != nil {
-		t.Errorf("GetAll SoS: unexpected error: %v", err)
+		t.Fatalf("GetAll SoS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll SoS: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll SoS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 1 {
-		t.Errorf("GetAll SoS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll SoS: expected key IntID to be 1, got %v", dskeys[0].IntID())
 	} else if len(qiSRes) != 1 {
-		t.Errorf("GetAll SoS: expected 1 result, got %v", len(qiSRes))
+		t.Fatalf("GetAll SoS: expected 1 result, got %v", len(qiSRes))
 	} else if qiSRes[0].Id != 1 {
-		t.Errorf("GetAll SoS: expected entity id to be 1, got %v", qiSRes[0].Id)
+		t.Fatalf("GetAll SoS: expected entity id to be 1, got %v", qiSRes[0].Id)
 	} else if qiSRes[0].Data != "one" {
-		t.Errorf("GetAll SoS: expected entity data to be 'one', got '%v'", qiSRes[0].Data)
+		t.Fatalf("GetAll SoS: expected entity data to be 'one', got '%v'", qiSRes[0].Data)
 	}
 
 	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
 	qiS := &QueryItem{Id: 1}
 	if err := n.Get(qiS); err != nil {
-		t.Errorf("Get SoS: unexpected error: %v", err)
+		t.Fatalf("Get SoS: unexpected error: %v", err)
 	} else if qiS.Id != 1 {
-		t.Errorf("Get SoS: expected entity id to be 1, got %v", qiS.Id)
+		t.Fatalf("Get SoS: expected entity id to be 1, got %v", qiS.Id)
 	} else if qiS.Data != "one" {
-		t.Errorf("Get SoS: expected entity data to be 'one', got '%v'", qiS.Data)
+		t.Fatalf("Get SoS: expected entity data to be 'one', got '%v'", qiS.Data)
 	}
 
 	// Clear the local memory cache, because we want to test it being filled correctly by GetAll
@@ -1896,27 +1895,27 @@ func TestGoon(t *testing.T) {
 	// Get the entity using a slice of pointers to struct
 	qiPRes := []*QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "one"), &qiPRes); err != nil {
-		t.Errorf("GetAll SoPtS: unexpected error: %v", err)
+		t.Fatalf("GetAll SoPtS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll SoPtS: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll SoPtS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 1 {
-		t.Errorf("GetAll SoPtS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll SoPtS: expected key IntID to be 1, got %v", dskeys[0].IntID())
 	} else if len(qiPRes) != 1 {
-		t.Errorf("GetAll SoPtS: expected 1 result, got %v", len(qiPRes))
+		t.Fatalf("GetAll SoPtS: expected 1 result, got %v", len(qiPRes))
 	} else if qiPRes[0].Id != 1 {
-		t.Errorf("GetAll SoPtS: expected entity id to be 1, got %v", qiPRes[0].Id)
+		t.Fatalf("GetAll SoPtS: expected entity id to be 1, got %v", qiPRes[0].Id)
 	} else if qiPRes[0].Data != "one" {
-		t.Errorf("GetAll SoPtS: expected entity data to be 'one', got '%v'", qiPRes[0].Data)
+		t.Fatalf("GetAll SoPtS: expected entity data to be 'one', got '%v'", qiPRes[0].Data)
 	}
 
 	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
 	qiP := &QueryItem{Id: 1}
 	if err := n.Get(qiP); err != nil {
-		t.Errorf("Get SoPtS: unexpected error: %v", err)
+		t.Fatalf("Get SoPtS: unexpected error: %v", err)
 	} else if qiP.Id != 1 {
-		t.Errorf("Get SoPtS: expected entity id to be 1, got %v", qiP.Id)
+		t.Fatalf("Get SoPtS: expected entity id to be 1, got %v", qiP.Id)
 	} else if qiP.Data != "one" {
-		t.Errorf("Get SoPtS: expected entity data to be 'one', got '%v'", qiP.Data)
+		t.Fatalf("Get SoPtS: expected entity data to be 'one', got '%v'", qiP.Data)
 	}
 
 	// Clear the local memory cache, because we want to test it being filled correctly by Next
@@ -1927,28 +1926,28 @@ func TestGoon(t *testing.T) {
 
 	qiItRes := &QueryItem{}
 	if dskey, err := qiIt.Next(qiItRes); err != nil {
-		t.Errorf("Next: unexpected error: %v", err)
+		t.Fatalf("Next: unexpected error: %v", err)
 	} else if dskey.IntID() != 1 {
-		t.Errorf("Next: expected key IntID to be 1, got %v", dskey.IntID())
+		t.Fatalf("Next: expected key IntID to be 1, got %v", dskey.IntID())
 	} else if qiItRes.Id != 1 {
-		t.Errorf("Next: expected entity id to be 1, got %v", qiItRes.Id)
+		t.Fatalf("Next: expected entity id to be 1, got %v", qiItRes.Id)
 	} else if qiItRes.Data != "one" {
-		t.Errorf("Next: expected entity data to be 'one', got '%v'", qiItRes.Data)
+		t.Fatalf("Next: expected entity data to be 'one', got '%v'", qiItRes.Data)
 	}
 
 	// Make sure the iterator ends correctly
 	if _, err := qiIt.Next(&QueryItem{}); err != datastore.Done {
-		t.Errorf("Next: expected iterator to end with the error datastore.Done, got %v", err)
+		t.Fatalf("Next: expected iterator to end with the error datastore.Done, got %v", err)
 	}
 
 	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
 	qiI := &QueryItem{Id: 1}
 	if err := n.Get(qiI); err != nil {
-		t.Errorf("Get Iterator: unexpected error: %v", err)
+		t.Fatalf("Get Iterator: unexpected error: %v", err)
 	} else if qiI.Id != 1 {
-		t.Errorf("Get Iterator: expected entity id to be 1, got %v", qiI.Id)
+		t.Fatalf("Get Iterator: expected entity id to be 1, got %v", qiI.Id)
 	} else if qiI.Data != "one" {
-		t.Errorf("Get Iterator: expected entity data to be 'one', got '%v'", qiI.Data)
+		t.Fatalf("Get Iterator: expected entity data to be 'one', got '%v'", qiI.Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
@@ -1957,37 +1956,37 @@ func TestGoon(t *testing.T) {
 	// Get the entity using a non-zero slice of structs
 	qiNZSRes := []QueryItem{{Id: 1, Data: "invalid cache"}}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "two"), &qiNZSRes); err != nil {
-		t.Errorf("GetAll NZSoS: unexpected error: %v", err)
+		t.Fatalf("GetAll NZSoS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll NZSoS: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll NZSoS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 2 {
-		t.Errorf("GetAll NZSoS: expected key IntID to be 2, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll NZSoS: expected key IntID to be 2, got %v", dskeys[0].IntID())
 	} else if len(qiNZSRes) != 2 {
-		t.Errorf("GetAll NZSoS: expected slice len to be 2, got %v", len(qiNZSRes))
+		t.Fatalf("GetAll NZSoS: expected slice len to be 2, got %v", len(qiNZSRes))
 	} else if qiNZSRes[0].Id != 1 {
-		t.Errorf("GetAll NZSoS: expected entity id to be 1, got %v", qiNZSRes[0].Id)
+		t.Fatalf("GetAll NZSoS: expected entity id to be 1, got %v", qiNZSRes[0].Id)
 	} else if qiNZSRes[0].Data != "invalid cache" {
-		t.Errorf("GetAll NZSoS: expected entity data to be 'invalid cache', got '%v'", qiNZSRes[0].Data)
+		t.Fatalf("GetAll NZSoS: expected entity data to be 'invalid cache', got '%v'", qiNZSRes[0].Data)
 	} else if qiNZSRes[1].Id != 2 {
-		t.Errorf("GetAll NZSoS: expected entity id to be 2, got %v", qiNZSRes[1].Id)
+		t.Fatalf("GetAll NZSoS: expected entity id to be 2, got %v", qiNZSRes[1].Id)
 	} else if qiNZSRes[1].Data != "two" {
-		t.Errorf("GetAll NZSoS: expected entity data to be 'two', got '%v'", qiNZSRes[1].Data)
+		t.Fatalf("GetAll NZSoS: expected entity data to be 'two', got '%v'", qiNZSRes[1].Data)
 	}
 
 	// Get the entities using normal GetMulti to test local cache
 	qiNZSs := []QueryItem{{Id: 1}, {Id: 2}}
 	if err := n.GetMulti(qiNZSs); err != nil {
-		t.Errorf("GetMulti NZSoS: unexpected error: %v", err)
+		t.Fatalf("GetMulti NZSoS: unexpected error: %v", err)
 	} else if len(qiNZSs) != 2 {
-		t.Errorf("GetMulti NZSoS: expected slice len to be 2, got %v", len(qiNZSs))
+		t.Fatalf("GetMulti NZSoS: expected slice len to be 2, got %v", len(qiNZSs))
 	} else if qiNZSs[0].Id != 1 {
-		t.Errorf("GetMulti NZSoS: expected entity id to be 1, got %v", qiNZSs[0].Id)
+		t.Fatalf("GetMulti NZSoS: expected entity id to be 1, got %v", qiNZSs[0].Id)
 	} else if qiNZSs[0].Data != "one" {
-		t.Errorf("GetMulti NZSoS: expected entity data to be 'one', got '%v'", qiNZSs[0].Data)
+		t.Fatalf("GetMulti NZSoS: expected entity data to be 'one', got '%v'", qiNZSs[0].Data)
 	} else if qiNZSs[1].Id != 2 {
-		t.Errorf("GetMulti NZSoS: expected entity id to be 2, got %v", qiNZSs[1].Id)
+		t.Fatalf("GetMulti NZSoS: expected entity id to be 2, got %v", qiNZSs[1].Id)
 	} else if qiNZSs[1].Data != "two" {
-		t.Errorf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiNZSs[1].Data)
+		t.Fatalf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiNZSs[1].Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
@@ -1996,37 +1995,37 @@ func TestGoon(t *testing.T) {
 	// Get the entity using a non-zero slice of pointers to struct
 	qiNZPRes := []*QueryItem{{Id: 1, Data: "invalid cache"}}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "two"), &qiNZPRes); err != nil {
-		t.Errorf("GetAll NZSoPtS: unexpected error: %v", err)
+		t.Fatalf("GetAll NZSoPtS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll NZSoPtS: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll NZSoPtS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 2 {
-		t.Errorf("GetAll NZSoPtS: expected key IntID to be 2, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll NZSoPtS: expected key IntID to be 2, got %v", dskeys[0].IntID())
 	} else if len(qiNZPRes) != 2 {
-		t.Errorf("GetAll NZSoPtS: expected slice len to be 2, got %v", len(qiNZPRes))
+		t.Fatalf("GetAll NZSoPtS: expected slice len to be 2, got %v", len(qiNZPRes))
 	} else if qiNZPRes[0].Id != 1 {
-		t.Errorf("GetAll NZSoPtS: expected entity id to be 1, got %v", qiNZPRes[0].Id)
+		t.Fatalf("GetAll NZSoPtS: expected entity id to be 1, got %v", qiNZPRes[0].Id)
 	} else if qiNZPRes[0].Data != "invalid cache" {
-		t.Errorf("GetAll NZSoPtS: expected entity data to be 'invalid cache', got '%v'", qiNZPRes[0].Data)
+		t.Fatalf("GetAll NZSoPtS: expected entity data to be 'invalid cache', got '%v'", qiNZPRes[0].Data)
 	} else if qiNZPRes[1].Id != 2 {
-		t.Errorf("GetAll NZSoPtS: expected entity id to be 2, got %v", qiNZPRes[1].Id)
+		t.Fatalf("GetAll NZSoPtS: expected entity id to be 2, got %v", qiNZPRes[1].Id)
 	} else if qiNZPRes[1].Data != "two" {
-		t.Errorf("GetAll NZSoPtS: expected entity data to be 'two', got '%v'", qiNZPRes[1].Data)
+		t.Fatalf("GetAll NZSoPtS: expected entity data to be 'two', got '%v'", qiNZPRes[1].Data)
 	}
 
 	// Get the entities using normal GetMulti to test local cache
 	qiNZPs := []*QueryItem{{Id: 1}, {Id: 2}}
 	if err := n.GetMulti(qiNZPs); err != nil {
-		t.Errorf("GetMulti NZSoPtS: unexpected error: %v", err)
+		t.Fatalf("GetMulti NZSoPtS: unexpected error: %v", err)
 	} else if len(qiNZPs) != 2 {
-		t.Errorf("GetMulti NZSoPtS: expected slice len to be 2, got %v", len(qiNZPs))
+		t.Fatalf("GetMulti NZSoPtS: expected slice len to be 2, got %v", len(qiNZPs))
 	} else if qiNZPs[0].Id != 1 {
-		t.Errorf("GetMulti NZSoPtS: expected entity id to be 1, got %v", qiNZPs[0].Id)
+		t.Fatalf("GetMulti NZSoPtS: expected entity id to be 1, got %v", qiNZPs[0].Id)
 	} else if qiNZPs[0].Data != "one" {
-		t.Errorf("GetMulti NZSoPtS: expected entity data to be 'one', got '%v'", qiNZPs[0].Data)
+		t.Fatalf("GetMulti NZSoPtS: expected entity data to be 'one', got '%v'", qiNZPs[0].Data)
 	} else if qiNZPs[1].Id != 2 {
-		t.Errorf("GetMulti NZSoPtS: expected entity id to be 2, got %v", qiNZPs[1].Id)
+		t.Fatalf("GetMulti NZSoPtS: expected entity id to be 2, got %v", qiNZPs[1].Id)
 	} else if qiNZPs[1].Data != "two" {
-		t.Errorf("GetMulti NZSoPtS: expected entity data to be 'two', got '%v'", qiNZPs[1].Data)
+		t.Fatalf("GetMulti NZSoPtS: expected entity data to be 'two', got '%v'", qiNZPs[1].Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
@@ -2034,21 +2033,21 @@ func TestGoon(t *testing.T) {
 
 	// Test the simplest keys-only query
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "one").KeysOnly(), nil); err != nil {
-		t.Errorf("GetAll KeysOnly: unexpected error: %v", err)
+		t.Fatalf("GetAll KeysOnly: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll KeysOnly: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll KeysOnly: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 1 {
-		t.Errorf("GetAll KeysOnly: expected key IntID to be 1, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll KeysOnly: expected key IntID to be 1, got %v", dskeys[0].IntID())
 	}
 
 	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
 	qiKO := &QueryItem{Id: 1}
 	if err := n.Get(qiKO); err != nil {
-		t.Errorf("Get KeysOnly: unexpected error: %v", err)
+		t.Fatalf("Get KeysOnly: unexpected error: %v", err)
 	} else if qiKO.Id != 1 {
-		t.Errorf("Get KeysOnly: expected entity id to be 1, got %v", qiKO.Id)
+		t.Fatalf("Get KeysOnly: expected entity id to be 1, got %v", qiKO.Id)
 	} else if qiKO.Data != "one" {
-		t.Errorf("Get KeysOnly: expected entity data to be 'one', got '%v'", qiKO.Data)
+		t.Fatalf("Get KeysOnly: expected entity data to be 'one', got '%v'", qiKO.Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
@@ -2057,28 +2056,28 @@ func TestGoon(t *testing.T) {
 	// Test the keys-only query with slice of structs
 	qiKOSRes := []QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "one").KeysOnly(), &qiKOSRes); err != nil {
-		t.Errorf("GetAll KeysOnly SoS: unexpected error: %v", err)
+		t.Fatalf("GetAll KeysOnly SoS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll KeysOnly SoS: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll KeysOnly SoS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 1 {
-		t.Errorf("GetAll KeysOnly SoS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll KeysOnly SoS: expected key IntID to be 1, got %v", dskeys[0].IntID())
 	} else if len(qiKOSRes) != 1 {
-		t.Errorf("GetAll KeysOnly SoS: expected 1 result, got %v", len(qiKOSRes))
+		t.Fatalf("GetAll KeysOnly SoS: expected 1 result, got %v", len(qiKOSRes))
 	} else if k := reflect.TypeOf(qiKOSRes[0]).Kind(); k != reflect.Struct {
-		t.Errorf("GetAll KeysOnly SoS: expected struct, got %v", k)
+		t.Fatalf("GetAll KeysOnly SoS: expected struct, got %v", k)
 	} else if qiKOSRes[0].Id != 1 {
-		t.Errorf("GetAll KeysOnly SoS: expected entity id to be 1, got %v", qiKOSRes[0].Id)
+		t.Fatalf("GetAll KeysOnly SoS: expected entity id to be 1, got %v", qiKOSRes[0].Id)
 	} else if qiKOSRes[0].Data != "" {
-		t.Errorf("GetAll KeysOnly SoS: expected entity data to be empty, got '%v'", qiKOSRes[0].Data)
+		t.Fatalf("GetAll KeysOnly SoS: expected entity data to be empty, got '%v'", qiKOSRes[0].Data)
 	}
 
 	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
 	if err := n.GetMulti(qiKOSRes); err != nil {
-		t.Errorf("Get KeysOnly SoS: unexpected error: %v", err)
+		t.Fatalf("Get KeysOnly SoS: unexpected error: %v", err)
 	} else if qiKOSRes[0].Id != 1 {
-		t.Errorf("Get KeysOnly SoS: expected entity id to be 1, got %v", qiKOSRes[0].Id)
+		t.Fatalf("Get KeysOnly SoS: expected entity id to be 1, got %v", qiKOSRes[0].Id)
 	} else if qiKOSRes[0].Data != "one" {
-		t.Errorf("Get KeysOnly SoS: expected entity data to be 'one', got '%v'", qiKOSRes[0].Data)
+		t.Fatalf("Get KeysOnly SoS: expected entity data to be 'one', got '%v'", qiKOSRes[0].Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
@@ -2087,28 +2086,28 @@ func TestGoon(t *testing.T) {
 	// Test the keys-only query with slice of pointers to struct
 	qiKOPRes := []*QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "one").KeysOnly(), &qiKOPRes); err != nil {
-		t.Errorf("GetAll KeysOnly SoPtS: unexpected error: %v", err)
+		t.Fatalf("GetAll KeysOnly SoPtS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll KeysOnly SoPtS: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll KeysOnly SoPtS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 1 {
-		t.Errorf("GetAll KeysOnly SoPtS: expected key IntID to be 1, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll KeysOnly SoPtS: expected key IntID to be 1, got %v", dskeys[0].IntID())
 	} else if len(qiKOPRes) != 1 {
-		t.Errorf("GetAll KeysOnly SoPtS: expected 1 result, got %v", len(qiKOPRes))
+		t.Fatalf("GetAll KeysOnly SoPtS: expected 1 result, got %v", len(qiKOPRes))
 	} else if k := reflect.TypeOf(qiKOPRes[0]).Kind(); k != reflect.Ptr {
-		t.Errorf("GetAll KeysOnly SoPtS: expected pointer, got %v", k)
+		t.Fatalf("GetAll KeysOnly SoPtS: expected pointer, got %v", k)
 	} else if qiKOPRes[0].Id != 1 {
-		t.Errorf("GetAll KeysOnly SoPtS: expected entity id to be 1, got %v", qiKOPRes[0].Id)
+		t.Fatalf("GetAll KeysOnly SoPtS: expected entity id to be 1, got %v", qiKOPRes[0].Id)
 	} else if qiKOPRes[0].Data != "" {
-		t.Errorf("GetAll KeysOnly SoPtS: expected entity data to be empty, got '%v'", qiKOPRes[0].Data)
+		t.Fatalf("GetAll KeysOnly SoPtS: expected entity data to be empty, got '%v'", qiKOPRes[0].Data)
 	}
 
 	// Get the entity using normal Get to test that the local cache wasn't filled with incomplete data
 	if err := n.GetMulti(qiKOPRes); err != nil {
-		t.Errorf("Get KeysOnly SoPtS: unexpected error: %v", err)
+		t.Fatalf("Get KeysOnly SoPtS: unexpected error: %v", err)
 	} else if qiKOPRes[0].Id != 1 {
-		t.Errorf("Get KeysOnly SoPtS: expected entity id to be 1, got %v", qiKOPRes[0].Id)
+		t.Fatalf("Get KeysOnly SoPtS: expected entity id to be 1, got %v", qiKOPRes[0].Id)
 	} else if qiKOPRes[0].Data != "one" {
-		t.Errorf("Get KeysOnly SoPtS: expected entity data to be 'one', got '%v'", qiKOPRes[0].Data)
+		t.Fatalf("Get KeysOnly SoPtS: expected entity data to be 'one', got '%v'", qiKOPRes[0].Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
@@ -2117,38 +2116,38 @@ func TestGoon(t *testing.T) {
 	// Test the keys-only query with non-zero slice of structs
 	qiKONZSRes := []QueryItem{{Id: 1, Data: "invalid cache"}}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "two").KeysOnly(), &qiKONZSRes); err != nil {
-		t.Errorf("GetAll KeysOnly NZSoS: unexpected error: %v", err)
+		t.Fatalf("GetAll KeysOnly NZSoS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll KeysOnly NZSoS: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll KeysOnly NZSoS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 2 {
-		t.Errorf("GetAll KeysOnly NZSoS: expected key IntID to be 2, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll KeysOnly NZSoS: expected key IntID to be 2, got %v", dskeys[0].IntID())
 	} else if len(qiKONZSRes) != 2 {
-		t.Errorf("GetAll KeysOnly NZSoS: expected slice len to be 2, got %v", len(qiKONZSRes))
+		t.Fatalf("GetAll KeysOnly NZSoS: expected slice len to be 2, got %v", len(qiKONZSRes))
 	} else if qiKONZSRes[0].Id != 1 {
-		t.Errorf("GetAll KeysOnly NZSoS: expected entity id to be 1, got %v", qiKONZSRes[0].Id)
+		t.Fatalf("GetAll KeysOnly NZSoS: expected entity id to be 1, got %v", qiKONZSRes[0].Id)
 	} else if qiKONZSRes[0].Data != "invalid cache" {
-		t.Errorf("GetAll KeysOnly NZSoS: expected entity data to be 'invalid cache', got '%v'", qiKONZSRes[0].Data)
+		t.Fatalf("GetAll KeysOnly NZSoS: expected entity data to be 'invalid cache', got '%v'", qiKONZSRes[0].Data)
 	} else if k := reflect.TypeOf(qiKONZSRes[1]).Kind(); k != reflect.Struct {
-		t.Errorf("GetAll KeysOnly NZSoS: expected struct, got %v", k)
+		t.Fatalf("GetAll KeysOnly NZSoS: expected struct, got %v", k)
 	} else if qiKONZSRes[1].Id != 2 {
-		t.Errorf("GetAll KeysOnly NZSoS: expected entity id to be 2, got %v", qiKONZSRes[1].Id)
+		t.Fatalf("GetAll KeysOnly NZSoS: expected entity id to be 2, got %v", qiKONZSRes[1].Id)
 	} else if qiKONZSRes[1].Data != "" {
-		t.Errorf("GetAll KeysOnly NZSoS: expected entity data to be empty, got '%v'", qiKONZSRes[1].Data)
+		t.Fatalf("GetAll KeysOnly NZSoS: expected entity data to be empty, got '%v'", qiKONZSRes[1].Data)
 	}
 
 	// Get the entities using normal GetMulti to test local cache
 	if err := n.GetMulti(qiKONZSRes); err != nil {
-		t.Errorf("GetMulti NZSoS: unexpected error: %v", err)
+		t.Fatalf("GetMulti NZSoS: unexpected error: %v", err)
 	} else if len(qiKONZSRes) != 2 {
-		t.Errorf("GetMulti NZSoS: expected slice len to be 2, got %v", len(qiKONZSRes))
+		t.Fatalf("GetMulti NZSoS: expected slice len to be 2, got %v", len(qiKONZSRes))
 	} else if qiKONZSRes[0].Id != 1 {
-		t.Errorf("GetMulti NZSoS: expected entity id to be 1, got %v", qiKONZSRes[0].Id)
+		t.Fatalf("GetMulti NZSoS: expected entity id to be 1, got %v", qiKONZSRes[0].Id)
 	} else if qiKONZSRes[0].Data != "one" {
-		t.Errorf("GetMulti NZSoS: expected entity data to be 'one', got '%v'", qiKONZSRes[0].Data)
+		t.Fatalf("GetMulti NZSoS: expected entity data to be 'one', got '%v'", qiKONZSRes[0].Data)
 	} else if qiKONZSRes[1].Id != 2 {
-		t.Errorf("GetMulti NZSoS: expected entity id to be 2, got %v", qiKONZSRes[1].Id)
+		t.Fatalf("GetMulti NZSoS: expected entity id to be 2, got %v", qiKONZSRes[1].Id)
 	} else if qiKONZSRes[1].Data != "two" {
-		t.Errorf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiKONZSRes[1].Data)
+		t.Fatalf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiKONZSRes[1].Data)
 	}
 
 	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
@@ -2157,38 +2156,38 @@ func TestGoon(t *testing.T) {
 	// Test the keys-only query with non-zero slice of pointers to struct
 	qiKONZPRes := []*QueryItem{{Id: 1, Data: "invalid cache"}}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "two").KeysOnly(), &qiKONZPRes); err != nil {
-		t.Errorf("GetAll KeysOnly NZSoPtS: unexpected error: %v", err)
+		t.Fatalf("GetAll KeysOnly NZSoPtS: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
-		t.Errorf("GetAll KeysOnly NZSoPtS: expected 1 key, got %v", len(dskeys))
+		t.Fatalf("GetAll KeysOnly NZSoPtS: expected 1 key, got %v", len(dskeys))
 	} else if dskeys[0].IntID() != 2 {
-		t.Errorf("GetAll KeysOnly NZSoPtS: expected key IntID to be 2, got %v", dskeys[0].IntID())
+		t.Fatalf("GetAll KeysOnly NZSoPtS: expected key IntID to be 2, got %v", dskeys[0].IntID())
 	} else if len(qiKONZPRes) != 2 {
-		t.Errorf("GetAll KeysOnly NZSoPtS: expected slice len to be 2, got %v", len(qiKONZPRes))
+		t.Fatalf("GetAll KeysOnly NZSoPtS: expected slice len to be 2, got %v", len(qiKONZPRes))
 	} else if qiKONZPRes[0].Id != 1 {
-		t.Errorf("GetAll KeysOnly NZSoPtS: expected entity id to be 1, got %v", qiKONZPRes[0].Id)
+		t.Fatalf("GetAll KeysOnly NZSoPtS: expected entity id to be 1, got %v", qiKONZPRes[0].Id)
 	} else if qiKONZPRes[0].Data != "invalid cache" {
-		t.Errorf("GetAll KeysOnly NZSoPtS: expected entity data to be 'invalid cache', got '%v'", qiKONZPRes[0].Data)
+		t.Fatalf("GetAll KeysOnly NZSoPtS: expected entity data to be 'invalid cache', got '%v'", qiKONZPRes[0].Data)
 	} else if k := reflect.TypeOf(qiKONZPRes[1]).Kind(); k != reflect.Ptr {
-		t.Errorf("GetAll KeysOnly NZSoPtS: expected pointer, got %v", k)
+		t.Fatalf("GetAll KeysOnly NZSoPtS: expected pointer, got %v", k)
 	} else if qiKONZPRes[1].Id != 2 {
-		t.Errorf("GetAll KeysOnly NZSoPtS: expected entity id to be 2, got %v", qiKONZPRes[1].Id)
+		t.Fatalf("GetAll KeysOnly NZSoPtS: expected entity id to be 2, got %v", qiKONZPRes[1].Id)
 	} else if qiKONZPRes[1].Data != "" {
-		t.Errorf("GetAll KeysOnly NZSoPtS: expected entity data to be empty, got '%v'", qiKONZPRes[1].Data)
+		t.Fatalf("GetAll KeysOnly NZSoPtS: expected entity data to be empty, got '%v'", qiKONZPRes[1].Data)
 	}
 
 	// Get the entities using normal GetMulti to test local cache
 	if err := n.GetMulti(qiKONZPRes); err != nil {
-		t.Errorf("GetMulti NZSoPtS: unexpected error: %v", err)
+		t.Fatalf("GetMulti NZSoPtS: unexpected error: %v", err)
 	} else if len(qiKONZPRes) != 2 {
-		t.Errorf("GetMulti NZSoPtS: expected slice len to be 2, got %v", len(qiKONZPRes))
+		t.Fatalf("GetMulti NZSoPtS: expected slice len to be 2, got %v", len(qiKONZPRes))
 	} else if qiKONZPRes[0].Id != 1 {
-		t.Errorf("GetMulti NZSoPtS: expected entity id to be 1, got %v", qiKONZPRes[0].Id)
+		t.Fatalf("GetMulti NZSoPtS: expected entity id to be 1, got %v", qiKONZPRes[0].Id)
 	} else if qiKONZPRes[0].Data != "one" {
-		t.Errorf("GetMulti NZSoPtS: expected entity data to be 'one', got '%v'", qiKONZPRes[0].Data)
+		t.Fatalf("GetMulti NZSoPtS: expected entity data to be 'one', got '%v'", qiKONZPRes[0].Data)
 	} else if qiKONZPRes[1].Id != 2 {
-		t.Errorf("GetMulti NZSoPtS: expected entity id to be 2, got %v", qiKONZPRes[1].Id)
+		t.Fatalf("GetMulti NZSoPtS: expected entity id to be 2, got %v", qiKONZPRes[1].Id)
 	} else if qiKONZPRes[1].Data != "two" {
-		t.Errorf("GetMulti NZSoPtS: expected entity data to be 'two', got '%v'", qiKONZPRes[1].Data)
+		t.Fatalf("GetMulti NZSoPtS: expected entity data to be 'two', got '%v'", qiKONZPRes[1].Data)
 	}
 }
 
@@ -2324,28 +2323,28 @@ func TestRace(t *testing.T) {
 	go func() {
 		err := g.Get(hasIdSlice[0])
 		if err != nil {
-			t.Errorf("Error fetching id #0 - %v", err)
+			t.Fatalf("Error fetching id #0 - %v", err)
 		}
 		wg.Done()
 	}()
 	go func() {
 		err := g.GetMulti(hasIdSlice[1:1500])
 		if err != nil {
-			t.Errorf("Error fetching ids 1 through 1499 - %v", err)
+			t.Fatalf("Error fetching ids 1 through 1499 - %v", err)
 		}
 		wg.Done()
 	}()
 	go func() {
 		err := g.GetMulti(hasIdSlice[1500:])
 		if err != nil {
-			t.Errorf("Error fetching id #1500 through 4000 - %v", err)
+			t.Fatalf("Error fetching id #1500 through 4000 - %v", err)
 		}
 		wg.Done()
 	}()
 	wg.Wait()
 	for x, hi := range hasIdSlice {
 		if hi.Name != "Race" {
-			t.Errorf("Object #%d not fetched properly, fetched instead - %v", x, hi)
+			t.Fatalf("Object #%d not fetched properly, fetched instead - %v", x, hi)
 		}
 	}
 
@@ -2559,25 +2558,25 @@ func TestMultis(t *testing.T) {
 		n.FlushLocalCache() // Put just put them in the local cache, get rid of it before doing the Get
 		err = n.GetMulti(getobjects)
 		if err == nil && x != 1 { // a test size of 1 has no objects divisible by 100, so there's no cache miss to return
-			t.Errorf("Should be receiving a multiError on %d objects, but got no errors", x)
+			t.Fatalf("Should be receiving a multiError on %d objects, but got no errors", x)
 			continue
 		}
 
 		merr, ok := err.(appengine.MultiError)
 		if ok {
 			if len(merr) != len(getobjects) {
-				t.Errorf("Should have received a MultiError object of length %d but got length %d instead", len(getobjects), len(merr))
+				t.Fatalf("Should have received a MultiError object of length %d but got length %d instead", len(getobjects), len(merr))
 			}
 			for x := range merr {
 				switch { // record good conditions, fail in other conditions
 				case merr[x] == nil && x%100 == 0:
 				case merr[x] != nil && x%100 != 0:
 				default:
-					t.Errorf("Found bad condition on object[%d] and error %v", x+1, merr[x])
+					t.Fatalf("Found bad condition on object[%d] and error %v", x+1, merr[x])
 				}
 			}
 		} else if x != 1 {
-			t.Errorf("Did not return a multierror on fetch but when fetching %d objects, received - %v", x, merr)
+			t.Fatalf("Did not return a multierror on fetch but when fetching %d objects, received - %v", x, merr)
 		}
 	}
 }
@@ -2676,7 +2675,7 @@ func TestEmbeddedStruct(t *testing.T) {
 	pcs.X, pcs.y, pcs.Z1, pcs.Z2 = 1, 2, 3, 4
 	_, err = g.Put(pcs)
 	if err != nil {
-		t.Errorf("Unexpected error on put - %v", err)
+		t.Fatalf("Unexpected error on put - %v", err)
 	}
 
 	// First run fetches from the datastore (as Put() only caches to the local cache)
@@ -2689,21 +2688,21 @@ func TestEmbeddedStruct(t *testing.T) {
 		gcs := &ContainerStruct{Id: pcs.Id}
 		err = g.Get(gcs)
 		if err != nil {
-			t.Errorf("#%v - Unexpected error on get - %v", i, err)
+			t.Fatalf("#%v - Unexpected error on get - %v", i, err)
 		}
 		// The exported field must have the correct value
 		if gcs.X != pcs.X {
-			t.Errorf("#%v - Expected - %v, got %v", i, pcs.X, gcs.X)
+			t.Fatalf("#%v - Expected - %v, got %v", i, pcs.X, gcs.X)
 		}
 		if gcs.Z1 != pcs.Z1 {
-			t.Errorf("#%v - Expected - %v, got %v", i, pcs.Z1, gcs.Z1)
+			t.Fatalf("#%v - Expected - %v, got %v", i, pcs.Z1, gcs.Z1)
 		}
 		if gcs.Z2 != pcs.Z2 {
-			t.Errorf("#%v - Expected - %v, got %v", i, pcs.Z2, gcs.Z2)
+			t.Fatalf("#%v - Expected - %v, got %v", i, pcs.Z2, gcs.Z2)
 		}
 		// The unexported field must be zero-valued
 		if gcs.y != 0 {
-			t.Errorf("#%v - Expected - %v, got %v", i, 0, gcs.y)
+			t.Fatalf("#%v - Expected - %v, got %v", i, 0, gcs.y)
 		}
 	}
 }
