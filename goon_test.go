@@ -54,38 +54,127 @@ const (
 	ivModeTotal
 )
 
+func cloneKey(key *datastore.Key) *datastore.Key {
+	if key == nil {
+		return nil
+	}
+	dupe, err := datastore.DecodeKey(key.Encode())
+	if err != nil {
+		panic(fmt.Sprintf("Failed to clone key: %v", err))
+	}
+	return dupe
+}
+
+func cloneKeys(keys []*datastore.Key) []*datastore.Key {
+	if keys == nil {
+		return nil
+	}
+	dupe := make([]*datastore.Key, 0, len(keys))
+	for _, key := range keys {
+		if key == nil {
+			dupe = append(dupe, nil)
+		} else {
+			dupe = append(dupe, cloneKey(key))
+		}
+	}
+	return dupe
+}
+
+func TestCloneIVItem(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+
+	initializeIvItems(c)
+
+	for i := range ivItems {
+		clone := *ivItems[i].clone()
+		if !reflect.DeepEqual(ivItems[i], clone) {
+			t.Fatalf("ivItem clone failed, expected %+v but got %+v", ivItems[i], clone)
+		}
+	}
+}
+
 // Have a bunch of different supported types to detect any wild errors
-// https://developers.google.com/appengine/docs/go/datastore/reference
+// https://cloud.google.com/appengine/docs/standard/go/datastore/reference
+//
+// - signed integers (int, int8, int16, int32 and int64),
+// - bool,
+// - string,
+// - float32 and float64,
+// - []byte (up to 1 megabyte in length),
+// - any type whose underlying type is one of the above predeclared types,
+// - ByteString,
+// - *Key,
+// - time.Time (stored with microsecond precision),
+// - appengine.BlobKey,
+// - appengine.GeoPoint,
+// - structs whose fields are all valid value types,
+// - slices of any of the above.
+//
+// In addition, although undocumented, there's also support for any type,
+// whose underlying type is a legal slice.
 type ivItem struct {
-	Id          int64        `datastore:"-" goon:"id"`
-	Int         int          `datastore:"int,noindex"`
-	Int8        int8         `datastore:"int8,noindex"`
-	Int16       int16        `datastore:"int16,noindex"`
-	Int32       int32        `datastore:"int32,noindex"`
-	Int64       int64        `datastore:"int64,noindex"`
-	Float32     float32      `datastore:"float32,noindex"`
-	Float64     float64      `datastore:"float64,noindex"`
-	Bool        bool         `datastore:"bool,noindex"`
-	String      string       `datastore:"string,noindex"`
-	CustomTypes ivItemCustom `datastore:"custom,noindex"`
-	SliceTypes  ivItemSlice  `datastore:"slice,noindex"`
-	ByteSlice   []byte       `datastore:"byte_slice,noindex"`
-	BSSlice     [][]byte     `datastore:"bs_slice,noindex"`
-	Time        time.Time    `datastore:"time,noindex"`
-	TimeSlice   []time.Time  `datastore:"time_slice,noindex"`
-	NoIndex     int          `datastore:",noindex"`
+	Id           int64                `datastore:"-" goon:"id"`
+	Int          int                  `datastore:"int,noindex"`
+	Int8         int8                 `datastore:"int8,noindex"`
+	Int16        int16                `datastore:"int16,noindex"`
+	Int32        int32                `datastore:"int32,noindex"`
+	Int64        int64                `datastore:"int64,noindex"`
+	Bool         bool                 `datastore:"bool,noindex"`
+	String       string               `datastore:"string,noindex"`
+	Float32      float32              `datastore:"float32,noindex"`
+	Float64      float64              `datastore:"float64,noindex"`
+	ByteSlice    []byte               `datastore:"byte_slice,noindex"`
+	CustomTypes  ivItemCustom         `datastore:"custom,noindex"`
+	BString      datastore.ByteString `datastore:"bstr,noindex"`
+	Key          *datastore.Key       `datastore:"key,noindex"`
+	Time         time.Time            `datastore:"time,noindex"`
+	BlobKey      appengine.BlobKey    `datastore:"bk,noindex"`
+	GeoPoint     appengine.GeoPoint   `datastore:"gp,noindex"`
+	Sub          ivItemSub            `datastore:"sub,noindex"`
+	SliceTypes   ivItemSlice          `datastore:"slice,noindex"`
+	CustomSlices ivItemSliceCustom    `datastore:"custom_slice,noindex"`
+
+	NoIndex     int `datastore:",noindex"`
 	Casual      string
 	Ζεύς        string
-	Key         *datastore.Key
 	ChildKey    *datastore.Key
 	ZeroKey     *datastore.Key
-	KeySlice    []*datastore.Key
 	KeySliceNil []*datastore.Key
-	BlobKey     appengine.BlobKey
-	BKSlice     []appengine.BlobKey
-	Sub         ivItemSub
-	Subs        []ivItemSubs
-	ZZZV        []ivZZZV
+}
+
+func (ivi ivItem) clone() *ivItem {
+	return &ivItem{
+		Id:           ivi.Id,
+		Int:          ivi.Int,
+		Int8:         ivi.Int8,
+		Int16:        ivi.Int16,
+		Int32:        ivi.Int32,
+		Int64:        ivi.Int64,
+		Bool:         ivi.Bool,
+		String:       ivi.String,
+		Float32:      ivi.Float32,
+		Float64:      ivi.Float64,
+		ByteSlice:    append(ivi.ByteSlice[:0:0], ivi.ByteSlice...),
+		CustomTypes:  *ivi.CustomTypes.clone(),
+		BString:      append(ivi.BString[:0:0], ivi.BString...),
+		Key:          cloneKey(ivi.Key),
+		Time:         ivi.Time,
+		BlobKey:      ivi.BlobKey,
+		GeoPoint:     ivi.GeoPoint,
+		Sub:          *ivi.Sub.clone(),
+		SliceTypes:   *ivi.SliceTypes.clone(),
+		CustomSlices: *ivi.CustomSlices.clone(),
+		NoIndex:      ivi.NoIndex,
+		Casual:       ivi.Casual,
+		Ζεύς:         ivi.Ζεύς,
+		ChildKey:     cloneKey(ivi.ChildKey),
+		ZeroKey:      cloneKey(ivi.ZeroKey),
+		KeySliceNil:  cloneKeys(ivi.KeySliceNil),
+	}
 }
 
 type ivItemInt int
@@ -93,46 +182,228 @@ type ivItemInt8 int8
 type ivItemInt16 int16
 type ivItemInt32 int32
 type ivItemInt64 int64
-type ivItemFloat32 float32
-type ivItemFloat64 float64
 type ivItemBool bool
 type ivItemString string
+type ivItemFloat32 float32
+type ivItemFloat64 float64
+type ivItemByteSlice []byte
 
 type ivItemDeepInt ivItemInt
 
 type ivItemCustom struct {
-	Int     ivItemInt
-	Int8    ivItemInt8
-	Int16   ivItemInt16
-	Int32   ivItemInt32
-	Int64   ivItemInt64
-	Float32 ivItemFloat32
-	Float64 ivItemFloat64
-	Bool    ivItemBool
-	String  ivItemString
-	DeepInt ivItemDeepInt
+	Int       ivItemInt
+	Int8      ivItemInt8
+	Int16     ivItemInt16
+	Int32     ivItemInt32
+	Int64     ivItemInt64
+	Bool      ivItemBool
+	String    ivItemString
+	Float32   ivItemFloat32
+	Float64   ivItemFloat64
+	ByteSlice ivItemByteSlice
+	DeepInt   ivItemDeepInt
+}
+
+func (ivic ivItemCustom) clone() *ivItemCustom {
+	return &ivItemCustom{
+		Int:       ivic.Int,
+		Int8:      ivic.Int8,
+		Int16:     ivic.Int16,
+		Int32:     ivic.Int32,
+		Int64:     ivic.Int64,
+		Bool:      ivic.Bool,
+		String:    ivic.String,
+		Float32:   ivic.Float32,
+		Float64:   ivic.Float64,
+		ByteSlice: append(ivic.ByteSlice[:0:0], ivic.ByteSlice...),
+		DeepInt:   ivic.DeepInt,
+	}
 }
 
 type ivItemSlice struct {
-	Int      []int
-	Int8     []int8
-	Int16    []int16
-	Int32    []int32
-	Int64    []int64
-	Float32  []float32
-	Float64  []float64
-	Bool     []bool
-	String   []string
-	IntC     []ivItemInt
-	Int8C    []ivItemInt8
-	Int16C   []ivItemInt16
-	Int32C   []ivItemInt32
-	Int64C   []ivItemInt64
-	Float32C []ivItemFloat32
-	Float64C []ivItemFloat64
-	BoolC    []ivItemBool
-	StringC  []ivItemString
-	DeepInt  []ivItemDeepInt
+	Int       []int
+	Int8      []int8
+	Int16     []int16
+	Int32     []int32
+	Int64     []int64
+	Bool      []bool
+	String    []string
+	Float32   []float32
+	Float64   []float64
+	BSSlice   [][]byte
+	IntC      []ivItemInt
+	Int8C     []ivItemInt8
+	Int16C    []ivItemInt16
+	Int32C    []ivItemInt32
+	Int64C    []ivItemInt64
+	BoolC     []ivItemBool
+	StringC   []ivItemString
+	Float32C  []ivItemFloat32
+	Float64C  []ivItemFloat64
+	BSSliceC  []ivItemByteSlice
+	DeepInt   []ivItemDeepInt
+	BStrSlice []datastore.ByteString
+	KeySlice  []*datastore.Key
+	TimeSlice []time.Time
+	BKSlice   []appengine.BlobKey
+	GPSlice   []appengine.GeoPoint
+	Subs      []ivItemSubs
+}
+
+func (ivis ivItemSlice) clone() *ivItemSlice {
+	bsSlice := ivis.BSSlice[:0:0]
+	for _, bs := range ivis.BSSlice {
+		bsSlice = append(bsSlice, append(bs[:0:0], bs...))
+	}
+	bsSliceC := ivis.BSSliceC[:0:0]
+	for _, bsc := range ivis.BSSliceC {
+		bsSliceC = append(bsSliceC, append(bsc[:0:0], bsc...))
+	}
+	bstrSlice := ivis.BStrSlice[:0:0]
+	for _, bstr := range ivis.BStrSlice {
+		bstrSlice = append(bstrSlice, append(bstr[:0:0], bstr...))
+	}
+	subs := ivis.Subs[:0:0]
+	for _, sub := range ivis.Subs {
+		subs = append(subs, *sub.clone())
+	}
+
+	return &ivItemSlice{
+		Int:       append(ivis.Int[:0:0], ivis.Int...),
+		Int8:      append(ivis.Int8[:0:0], ivis.Int8...),
+		Int16:     append(ivis.Int16[:0:0], ivis.Int16...),
+		Int32:     append(ivis.Int32[:0:0], ivis.Int32...),
+		Int64:     append(ivis.Int64[:0:0], ivis.Int64...),
+		Bool:      append(ivis.Bool[:0:0], ivis.Bool...),
+		String:    append(ivis.String[:0:0], ivis.String...),
+		Float32:   append(ivis.Float32[:0:0], ivis.Float32...),
+		Float64:   append(ivis.Float64[:0:0], ivis.Float64...),
+		BSSlice:   bsSlice,
+		IntC:      append(ivis.IntC[:0:0], ivis.IntC...),
+		Int8C:     append(ivis.Int8C[:0:0], ivis.Int8C...),
+		Int16C:    append(ivis.Int16C[:0:0], ivis.Int16C...),
+		Int32C:    append(ivis.Int32C[:0:0], ivis.Int32C...),
+		Int64C:    append(ivis.Int64C[:0:0], ivis.Int64C...),
+		BoolC:     append(ivis.BoolC[:0:0], ivis.BoolC...),
+		StringC:   append(ivis.StringC[:0:0], ivis.StringC...),
+		Float32C:  append(ivis.Float32C[:0:0], ivis.Float32C...),
+		Float64C:  append(ivis.Float64C[:0:0], ivis.Float64C...),
+		BSSliceC:  bsSliceC,
+		DeepInt:   append(ivis.DeepInt[:0:0], ivis.DeepInt...),
+		BStrSlice: bstrSlice,
+		KeySlice:  cloneKeys(ivis.KeySlice),
+		TimeSlice: append(ivis.TimeSlice[:0:0], ivis.TimeSlice...),
+		BKSlice:   append(ivis.BKSlice[:0:0], ivis.BKSlice...),
+		GPSlice:   append(ivis.GPSlice[:0:0], ivis.GPSlice...),
+		Subs:      subs,
+	}
+}
+
+type IntS []int
+type Int8S []int8
+type Int16S []int16
+type Int32S []int32
+type Int64S []int64
+type BoolS []bool
+type StringS []string
+type Float32S []float32
+type Float64S []float64
+type BSSliceS [][]byte
+type IntCS []ivItemInt
+type Int8CS []ivItemInt8
+type Int16CS []ivItemInt16
+type Int32CS []ivItemInt32
+type Int64CS []ivItemInt64
+type BoolCS []ivItemBool
+type StringCS []ivItemString
+type Float32CS []ivItemFloat32
+type Float64CS []ivItemFloat64
+type BSSliceCS []ivItemByteSlice
+type DeepIntS []ivItemDeepInt
+type BStrSliceS []datastore.ByteString
+type KeySliceS []*datastore.Key
+type TimeSliceS []time.Time
+type BKSliceS []appengine.BlobKey
+type GPSliceS []appengine.GeoPoint
+type SubsS []ivItemSubs
+
+type ivItemSliceCustom struct {
+	Int       IntS
+	Int8      Int8S
+	Int16     Int16S
+	Int32     Int32S
+	Int64     Int64S
+	Bool      BoolS
+	String    StringS
+	Float32   Float32S
+	Float64   Float64S
+	BSSlice   BSSliceS
+	IntC      IntCS
+	Int8C     Int8CS
+	Int16C    Int16CS
+	Int32C    Int32CS
+	Int64C    Int64CS
+	BoolC     BoolCS
+	StringC   StringCS
+	Float32C  Float32CS
+	Float64C  Float64CS
+	BSSliceC  BSSliceCS
+	DeepInt   DeepIntS
+	BStrSlice BStrSliceS
+	KeySlice  KeySliceS
+	TimeSlice TimeSliceS
+	BKSlice   BKSliceS
+	GPSlice   GPSliceS
+	Subs      SubsS
+}
+
+func (ivisc ivItemSliceCustom) clone() *ivItemSliceCustom {
+	bsSlice := ivisc.BSSlice[:0:0]
+	for _, bs := range ivisc.BSSlice {
+		bsSlice = append(bsSlice, append(bs[:0:0], bs...))
+	}
+	bsSliceC := ivisc.BSSliceC[:0:0]
+	for _, bsc := range ivisc.BSSliceC {
+		bsSliceC = append(bsSliceC, append(bsc[:0:0], bsc...))
+	}
+	bstrSlice := ivisc.BStrSlice[:0:0]
+	for _, bstr := range ivisc.BStrSlice {
+		bstrSlice = append(bstrSlice, append(bstr[:0:0], bstr...))
+	}
+	subs := ivisc.Subs[:0:0]
+	for _, sub := range ivisc.Subs {
+		subs = append(subs, *sub.clone())
+	}
+
+	return &ivItemSliceCustom{
+		Int:       append(ivisc.Int[:0:0], ivisc.Int...),
+		Int8:      append(ivisc.Int8[:0:0], ivisc.Int8...),
+		Int16:     append(ivisc.Int16[:0:0], ivisc.Int16...),
+		Int32:     append(ivisc.Int32[:0:0], ivisc.Int32...),
+		Int64:     append(ivisc.Int64[:0:0], ivisc.Int64...),
+		Bool:      append(ivisc.Bool[:0:0], ivisc.Bool...),
+		String:    append(ivisc.String[:0:0], ivisc.String...),
+		Float32:   append(ivisc.Float32[:0:0], ivisc.Float32...),
+		Float64:   append(ivisc.Float64[:0:0], ivisc.Float64...),
+		BSSlice:   bsSlice,
+		IntC:      append(ivisc.IntC[:0:0], ivisc.IntC...),
+		Int8C:     append(ivisc.Int8C[:0:0], ivisc.Int8C...),
+		Int16C:    append(ivisc.Int16C[:0:0], ivisc.Int16C...),
+		Int32C:    append(ivisc.Int32C[:0:0], ivisc.Int32C...),
+		Int64C:    append(ivisc.Int64C[:0:0], ivisc.Int64C...),
+		BoolC:     append(ivisc.BoolC[:0:0], ivisc.BoolC...),
+		StringC:   append(ivisc.StringC[:0:0], ivisc.StringC...),
+		Float32C:  append(ivisc.Float32C[:0:0], ivisc.Float32C...),
+		Float64C:  append(ivisc.Float64C[:0:0], ivisc.Float64C...),
+		BSSliceC:  bsSliceC,
+		DeepInt:   append(ivisc.DeepInt[:0:0], ivisc.DeepInt...),
+		BStrSlice: bstrSlice,
+		KeySlice:  cloneKeys(ivisc.KeySlice),
+		TimeSlice: append(ivisc.TimeSlice[:0:0], ivisc.TimeSlice...),
+		BKSlice:   append(ivisc.BKSlice[:0:0], ivisc.BKSlice...),
+		GPSlice:   append(ivisc.GPSlice[:0:0], ivisc.GPSlice...),
+		Subs:      subs,
+	}
 }
 
 type ivItemSub struct {
@@ -140,20 +411,41 @@ type ivItemSub struct {
 	Ints []int  `datastore:"ints,noindex"`
 }
 
-type ivItemSubs struct {
-	Data  string `datastore:"data,noindex"`
-	Extra string `datastore:",noindex"`
+func (ivis ivItemSub) clone() *ivItemSub {
+	return &ivItemSub{
+		Data: ivis.Data,
+		Ints: append(ivis.Ints[:0:0], ivis.Ints...),
+	}
 }
 
-type ivZZZV struct {
-	Key  *datastore.Key `datastore:"key,noindex"`
-	Data string         `datastore:"data,noindex"`
+type ivItemSubs struct {
+	Key   *datastore.Key `datastore:"key,noindex"`
+	Data  string         `datastore:"data,noindex"`
+	Extra string         `datastore:",noindex"`
+}
+
+func (ivis ivItemSubs) clone() *ivItemSubs {
+	return &ivItemSubs{
+		Key:   cloneKey(ivis.Key),
+		Data:  ivis.Data,
+		Extra: ivis.Extra,
+	}
 }
 
 func (ivi *ivItem) ForInterface() {}
 
 type ivItemI interface {
 	ForInterface()
+}
+
+// Implement the PropertyLoadSave interface for ivItem
+type ivItemPLS ivItem
+
+func (ivi *ivItemPLS) Save() ([]datastore.Property, error) {
+	return datastore.SaveStruct(ivi)
+}
+func (ivi *ivItemPLS) Load(props []datastore.Property) error {
+	return datastore.LoadStruct(ivi, props)
 }
 
 var ivItems []ivItem
@@ -166,243 +458,130 @@ func initializeIvItems(c context.Context) {
 
 	ivItems = []ivItem{
 		{Id: 1, Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345,
-			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "one",
-			CustomTypes: ivItemCustom{Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345,
+			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
+			ByteSlice: []byte{0xDE, 0xAD},
+			CustomTypes: ivItemCustom{
+				Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345, Bool: true, String: "one",
 				Float32: ivItemFloat32(float32(10) / float32(3)), Float64: ivItemFloat64(float64(10000000) / float64(9998)),
-				Bool: true, String: "one", DeepInt: 1},
-			SliceTypes: ivItemSlice{Int: []int{1, 2}, Int8: []int8{1, 2}, Int16: []int16{1, 2}, Int32: []int32{1, 2}, Int64: []int64{1, 2},
-				Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0}, Bool: []bool{true, false}, String: []string{"one", "two"},
-				IntC: []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
-				Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
-				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, DeepInt: []ivItemDeepInt{1, 2}},
-			ByteSlice: []byte{0xDE, 0xAD}, BSSlice: [][]byte{{0x01, 0x02}, {0x03, 0x04}},
-			Time: t1, TimeSlice: []time.Time{t1, t2, t3}, NoIndex: 1,
-			Casual: "clothes", Ζεύς: "Zeus",
-			Key:         datastore.NewKey(c, "Fruit", "Apple", 0, nil),
-			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			KeySlice:    []*datastore.Key{datastore.NewKey(c, "Key", "", 1, nil), datastore.NewKey(c, "Key", "", 2, nil), datastore.NewKey(c, "Key", "", 3, nil)},
-			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)},
-			BlobKey:     "fake #1", BKSlice: []appengine.BlobKey{"fake #1.1", "fake #1.2"},
+				ByteSlice: ivItemByteSlice([]byte{0x01, 0x02, 0xAA}), DeepInt: 1},
+			BString: datastore.ByteString([]byte{0xAB}), Key: datastore.NewKey(c, "Fruit", "Apple", 0, nil),
+			Time: t1, BlobKey: appengine.BlobKey("fake #1"), GeoPoint: appengine.GeoPoint{Lat: 1.1, Lng: 2.2},
 			Sub: ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
-			Subs: []ivItemSubs{
-				{Data: "sub #1.1", Extra: "xtra #1.1"},
-				{Data: "sub #1.2", Extra: "xtra #1.2"},
-				{Data: "sub #1.3", Extra: "xtra #1.3"}},
-			ZZZV: []ivZZZV{{Data: "None"}, {Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil)}}},
+			SliceTypes: ivItemSlice{Int: []int{1, 2}, Int8: []int8{1, 2}, Int16: []int16{1, 2}, Int32: []int32{1, 2}, Int64: []int64{1, 2},
+				Bool: []bool{true, false}, String: []string{"one", "two"}, Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0},
+				BSSlice: [][]byte{[]byte{0x01, 0x02}, []byte{0x03, 0x04}},
+				IntC:    []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
+				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
+				BSSliceC: []ivItemByteSlice{ivItemByteSlice{0x01, 0x02}, ivItemByteSlice{0x03, 0x04}}, DeepInt: []ivItemDeepInt{1, 2},
+				BStrSlice: []datastore.ByteString{datastore.ByteString("one"), datastore.ByteString("two")},
+				KeySlice:  []*datastore.Key{datastore.NewKey(c, "Key", "", 1, nil), datastore.NewKey(c, "Key", "", 2, nil), datastore.NewKey(c, "Key", "", 3, nil)},
+				TimeSlice: []time.Time{t1, t2, t3},
+				BKSlice:   []appengine.BlobKey{appengine.BlobKey("fake #1.1"), appengine.BlobKey("fake #1.2")},
+				GPSlice:   []appengine.GeoPoint{appengine.GeoPoint{Lat: 1.1, Lng: -2.2}, appengine.GeoPoint{Lat: -3.3, Lng: 4.4}},
+				Subs: []ivItemSubs{
+					{Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), Data: "sub #1.1", Extra: "xtra #1.1"},
+					{Key: nil, Data: "sub #1.2", Extra: "xtra #1.2"},
+					{Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), Data: "sub #1.3", Extra: "xtra #1.3"}}},
+			NoIndex: 1,
+			Casual:  "clothes", Ζεύς: "Zeus",
+			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
+			ZeroKey:     nil,
+			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)}},
 		{Id: 2, Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346,
-			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
 			Bool: true, String: "two",
-			CustomTypes: ivItemCustom{Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346,
-				Float32: ivItemFloat32(float32(10) / float32(3)), Float64: ivItemFloat64(float64(10000000) / float64(9998)),
-				Bool: true, String: "two", DeepInt: 2},
-			SliceTypes: ivItemSlice{Int: []int{1, 2}, Int8: []int8{1, 2}, Int16: []int16{1, 2}, Int32: []int32{1, 2}, Int64: []int64{1, 2},
-				Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0}, Bool: []bool{true, false}, String: []string{"one", "two"},
-				IntC: []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
-				Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
-				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, DeepInt: []ivItemDeepInt{1, 2}},
-			ByteSlice: []byte{0xBE, 0xEF}, BSSlice: [][]byte{{0x05, 0x06}, {0x07, 0x08}},
-			Time: t2, TimeSlice: []time.Time{t2, t3, t1}, NoIndex: 2,
-			Casual: "manners", Ζεύς: "Alcmene",
-			Key:         datastore.NewKey(c, "Fruit", "Banana", 0, nil),
-			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			KeySlice:    []*datastore.Key{datastore.NewKey(c, "Key", "", 4, nil), datastore.NewKey(c, "Key", "", 5, nil), datastore.NewKey(c, "Key", "", 6, nil)},
-			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 3, nil), nil, datastore.NewKey(c, "Number", "", 4, nil)},
-			BlobKey:     "fake #2", BKSlice: []appengine.BlobKey{"fake #2.1", "fake #2.2"},
-			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
-			Subs: []ivItemSubs{
-				{Data: "sub #2.1", Extra: "xtra #2.1"},
-				{Data: "sub #2.2", Extra: "xtra #2.2"},
-				{Data: "sub #2.3", Extra: "xtra #2.3"}},
-			ZZZV: []ivZZZV{{Data: "None"}, {Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil)}}},
-		{Id: 3, Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
 			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
-			Bool: true, String: "tri",
-			CustomTypes: ivItemCustom{Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
+			ByteSlice: []byte{0xBE, 0xEF},
+			CustomTypes: ivItemCustom{
+				Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346, Bool: true, String: "two",
 				Float32: ivItemFloat32(float32(10) / float32(3)), Float64: ivItemFloat64(float64(10000000) / float64(9998)),
-				Bool: true, String: "tri", DeepInt: 3},
+				ByteSlice: ivItemByteSlice([]byte{0x01, 0x02, 0xBB}), DeepInt: 2},
+			BString: datastore.ByteString([]byte{0xCD}), Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil),
+			Time: t2, BlobKey: appengine.BlobKey("fake #2"), GeoPoint: appengine.GeoPoint{Lat: -3.3, Lng: 4.4},
+			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
 			SliceTypes: ivItemSlice{Int: []int{1, 2}, Int8: []int8{1, 2}, Int16: []int16{1, 2}, Int32: []int32{1, 2}, Int64: []int64{1, 2},
-				Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0}, Bool: []bool{true, false}, String: []string{"one", "two"},
-				IntC: []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
-				Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
-				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, DeepInt: []ivItemDeepInt{1, 2}},
-			ByteSlice: []byte{0xF0, 0x0D}, BSSlice: [][]byte{{0x09, 0x0A}, {0x0B, 0x0C}},
-			Time: t3, TimeSlice: []time.Time{t3, t1, t2}, NoIndex: 3,
-			Casual: "weather", Ζεύς: "Hercules",
-			Key:         datastore.NewKey(c, "Fruit", "Cherry", 0, nil),
+				Bool: []bool{true, false}, String: []string{"one", "two"}, Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0},
+				BSSlice: [][]byte{{0x05, 0x06}, {0x07, 0x08}},
+				IntC:    []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
+				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
+				BSSliceC: []ivItemByteSlice{ivItemByteSlice{0x05, 0x06}, ivItemByteSlice{0x07, 0x08}}, DeepInt: []ivItemDeepInt{3, 4},
+				BStrSlice: []datastore.ByteString{datastore.ByteString("one"), datastore.ByteString("two")},
+				KeySlice:  []*datastore.Key{datastore.NewKey(c, "Key", "", 4, nil), datastore.NewKey(c, "Key", "", 5, nil), datastore.NewKey(c, "Key", "", 6, nil)},
+				TimeSlice: []time.Time{t2, t3, t1},
+				BKSlice:   []appengine.BlobKey{appengine.BlobKey("fake #2.1"), appengine.BlobKey("fake #2.2")},
+				GPSlice:   []appengine.GeoPoint{appengine.GeoPoint{Lat: 1.1, Lng: -2.2}, appengine.GeoPoint{Lat: -3.3, Lng: 4.4}},
+				Subs: []ivItemSubs{
+					{Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), Data: "sub #2.1", Extra: "xtra #2.1"},
+					{Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), Data: "sub #2.2", Extra: "xtra #2.2"},
+					{Key: nil, Data: "sub #2.3", Extra: "xtra #2.3"}}},
+			NoIndex: 2,
+			Casual:  "manners", Ζεύς: "Alcmene",
 			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			KeySlice:    []*datastore.Key{datastore.NewKey(c, "Key", "", 7, nil), datastore.NewKey(c, "Key", "", 8, nil), datastore.NewKey(c, "Key", "", 9, nil)},
-			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 5, nil), nil, datastore.NewKey(c, "Number", "", 6, nil)},
-			BlobKey:     "fake #3", BKSlice: []appengine.BlobKey{"fake #3.1", "fake #3.2"},
+			ZeroKey:     nil,
+			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 3, nil), nil, datastore.NewKey(c, "Number", "", 4, nil)}},
+		{Id: 3, Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
+			Bool: true, String: "tri",
+			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
+			ByteSlice: []byte{0xF0, 0x0D},
+			CustomTypes: ivItemCustom{
+				Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347, Bool: true, String: "tri",
+				Float32: ivItemFloat32(float32(10) / float32(3)), Float64: ivItemFloat64(float64(10000000) / float64(9998)),
+				ByteSlice: ivItemByteSlice([]byte{0x01, 0x02, 0xCC}), DeepInt: 3},
+			BString: datastore.ByteString([]byte{0xEF}), Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil),
+			Time: t3, BlobKey: appengine.BlobKey("fake #3"), GeoPoint: appengine.GeoPoint{Lat: 5.5, Lng: -6.6},
 			Sub: ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
-			Subs: []ivItemSubs{
-				{Data: "sub #3.1", Extra: "xtra #3.1"},
-				{Data: "sub #3.2", Extra: "xtra #3.2"},
-				{Data: "sub #3.3", Extra: "xtra #3.3"}},
-			ZZZV: []ivZZZV{{Data: "None"}, {Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil)}}}}
-}
+			SliceTypes: ivItemSlice{Int: []int{1, 2}, Int8: []int8{1, 2}, Int16: []int16{1, 2}, Int32: []int32{1, 2}, Int64: []int64{1, 2},
+				Bool: []bool{true, false}, String: []string{"one", "two"}, Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0},
+				BSSlice: [][]byte{{0x09, 0x0A}, {0x0B, 0x0C}},
+				IntC:    []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
+				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
+				BSSliceC: []ivItemByteSlice{ivItemByteSlice{0x09, 0x0A}, ivItemByteSlice{0x0B, 0x0C}}, DeepInt: []ivItemDeepInt{5, 6},
+				BStrSlice: []datastore.ByteString{datastore.ByteString("one"), datastore.ByteString("two")},
+				KeySlice:  []*datastore.Key{datastore.NewKey(c, "Key", "", 7, nil), datastore.NewKey(c, "Key", "", 8, nil), datastore.NewKey(c, "Key", "", 9, nil)},
+				TimeSlice: []time.Time{t3, t1, t2},
+				BKSlice:   []appengine.BlobKey{appengine.BlobKey("fake #3.1"), appengine.BlobKey("fake #3.2")},
+				GPSlice:   []appengine.GeoPoint{appengine.GeoPoint{Lat: 1.1, Lng: -2.2}, appengine.GeoPoint{Lat: -3.3, Lng: 4.4}},
+				Subs: []ivItemSubs{
+					{Key: nil, Data: "sub #3.1", Extra: "xtra #3.1"},
+					{Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), Data: "sub #3.2", Extra: "xtra #3.2"},
+					{Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), Data: "sub #3.3", Extra: "xtra #3.3"}}},
+			NoIndex: 3,
+			Casual:  "weather", Ζεύς: "Hercules",
+			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
+			ZeroKey:     nil,
+			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 5, nil), nil, datastore.NewKey(c, "Number", "", 6, nil)}}}
 
-func getIVItemCopy(g *Goon, index int) *ivItem {
-	// All basic value types are copied easily
-	ivi := ivItems[index]
-
-	// .. but pointer based types require extra work
-	ivi.SliceTypes.Int = []int{}
-	for _, v := range ivItems[index].SliceTypes.Int {
-		ivi.SliceTypes.Int = append(ivi.SliceTypes.Int, v)
-	}
-
-	ivi.SliceTypes.Int8 = []int8{}
-	for _, v := range ivItems[index].SliceTypes.Int8 {
-		ivi.SliceTypes.Int8 = append(ivi.SliceTypes.Int8, v)
-	}
-
-	ivi.SliceTypes.Int16 = []int16{}
-	for _, v := range ivItems[index].SliceTypes.Int16 {
-		ivi.SliceTypes.Int16 = append(ivi.SliceTypes.Int16, v)
-	}
-
-	ivi.SliceTypes.Int32 = []int32{}
-	for _, v := range ivItems[index].SliceTypes.Int32 {
-		ivi.SliceTypes.Int32 = append(ivi.SliceTypes.Int32, v)
-	}
-
-	ivi.SliceTypes.Int64 = []int64{}
-	for _, v := range ivItems[index].SliceTypes.Int64 {
-		ivi.SliceTypes.Int64 = append(ivi.SliceTypes.Int64, v)
-	}
-
-	ivi.SliceTypes.Float32 = []float32{}
-	for _, v := range ivItems[index].SliceTypes.Float32 {
-		ivi.SliceTypes.Float32 = append(ivi.SliceTypes.Float32, v)
-	}
-
-	ivi.SliceTypes.Float64 = []float64{}
-	for _, v := range ivItems[index].SliceTypes.Float64 {
-		ivi.SliceTypes.Float64 = append(ivi.SliceTypes.Float64, v)
-	}
-
-	ivi.SliceTypes.Bool = []bool{}
-	for _, v := range ivItems[index].SliceTypes.Bool {
-		ivi.SliceTypes.Bool = append(ivi.SliceTypes.Bool, v)
-	}
-
-	ivi.SliceTypes.String = []string{}
-	for _, v := range ivItems[index].SliceTypes.String {
-		ivi.SliceTypes.String = append(ivi.SliceTypes.String, v)
-	}
-
-	ivi.SliceTypes.IntC = []ivItemInt{}
-	for _, v := range ivItems[index].SliceTypes.IntC {
-		ivi.SliceTypes.IntC = append(ivi.SliceTypes.IntC, v)
-	}
-
-	ivi.SliceTypes.Int8C = []ivItemInt8{}
-	for _, v := range ivItems[index].SliceTypes.Int8C {
-		ivi.SliceTypes.Int8C = append(ivi.SliceTypes.Int8C, v)
-	}
-
-	ivi.SliceTypes.Int16C = []ivItemInt16{}
-	for _, v := range ivItems[index].SliceTypes.Int16C {
-		ivi.SliceTypes.Int16C = append(ivi.SliceTypes.Int16C, v)
-	}
-
-	ivi.SliceTypes.Int32C = []ivItemInt32{}
-	for _, v := range ivItems[index].SliceTypes.Int32C {
-		ivi.SliceTypes.Int32C = append(ivi.SliceTypes.Int32C, v)
-	}
-
-	ivi.SliceTypes.Int64C = []ivItemInt64{}
-	for _, v := range ivItems[index].SliceTypes.Int64C {
-		ivi.SliceTypes.Int64C = append(ivi.SliceTypes.Int64C, v)
-	}
-
-	ivi.SliceTypes.Float32C = []ivItemFloat32{}
-	for _, v := range ivItems[index].SliceTypes.Float32C {
-		ivi.SliceTypes.Float32C = append(ivi.SliceTypes.Float32C, v)
-	}
-
-	ivi.SliceTypes.Float64C = []ivItemFloat64{}
-	for _, v := range ivItems[index].SliceTypes.Float64C {
-		ivi.SliceTypes.Float64C = append(ivi.SliceTypes.Float64C, v)
-	}
-
-	ivi.SliceTypes.BoolC = []ivItemBool{}
-	for _, v := range ivItems[index].SliceTypes.BoolC {
-		ivi.SliceTypes.BoolC = append(ivi.SliceTypes.BoolC, v)
-	}
-
-	ivi.SliceTypes.StringC = []ivItemString{}
-	for _, v := range ivItems[index].SliceTypes.StringC {
-		ivi.SliceTypes.StringC = append(ivi.SliceTypes.StringC, v)
-	}
-
-	ivi.SliceTypes.DeepInt = []ivItemDeepInt{}
-	for _, v := range ivItems[index].SliceTypes.DeepInt {
-		ivi.SliceTypes.DeepInt = append(ivi.SliceTypes.DeepInt, v)
-	}
-
-	ivi.ByteSlice = []byte{}
-	for _, v := range ivItems[index].ByteSlice {
-		ivi.ByteSlice = append(ivi.ByteSlice, v)
-	}
-
-	ivi.BSSlice = [][]byte{}
-	for _, v := range ivItems[index].BSSlice {
-		vCopy := []byte{}
-		for _, v := range v {
-			vCopy = append(vCopy, v)
-		}
-		ivi.BSSlice = append(ivi.BSSlice, vCopy)
-	}
-
-	ivi.TimeSlice = []time.Time{}
-	for _, v := range ivItems[index].TimeSlice {
-		ivi.TimeSlice = append(ivi.TimeSlice, v)
-	}
-
-	ivi.Key = datastore.NewKey(g.Context, ivItems[index].Key.Kind(), ivItems[index].Key.StringID(), ivItems[index].Key.IntID(), nil)
-
-	ivi.ChildKey = datastore.NewKey(g.Context, ivItems[index].ChildKey.Kind(), ivItems[index].ChildKey.StringID(), ivItems[index].ChildKey.IntID(),
-		datastore.NewKey(g.Context, ivItems[index].ChildKey.Parent().Kind(), ivItems[index].ChildKey.Parent().StringID(), ivItems[index].ChildKey.Parent().IntID(),
-			datastore.NewKey(g.Context, ivItems[index].ChildKey.Parent().Parent().Kind(), ivItems[index].ChildKey.Parent().Parent().StringID(), ivItems[index].ChildKey.Parent().Parent().IntID(), nil)))
-
-	ivi.KeySlice = []*datastore.Key{}
-	for _, key := range ivItems[index].KeySlice {
-		ivi.KeySlice = append(ivi.KeySlice, datastore.NewKey(g.Context, key.Kind(), key.StringID(), key.IntID(), nil))
-	}
-
-	ivi.KeySliceNil = []*datastore.Key{}
-	for _, key := range ivItems[index].KeySliceNil {
-		if key == nil {
-			ivi.KeySliceNil = append(ivi.KeySliceNil, nil)
-		} else {
-			ivi.KeySliceNil = append(ivi.KeySliceNil, datastore.NewKey(g.Context, key.Kind(), key.StringID(), key.IntID(), nil))
+	for i := range ivItems {
+		ivItems[i].CustomSlices = ivItemSliceCustom{
+			ivItems[i].SliceTypes.Int,
+			ivItems[i].SliceTypes.Int8,
+			ivItems[i].SliceTypes.Int16,
+			ivItems[i].SliceTypes.Int32,
+			ivItems[i].SliceTypes.Int64,
+			ivItems[i].SliceTypes.Bool,
+			ivItems[i].SliceTypes.String,
+			ivItems[i].SliceTypes.Float32,
+			ivItems[i].SliceTypes.Float64,
+			ivItems[i].SliceTypes.BSSlice,
+			ivItems[i].SliceTypes.IntC,
+			ivItems[i].SliceTypes.Int8C,
+			ivItems[i].SliceTypes.Int16C,
+			ivItems[i].SliceTypes.Int32C,
+			ivItems[i].SliceTypes.Int64C,
+			ivItems[i].SliceTypes.BoolC,
+			ivItems[i].SliceTypes.StringC,
+			ivItems[i].SliceTypes.Float32C,
+			ivItems[i].SliceTypes.Float64C,
+			ivItems[i].SliceTypes.BSSliceC,
+			ivItems[i].SliceTypes.DeepInt,
+			ivItems[i].SliceTypes.BStrSlice,
+			ivItems[i].SliceTypes.KeySlice,
+			ivItems[i].SliceTypes.TimeSlice,
+			ivItems[i].SliceTypes.BKSlice,
+			ivItems[i].SliceTypes.GPSlice,
+			ivItems[i].SliceTypes.Subs,
 		}
 	}
-
-	ivi.BKSlice = []appengine.BlobKey{}
-	for _, v := range ivItems[index].BKSlice {
-		ivi.BKSlice = append(ivi.BKSlice, v)
-	}
-
-	ivi.Sub = ivItemSub{}
-	ivi.Sub.Data = ivItems[index].Sub.Data
-	for _, v := range ivItems[index].Sub.Ints {
-		ivi.Sub.Ints = append(ivi.Sub.Ints, v)
-	}
-
-	ivi.Subs = []ivItemSubs{}
-	for _, sub := range ivItems[index].Subs {
-		ivi.Subs = append(ivi.Subs, ivItemSubs{Data: sub.Data, Extra: sub.Extra})
-	}
-
-	ivi.ZZZV = []ivZZZV{}
-	for _, zzzv := range ivItems[index].ZZZV {
-		ivi.ZZZV = append(ivi.ZZZV, ivZZZV{Key: zzzv.Key, Data: zzzv.Data})
-	}
-
-	return &ivi
 }
 
 func getInputVarietySrc(t *testing.T, g *Goon, ivType int, indices ...int) interface{} {
@@ -417,37 +596,37 @@ func getInputVarietySrc(t *testing.T, g *Goon, ivType int, indices ...int) inter
 	case ivTypePtrToSliceOfStructs:
 		s := []ivItem{}
 		for _, index := range indices {
-			s = append(s, *getIVItemCopy(g, index))
+			s = append(s, *ivItems[index].clone())
 		}
 		result = &s
 	case ivTypePtrToSliceOfPtrsToStruct:
 		s := []*ivItem{}
 		for _, index := range indices {
-			s = append(s, getIVItemCopy(g, index))
+			s = append(s, ivItems[index].clone())
 		}
 		result = &s
 	case ivTypePtrToSliceOfInterfaces:
 		s := []ivItemI{}
 		for _, index := range indices {
-			s = append(s, getIVItemCopy(g, index))
+			s = append(s, ivItems[index].clone())
 		}
 		result = &s
 	case ivTypeSliceOfStructs:
 		s := []ivItem{}
 		for _, index := range indices {
-			s = append(s, *getIVItemCopy(g, index))
+			s = append(s, *ivItems[index].clone())
 		}
 		result = s
 	case ivTypeSliceOfPtrsToStruct:
 		s := []*ivItem{}
 		for _, index := range indices {
-			s = append(s, getIVItemCopy(g, index))
+			s = append(s, ivItems[index].clone())
 		}
 		result = s
 	case ivTypeSliceOfInterfaces:
 		s := []ivItemI{}
 		for _, index := range indices {
-			s = append(s, getIVItemCopy(g, index))
+			s = append(s, ivItems[index].clone())
 		}
 		result = s
 	}
@@ -767,6 +946,52 @@ func TestInputVariety(t *testing.T) {
 	}
 }
 
+func TestSerialization(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+
+	initializeIvItems(c)
+
+	// First as regular structs
+	for i := range ivItems {
+		data, err := serializeStruct(ivItems[i])
+		if err != nil {
+			t.Fatalf("Failed to serialize ivItems[%d]: %v", i, err)
+		}
+		var ivi ivItem
+		err = deserializeStruct(&ivi, data)
+		if err != nil {
+			t.Fatalf("Failed to deserialize ivItems[%d]: %v", i, err)
+		}
+		ivi.Id = ivItems[i].Id // Manually set the id
+		if !reflect.DeepEqual(ivItems[i], ivi) {
+			t.Errorf("Invalid result! Expected %+v but got %+v", ivItems[i], ivi)
+		}
+	}
+
+	// Then as PropertyLoadSave interface
+	for i := range ivItems {
+		var iviplsOut ivItemPLS
+		iviplsOut = ivItemPLS(ivItems[i])
+		data, err := serializeStruct(&iviplsOut)
+		if err != nil {
+			t.Fatalf("Failed to serialize ivItems[%d] as PLS: %v", i, err)
+		}
+		var iviplsIn ivItemPLS
+		err = deserializeStruct(&iviplsIn, data)
+		if err != nil {
+			t.Fatalf("Failed to deserialize ivItems[%d] as PLS: %v", i, err)
+		}
+		iviplsIn.Id = iviplsOut.Id // Manually set the id
+		if !reflect.DeepEqual(iviplsOut, iviplsIn) {
+			t.Errorf("Invalid result! Expected %+v but got %+v", iviplsOut, iviplsIn)
+		}
+	}
+}
+
 type MigrationEntity interface {
 	number() int32
 	parent() *datastore.Key
@@ -783,6 +1008,7 @@ type MigrationA struct {
 	α                int               `datastore:",noindex"`
 	Level            MigrationIntA     `datastore:"level,noindex"`
 	Floor            MigrationIntA     `datastore:"floor,noindex"`
+	BunchOfBytes     MigrationBSSA     `datastore:"bb,noindex"`
 	Sub              MigrationSub      `datastore:"sub,noindex"`
 	Son              MigrationPerson   `datastore:"son,noindex"`
 	Daughter         MigrationPerson   `datastore:"daughter,noindex"`
@@ -844,6 +1070,11 @@ type ZigZags struct {
 type MigrationIntA int
 type MigrationIntB int
 
+type MigrationBSA []byte
+type MigrationBSB []byte
+type MigrationBSSA []MigrationBSA
+type MigrationBSSB []MigrationBSB
+
 type MigrationB struct {
 	_kind          string            `goon:"kind,Migration"`
 	Parent         *datastore.Key    `datastore:"-" goon:"parent"`
@@ -855,6 +1086,7 @@ type MigrationB struct {
 	β              int               `datastore:"α,noindex"`
 	Level          MigrationIntB     `datastore:"level,noindex"`
 	Floors         []MigrationIntB   `datastore:"floor,noindex"`
+	BunchOfBytes   MigrationBSSB     `datastore:"bb,noindex"`
 	Animal         string            `datastore:"sub.data,noindex"`
 	Music          []int             `datastore:"sub.noise,noindex"`
 	Flower         string            `datastore:"sub.sub.data,noindex"`
@@ -932,8 +1164,9 @@ func TestMigration(t *testing.T) {
 	parentKey := g.Key(&HasId{Id: 9999})
 	migA := &MigrationA{Parent: parentKey, Id: 1, Number: 123, Word: "rabbit", Car: "BMW",
 		Holiday: time.Now().UTC().Truncate(time.Microsecond), α: 1, Level: 9001, Floor: 5,
-		Sub: MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
-		Son: MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
+		BunchOfBytes: MigrationBSSA{MigrationBSA{0x01, 0x02}, MigrationBSA{0x03, 0x04}},
+		Sub:          MigrationSub{Data: "fox", Noise: []int{1, 2, 3}, Sub: MigrationSubSub{Data: "rose"}},
+		Son:          MigrationPerson{Name: "John", Age: 5}, Daughter: MigrationPerson{Name: "Nancy", Age: 6},
 		Parents:   []MigrationPerson{{Name: "Sven", Age: 56}, {Name: "Sonya", Age: 49}},
 		DeepSlice: MigrationDeepA{Deep: MigrationDeepB{Deep: MigrationDeepC{Slice: []int{1, 2, 3}}}},
 		ZZs:       []ZigZag{{Zig: 1}, {Zag: 1}}, File: []byte{0xF0, 0x0D},
@@ -1108,6 +1341,11 @@ func checkMigrationResult(t *testing.T, g *Goon, src, fetched interface{}, debug
 		t.Errorf("%v > Expected 1 floor! Got: %v", debugInfo, len(migB.Floors))
 	} else if int(migA.Floor) != int(migB.Floors[0]) {
 		t.Errorf("%v > Floor doesn't match: %v != %v", debugInfo, migA.Floor, migB.Floors[0])
+	} else if len(migA.BunchOfBytes) != len(migB.BunchOfBytes) || len(migA.BunchOfBytes) != 2 {
+		t.Errorf("%v > BunchOfBytes len doesn't match (expected 2): %v != %v", debugInfo, len(migA.BunchOfBytes), len(migB.BunchOfBytes))
+	} else if !reflect.DeepEqual([]byte(migA.BunchOfBytes[0]), []byte(migB.BunchOfBytes[0])) ||
+		!reflect.DeepEqual([]byte(migA.BunchOfBytes[1]), []byte(migB.BunchOfBytes[1])) {
+		t.Errorf("%v > BunchOfBytes doesn't match: %+v != %+v", debugInfo, migA.BunchOfBytes, migB.BunchOfBytes)
 	} else if migA.Sub.Data != migB.Animal {
 		t.Errorf("%v > Animal doesn't match: %v != %v", debugInfo, migA.Sub.Data, migB.Animal)
 	} else if !reflect.DeepEqual(migA.Sub.Noise, migB.Music) {

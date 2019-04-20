@@ -75,7 +75,7 @@ type Goon struct {
 // MemcacheKey returns key string of Memcache.
 var MemcacheKey = func(k *datastore.Key) string {
 	// Versioning, so that incompatible changes to the cache system won't cause problems
-	return "g3:" + k.Encode()
+	return "g4:" + k.Encode()
 }
 
 // NewGoon creates a new Goon object from the given request.
