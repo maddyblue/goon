@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -32,7 +33,8 @@ import (
 	"google.golang.org/appengine/memcache"
 )
 
-// *[]S, *[]*S, *[]I, []S, []*S, []I
+// *[]S, *[]*S, *[]I, []S, []*S, []I,
+// *[]PLS, *[]*PLS, *[]IPLS, []PLS, []*PLS, []IPLS
 const (
 	ivTypePtrToSliceOfStructs = iota
 	ivTypePtrToSliceOfPtrsToStruct
@@ -40,6 +42,12 @@ const (
 	ivTypeSliceOfStructs
 	ivTypeSliceOfPtrsToStruct
 	ivTypeSliceOfInterfaces
+	ivTypePtrToSliceOfPLS
+	ivTypePtrToSliceOfPtrsToPLS
+	ivTypePtrToSliceOfInterfacesPLS
+	ivTypeSliceOfPLS
+	ivTypeSliceOfPtrsToPLS
+	ivTypeSliceOfInterfacesPLS
 	ivTypeTotal
 )
 
@@ -118,6 +126,7 @@ func TestCloneIVItem(t *testing.T) {
 // whose underlying type is a legal slice.
 type ivItem struct {
 	Id           int64                `datastore:"-" goon:"id"`
+	Kind         string               `datastore:"-" goon:"kind,ivItem"`
 	Int          int                  `datastore:"int,noindex"`
 	Int8         int8                 `datastore:"int8,noindex"`
 	Int16        int16                `datastore:"int16,noindex"`
@@ -432,7 +441,8 @@ func (ivis ivItemSubs) clone() *ivItemSubs {
 	}
 }
 
-func (ivi *ivItem) ForInterface() {}
+func (ivi *ivItem) ForInterface()    {}
+func (ivi *ivItemPLS) ForInterface() {}
 
 type ivItemI interface {
 	ForInterface()
@@ -444,6 +454,7 @@ type ivItemPLS ivItem
 func (ivi *ivItemPLS) Save() ([]datastore.Property, error) {
 	return datastore.SaveStruct(ivi)
 }
+
 func (ivi *ivItemPLS) Load(props []datastore.Property) error {
 	return datastore.LoadStruct(ivi, props)
 }
@@ -456,132 +467,123 @@ func initializeIvItems(c context.Context) {
 	t2 := t1.Add(time.Second * 1)
 	t3 := t1.Add(time.Second * 2)
 
-	ivItems = []ivItem{
-		{Id: 1, Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345,
-			Bool: true, String: "one",
-			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
-			ByteSlice: []byte{0xDE, 0xAD},
-			CustomTypes: ivItemCustom{
-				Int: 123, Int8: 77, Int16: 13001, Int32: 1234567890, Int64: 123456789012345, Bool: true, String: "one",
-				Float32: ivItemFloat32(float32(10) / float32(3)), Float64: ivItemFloat64(float64(10000000) / float64(9998)),
-				ByteSlice: ivItemByteSlice([]byte{0x01, 0x02, 0xAA}), DeepInt: 1},
-			BString: datastore.ByteString([]byte{0xAB}), Key: datastore.NewKey(c, "Fruit", "Apple", 0, nil),
-			Time: t1, BlobKey: appengine.BlobKey("fake #1"), GeoPoint: appengine.GeoPoint{Lat: 1.1, Lng: 2.2},
-			Sub: ivItemSub{Data: "yay #1", Ints: []int{1, 2, 3}},
-			SliceTypes: ivItemSlice{Int: []int{1, 2}, Int8: []int8{1, 2}, Int16: []int16{1, 2}, Int32: []int32{1, 2}, Int64: []int64{1, 2},
-				Bool: []bool{true, false}, String: []string{"one", "two"}, Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0},
-				BSSlice: [][]byte{[]byte{0x01, 0x02}, []byte{0x03, 0x04}},
-				IntC:    []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
-				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
-				BSSliceC: []ivItemByteSlice{ivItemByteSlice{0x01, 0x02}, ivItemByteSlice{0x03, 0x04}}, DeepInt: []ivItemDeepInt{1, 2},
-				BStrSlice: []datastore.ByteString{datastore.ByteString("one"), datastore.ByteString("two")},
-				KeySlice:  []*datastore.Key{datastore.NewKey(c, "Key", "", 1, nil), datastore.NewKey(c, "Key", "", 2, nil), datastore.NewKey(c, "Key", "", 3, nil)},
-				TimeSlice: []time.Time{t1, t2, t3},
-				BKSlice:   []appengine.BlobKey{appengine.BlobKey("fake #1.1"), appengine.BlobKey("fake #1.2")},
-				GPSlice:   []appengine.GeoPoint{appengine.GeoPoint{Lat: 1.1, Lng: -2.2}, appengine.GeoPoint{Lat: -3.3, Lng: 4.4}},
-				Subs: []ivItemSubs{
-					{Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), Data: "sub #1.1", Extra: "xtra #1.1"},
-					{Key: nil, Data: "sub #1.2", Extra: "xtra #1.2"},
-					{Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), Data: "sub #1.3", Extra: "xtra #1.3"}}},
-			NoIndex: 1,
-			Casual:  "clothes", Ζεύς: "Zeus",
-			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			ZeroKey:     nil,
-			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)}},
-		{Id: 2, Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346,
-			Bool: true, String: "two",
-			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
-			ByteSlice: []byte{0xBE, 0xEF},
-			CustomTypes: ivItemCustom{
-				Int: 124, Int8: 78, Int16: 13002, Int32: 1234567891, Int64: 123456789012346, Bool: true, String: "two",
-				Float32: ivItemFloat32(float32(10) / float32(3)), Float64: ivItemFloat64(float64(10000000) / float64(9998)),
-				ByteSlice: ivItemByteSlice([]byte{0x01, 0x02, 0xBB}), DeepInt: 2},
-			BString: datastore.ByteString([]byte{0xCD}), Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil),
-			Time: t2, BlobKey: appengine.BlobKey("fake #2"), GeoPoint: appengine.GeoPoint{Lat: -3.3, Lng: 4.4},
-			Sub: ivItemSub{Data: "yay #2", Ints: []int{4, 5, 6}},
-			SliceTypes: ivItemSlice{Int: []int{1, 2}, Int8: []int8{1, 2}, Int16: []int16{1, 2}, Int32: []int32{1, 2}, Int64: []int64{1, 2},
-				Bool: []bool{true, false}, String: []string{"one", "two"}, Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0},
-				BSSlice: [][]byte{{0x05, 0x06}, {0x07, 0x08}},
-				IntC:    []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
-				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
-				BSSliceC: []ivItemByteSlice{ivItemByteSlice{0x05, 0x06}, ivItemByteSlice{0x07, 0x08}}, DeepInt: []ivItemDeepInt{3, 4},
-				BStrSlice: []datastore.ByteString{datastore.ByteString("one"), datastore.ByteString("two")},
-				KeySlice:  []*datastore.Key{datastore.NewKey(c, "Key", "", 4, nil), datastore.NewKey(c, "Key", "", 5, nil), datastore.NewKey(c, "Key", "", 6, nil)},
-				TimeSlice: []time.Time{t2, t3, t1},
-				BKSlice:   []appengine.BlobKey{appengine.BlobKey("fake #2.1"), appengine.BlobKey("fake #2.2")},
-				GPSlice:   []appengine.GeoPoint{appengine.GeoPoint{Lat: 1.1, Lng: -2.2}, appengine.GeoPoint{Lat: -3.3, Lng: 4.4}},
-				Subs: []ivItemSubs{
-					{Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), Data: "sub #2.1", Extra: "xtra #2.1"},
-					{Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), Data: "sub #2.2", Extra: "xtra #2.2"},
-					{Key: nil, Data: "sub #2.3", Extra: "xtra #2.3"}}},
-			NoIndex: 2,
-			Casual:  "manners", Ζεύς: "Alcmene",
-			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			ZeroKey:     nil,
-			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 3, nil), nil, datastore.NewKey(c, "Number", "", 4, nil)}},
-		{Id: 3, Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347,
-			Bool: true, String: "tri",
-			Float32: (float32(10) / float32(3)), Float64: (float64(10000000) / float64(9998)),
-			ByteSlice: []byte{0xF0, 0x0D},
-			CustomTypes: ivItemCustom{
-				Int: 125, Int8: 79, Int16: 13003, Int32: 1234567892, Int64: 123456789012347, Bool: true, String: "tri",
-				Float32: ivItemFloat32(float32(10) / float32(3)), Float64: ivItemFloat64(float64(10000000) / float64(9998)),
-				ByteSlice: ivItemByteSlice([]byte{0x01, 0x02, 0xCC}), DeepInt: 3},
-			BString: datastore.ByteString([]byte{0xEF}), Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil),
-			Time: t3, BlobKey: appengine.BlobKey("fake #3"), GeoPoint: appengine.GeoPoint{Lat: 5.5, Lng: -6.6},
-			Sub: ivItemSub{Data: "yay #3", Ints: []int{7, 8, 9}},
-			SliceTypes: ivItemSlice{Int: []int{1, 2}, Int8: []int8{1, 2}, Int16: []int16{1, 2}, Int32: []int32{1, 2}, Int64: []int64{1, 2},
-				Bool: []bool{true, false}, String: []string{"one", "two"}, Float32: []float32{1.0, 2.0}, Float64: []float64{1.0, 2.0},
-				BSSlice: [][]byte{{0x09, 0x0A}, {0x0B, 0x0C}},
-				IntC:    []ivItemInt{1, 2}, Int8C: []ivItemInt8{1, 2}, Int16C: []ivItemInt16{1, 2}, Int32C: []ivItemInt32{1, 2}, Int64C: []ivItemInt64{1, 2},
-				BoolC: []ivItemBool{true, false}, StringC: []ivItemString{"one", "two"}, Float32C: []ivItemFloat32{1.0, 2.0}, Float64C: []ivItemFloat64{1.0, 2.0},
-				BSSliceC: []ivItemByteSlice{ivItemByteSlice{0x09, 0x0A}, ivItemByteSlice{0x0B, 0x0C}}, DeepInt: []ivItemDeepInt{5, 6},
-				BStrSlice: []datastore.ByteString{datastore.ByteString("one"), datastore.ByteString("two")},
-				KeySlice:  []*datastore.Key{datastore.NewKey(c, "Key", "", 7, nil), datastore.NewKey(c, "Key", "", 8, nil), datastore.NewKey(c, "Key", "", 9, nil)},
-				TimeSlice: []time.Time{t3, t1, t2},
-				BKSlice:   []appengine.BlobKey{appengine.BlobKey("fake #3.1"), appengine.BlobKey("fake #3.2")},
-				GPSlice:   []appengine.GeoPoint{appengine.GeoPoint{Lat: 1.1, Lng: -2.2}, appengine.GeoPoint{Lat: -3.3, Lng: 4.4}},
-				Subs: []ivItemSubs{
-					{Key: nil, Data: "sub #3.1", Extra: "xtra #3.1"},
-					{Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), Data: "sub #3.2", Extra: "xtra #3.2"},
-					{Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), Data: "sub #3.3", Extra: "xtra #3.3"}}},
-			NoIndex: 3,
-			Casual:  "weather", Ζεύς: "Hercules",
-			ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
-			ZeroKey:     nil,
-			KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 5, nil), nil, datastore.NewKey(c, "Number", "", 6, nil)}}}
-
-	for i := range ivItems {
-		ivItems[i].CustomSlices = ivItemSliceCustom{
-			ivItems[i].SliceTypes.Int,
-			ivItems[i].SliceTypes.Int8,
-			ivItems[i].SliceTypes.Int16,
-			ivItems[i].SliceTypes.Int32,
-			ivItems[i].SliceTypes.Int64,
-			ivItems[i].SliceTypes.Bool,
-			ivItems[i].SliceTypes.String,
-			ivItems[i].SliceTypes.Float32,
-			ivItems[i].SliceTypes.Float64,
-			ivItems[i].SliceTypes.BSSlice,
-			ivItems[i].SliceTypes.IntC,
-			ivItems[i].SliceTypes.Int8C,
-			ivItems[i].SliceTypes.Int16C,
-			ivItems[i].SliceTypes.Int32C,
-			ivItems[i].SliceTypes.Int64C,
-			ivItems[i].SliceTypes.BoolC,
-			ivItems[i].SliceTypes.StringC,
-			ivItems[i].SliceTypes.Float32C,
-			ivItems[i].SliceTypes.Float64C,
-			ivItems[i].SliceTypes.BSSliceC,
-			ivItems[i].SliceTypes.DeepInt,
-			ivItems[i].SliceTypes.BStrSlice,
-			ivItems[i].SliceTypes.KeySlice,
-			ivItems[i].SliceTypes.TimeSlice,
-			ivItems[i].SliceTypes.BKSlice,
-			ivItems[i].SliceTypes.GPSlice,
-			ivItems[i].SliceTypes.Subs,
-		}
+	ivi1 := &ivItem{
+		Id:        1,
+		Int:       123,
+		Int8:      77,
+		Int16:     13001,
+		Int32:     1234567890,
+		Int64:     123456789012345,
+		Bool:      true,
+		String:    "one",
+		Float32:   (float32(10) / float32(3)),
+		Float64:   (float64(10000000) / float64(9998)),
+		ByteSlice: []byte{0xDE, 0xAD},
+		CustomTypes: ivItemCustom{
+			Int:       123,
+			Int8:      77,
+			Int16:     13001,
+			Int32:     1234567890,
+			Int64:     123456789012345,
+			Bool:      true,
+			String:    "one",
+			Float32:   ivItemFloat32(float32(10) / float32(3)),
+			Float64:   ivItemFloat64(float64(10000000) / float64(9998)),
+			ByteSlice: ivItemByteSlice([]byte{0x01, 0x02, 0xAA}),
+			DeepInt:   1,
+		},
+		BString:  datastore.ByteString([]byte{0xAB}),
+		Key:      datastore.NewKey(c, "Fruit", "Apple", 0, nil),
+		Time:     t1,
+		BlobKey:  appengine.BlobKey("fake #1"),
+		GeoPoint: appengine.GeoPoint{Lat: 1.1, Lng: 2.2},
+		Sub: ivItemSub{
+			Data: "yay #1",
+			Ints: []int{1, 2, 3},
+		},
+		SliceTypes: ivItemSlice{
+			Int:       []int{1, 2},
+			Int8:      []int8{1, 2},
+			Int16:     []int16{1, 2},
+			Int32:     []int32{1, 2},
+			Int64:     []int64{1, 2},
+			Bool:      []bool{true, false},
+			String:    []string{"one", "two"},
+			Float32:   []float32{1.0, 2.0},
+			Float64:   []float64{1.0, 2.0},
+			BSSlice:   [][]byte{[]byte{0x01, 0x02}, []byte{0x03, 0x04}},
+			IntC:      []ivItemInt{1, 2},
+			Int8C:     []ivItemInt8{1, 2},
+			Int16C:    []ivItemInt16{1, 2},
+			Int32C:    []ivItemInt32{1, 2},
+			Int64C:    []ivItemInt64{1, 2},
+			BoolC:     []ivItemBool{true, false},
+			StringC:   []ivItemString{"one", "two"},
+			Float32C:  []ivItemFloat32{1.0, 2.0},
+			Float64C:  []ivItemFloat64{1.0, 2.0},
+			BSSliceC:  []ivItemByteSlice{ivItemByteSlice{0x01, 0x02}, ivItemByteSlice{0x03, 0x04}},
+			DeepInt:   []ivItemDeepInt{1, 2},
+			BStrSlice: []datastore.ByteString{datastore.ByteString("one"), datastore.ByteString("two")},
+			KeySlice:  []*datastore.Key{datastore.NewKey(c, "Key", "", 1, nil), datastore.NewKey(c, "Key", "", 2, nil), datastore.NewKey(c, "Key", "", 3, nil)},
+			TimeSlice: []time.Time{t1, t2, t3},
+			BKSlice:   []appengine.BlobKey{appengine.BlobKey("fake #1.1"), appengine.BlobKey("fake #1.2")},
+			GPSlice:   []appengine.GeoPoint{appengine.GeoPoint{Lat: 1.1, Lng: -2.2}, appengine.GeoPoint{Lat: -3.3, Lng: 4.4}},
+			Subs: []ivItemSubs{
+				{Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), Data: "sub #1.1", Extra: "xtra #1.1"},
+				{Key: nil, Data: "sub #1.2", Extra: "xtra #1.2"},
+				{Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), Data: "sub #1.3", Extra: "xtra #1.3"},
+			},
+		},
+		CustomSlices: ivItemSliceCustom{
+			Int:       IntS{1, 2},
+			Int8:      Int8S{1, 2},
+			Int16:     Int16S{1, 2},
+			Int32:     Int32S{1, 2},
+			Int64:     Int64S{1, 2},
+			Bool:      BoolS{true, false},
+			String:    StringS{"one", "two"},
+			Float32:   Float32S{1.0, 2.0},
+			Float64:   Float64S{1.0, 2.0},
+			BSSlice:   BSSliceS{[]byte{0x01, 0x02}, []byte{0x03, 0x04}},
+			IntC:      IntCS{1, 2},
+			Int8C:     Int8CS{1, 2},
+			Int16C:    Int16CS{1, 2},
+			Int32C:    Int32CS{1, 2},
+			Int64C:    Int64CS{1, 2},
+			BoolC:     BoolCS{true, false},
+			StringC:   StringCS{"one", "two"},
+			Float32C:  Float32CS{1.0, 2.0},
+			Float64C:  Float64CS{1.0, 2.0},
+			BSSliceC:  BSSliceCS{ivItemByteSlice{0x01, 0x02}, ivItemByteSlice{0x03, 0x04}},
+			DeepInt:   DeepIntS{1, 2},
+			BStrSlice: BStrSliceS{datastore.ByteString("one"), datastore.ByteString("two")},
+			KeySlice:  KeySliceS{datastore.NewKey(c, "Key", "", 1, nil), datastore.NewKey(c, "Key", "", 2, nil), datastore.NewKey(c, "Key", "", 3, nil)},
+			TimeSlice: TimeSliceS{t1, t2, t3},
+			BKSlice:   BKSliceS{appengine.BlobKey("fake #1.1"), appengine.BlobKey("fake #1.2")},
+			GPSlice:   GPSliceS{appengine.GeoPoint{Lat: 1.1, Lng: -2.2}, appengine.GeoPoint{Lat: -3.3, Lng: 4.4}},
+			Subs: SubsS{
+				{Key: datastore.NewKey(c, "Fruit", "Banana", 0, nil), Data: "sub #1.1", Extra: "xtra #1.1"},
+				{Key: datastore.NewKey(c, "Fruit", "Cherry", 0, nil), Data: "sub #1.2", Extra: "xtra #1.2"},
+				{Key: nil, Data: "sub #1.3", Extra: "xtra #1.3"},
+			},
+		},
+		NoIndex:     1,
+		Casual:      "clothes",
+		Ζεύς:        "Zeus",
+		ChildKey:    datastore.NewKey(c, "Person", "Jane", 0, datastore.NewKey(c, "Person", "John", 0, datastore.NewKey(c, "Person", "Jack", 0, nil))),
+		ZeroKey:     nil,
+		KeySliceNil: []*datastore.Key{datastore.NewKey(c, "Number", "", 1, nil), nil, datastore.NewKey(c, "Number", "", 2, nil)},
 	}
+
+	ivi2 := ivi1.clone()
+	ivi2.Id = 2
+
+	ivi3 := ivi1.clone()
+	ivi3.Id = 3
+
+	ivItems = append(ivItems, *ivi1)
+	ivItems = append(ivItems, *ivi2)
+	ivItems = append(ivItems, *ivi3)
 }
 
 func getInputVarietySrc(t *testing.T, g *Goon, ivType int, indices ...int) interface{} {
@@ -629,6 +631,42 @@ func getInputVarietySrc(t *testing.T, g *Goon, ivType int, indices ...int) inter
 			s = append(s, ivItems[index].clone())
 		}
 		result = s
+	case ivTypePtrToSliceOfPLS:
+		s := []ivItemPLS{}
+		for _, index := range indices {
+			s = append(s, (ivItemPLS)(*ivItems[index].clone()))
+		}
+		result = &s
+	case ivTypePtrToSliceOfPtrsToPLS:
+		s := []*ivItemPLS{}
+		for _, index := range indices {
+			s = append(s, (*ivItemPLS)(ivItems[index].clone()))
+		}
+		result = &s
+	case ivTypePtrToSliceOfInterfacesPLS:
+		s := []ivItemI{}
+		for _, index := range indices {
+			s = append(s, (*ivItemPLS)(ivItems[index].clone()))
+		}
+		result = &s
+	case ivTypeSliceOfPLS:
+		s := []ivItemPLS{}
+		for _, index := range indices {
+			s = append(s, (ivItemPLS)(*ivItems[index].clone()))
+		}
+		result = s
+	case ivTypeSliceOfPtrsToPLS:
+		s := []*ivItemPLS{}
+		for _, index := range indices {
+			s = append(s, (*ivItemPLS)(ivItems[index].clone()))
+		}
+		result = s
+	case ivTypeSliceOfInterfacesPLS:
+		s := []ivItemI{}
+		for _, index := range indices {
+			s = append(s, (*ivItemPLS)(ivItems[index].clone()))
+		}
+		result = s
 	}
 
 	return result
@@ -655,6 +693,18 @@ func getInputVarietyDst(t *testing.T, ivType int) interface{} {
 		result = []*ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
 	case ivTypeSliceOfInterfaces:
 		result = []ivItemI{&ivItem{Id: ivItems[0].Id}, &ivItem{Id: ivItems[1].Id}, &ivItem{Id: ivItems[2].Id}}
+	case ivTypePtrToSliceOfPLS:
+		result = &[]ivItemPLS{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
+	case ivTypePtrToSliceOfPtrsToPLS:
+		result = &[]*ivItemPLS{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
+	case ivTypePtrToSliceOfInterfacesPLS:
+		result = &[]ivItemI{&ivItemPLS{Id: ivItems[0].Id}, &ivItemPLS{Id: ivItems[1].Id}, &ivItemPLS{Id: ivItems[2].Id}}
+	case ivTypeSliceOfPLS:
+		result = []ivItemPLS{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
+	case ivTypeSliceOfPtrsToPLS:
+		result = []*ivItemPLS{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
+	case ivTypeSliceOfInterfacesPLS:
+		result = []ivItemI{&ivItemPLS{Id: ivItems[0].Id}, &ivItemPLS{Id: ivItems[1].Id}, &ivItemPLS{Id: ivItems[2].Id}}
 	}
 
 	return result
@@ -699,6 +749,18 @@ func getPrettyIVType(ivType int) string {
 		result = "[]*S"
 	case ivTypeSliceOfInterfaces:
 		result = "[]I"
+	case ivTypePtrToSliceOfPLS:
+		result = "*[]PLS"
+	case ivTypePtrToSliceOfPtrsToPLS:
+		result = "*[]*PLS"
+	case ivTypePtrToSliceOfInterfacesPLS:
+		result = "*[]IPLS"
+	case ivTypeSliceOfPLS:
+		result = "[]PLS"
+	case ivTypeSliceOfPtrsToPLS:
+		result = "[]*PLS"
+	case ivTypeSliceOfInterfacesPLS:
+		result = "[]IPLS"
 	}
 
 	return result
@@ -954,42 +1016,115 @@ func TestSerialization(t *testing.T) {
 
 	initializeIvItems(c)
 
-	// First as regular structs
-	for i := range ivItems {
-		data, err := serializeStruct(ivItems[i])
-		if err != nil {
-			t.Fatalf("Failed to serialize ivItems[%d]: %v", i, err)
-		}
-		var ivi ivItem
-		err = deserializeStruct(&ivi, data)
-		if err != nil {
-			t.Fatalf("Failed to deserialize ivItems[%d]: %v", i, err)
-		}
-		ivi.Id = ivItems[i].Id // Manually set the id
-		if !reflect.DeepEqual(ivItems[i], ivi) {
-			t.Errorf("Invalid result! Expected %+v but got %+v", ivItems[i], ivi)
-		}
-		t.Logf("ivItems[%d] size: %v", i, len(data))
+	// Test that size & data is the same in back-to-back
+	iviOut := ivItems[0].clone()
+	data, err := serializeStruct(iviOut)
+	if err != nil {
+		t.Fatalf("Failed to serialize iviOut: %v", err)
+	}
+	dataB, err := serializeStruct(iviOut)
+	if err != nil {
+		t.Fatalf("Failed to serialize iviOut: %v", err)
+	}
+	if len(data) != len(dataB) {
+		t.Fatalf("Back-to-back serialization returned different length data: %v != %v", len(data), len(dataB))
+	}
+	if !reflect.DeepEqual(data, dataB) {
+		t.Fatalf("Back-to-back serialization returned different data\n%x\n%x", data, dataB)
 	}
 
-	// Then as PropertyLoadSave interface
-	for i := range ivItems {
-		var iviplsOut ivItemPLS
-		iviplsOut = ivItemPLS(ivItems[i])
-		data, err := serializeStruct(&iviplsOut)
-		if err != nil {
-			t.Fatalf("Failed to serialize ivItems[%d] as PLS: %v", i, err)
+	// Test that we can deserialize back to the struct
+	iviIn := &ivItem{}
+	err = deserializeStruct(iviIn, data)
+	if err != nil {
+		t.Fatalf("Failed to deserialize to iviIn: %v", err)
+	}
+	iviIn.Id = iviOut.Id // Manually set the id
+	if !reflect.DeepEqual(iviOut, iviIn) {
+		t.Errorf("Invalid result! Expected %+v but got %+v", iviOut, iviIn)
+	}
+
+	// PropertyLoadSaver serialization
+	var iviplsOut *ivItemPLS
+	iviplsOut = (*ivItemPLS)(ivItems[0].clone())
+	dataPLS, err := serializeStruct(iviplsOut)
+	if err != nil {
+		t.Fatalf("Failed to serialize iviplsOut: %v", err)
+	}
+	iviplsIn := &ivItemPLS{}
+	err = deserializeStruct(iviplsIn, dataPLS)
+	if err != nil {
+		t.Fatalf("Failed to deserialize to iviplsIn: %v", err)
+	}
+	iviplsIn.Id = iviplsOut.Id // Manually set the id
+	if !reflect.DeepEqual(iviplsOut, iviplsIn) {
+		t.Errorf("Invalid PLS result! Expected %+v but got %+v", iviplsOut, iviplsIn)
+	}
+
+	// Make sure both normal & PLS result in the same data
+	if len(data) != len(dataPLS) {
+		t.Fatalf("Serialization returned different length data for normal vs PLS: %v != %v", len(data), len(dataPLS))
+	}
+	if !reflect.DeepEqual(data, dataPLS) {
+		t.Fatalf("Serialization returned different dat for normal vs PLS:\n%x\n%x", data, dataPLS)
+	}
+
+	t.Logf("data size: %v", len(data))
+}
+
+type dummyPLS struct {
+	Id     int64  `datastore:"-" goon:"id"`
+	ValueA string `datastore:"a"`
+	ValueB string `datastore:"-"`
+}
+
+func (d *dummyPLS) Save() ([]datastore.Property, error) {
+	props, err := datastore.SaveStruct(d)
+	if err != nil {
+		return nil, err
+	}
+	props = append([]datastore.Property{{Name: "ValueB" + d.ValueB, NoIndex: true, Multiple: true, Value: nil}}, props...)
+	return props, nil
+}
+
+func (d *dummyPLS) Load(props []datastore.Property) error {
+	for _, prop := range props {
+		if strings.HasPrefix(prop.Name, "ValueB") && prop.NoIndex && prop.Multiple && prop.Value == nil {
+			d.ValueB = prop.Name[len("ValueB"):]
+			break
 		}
-		var iviplsIn ivItemPLS
-		err = deserializeStruct(&iviplsIn, data)
-		if err != nil {
-			t.Fatalf("Failed to deserialize ivItems[%d] as PLS: %v", i, err)
-		}
-		iviplsIn.Id = iviplsOut.Id // Manually set the id
-		if !reflect.DeepEqual(iviplsOut, iviplsIn) {
-			t.Errorf("Invalid result! Expected %+v but got %+v", iviplsOut, iviplsIn)
-		}
-		t.Logf("ivItems[%d] PLS size: %v", i, len(data))
+	}
+	return datastore.LoadStruct(d, props)
+}
+
+// Tests that only matter for PLS and can't be done via ivItem
+func TestPropertyLoadSaver(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+	g := FromContext(c)
+
+	// Save the entity
+	dA := &dummyPLS{Id: 1, ValueA: "one", ValueB: "two"}
+	if _, err := g.Put(dA); err != nil {
+		t.Fatalf("Unexpected error on Put: %v", err)
+	}
+	// Clear the local cache and get it to fill the memcache
+	g.FlushLocalCache()
+	dX := &dummyPLS{Id: 1}
+	if err := g.Get(dX); err != nil {
+		t.Fatalf("Unexpected error on Get: %v", err)
+	}
+	// Clear the local cache and get it from the memcache
+	g.FlushLocalCache()
+	dB := &dummyPLS{Id: 1}
+	if err := g.Get(dB); err != nil {
+		t.Fatalf("Unexpected error on Get: %v", err)
+	}
+	if !reflect.DeepEqual(dA, dB) {
+		t.Errorf("dA & dB don't match! %+v -vs- %+v", dA, dB)
 	}
 }
 

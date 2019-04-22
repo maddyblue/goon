@@ -72,10 +72,12 @@ type Goon struct {
 	KindNameResolver KindNameResolver
 }
 
+// Versioning, so that incompatible changes to the cache system won't cause problems
+var memcacheKeyPrefix = fmt.Sprintf("g%X:", serializationFormatVersion)
+
 // MemcacheKey returns key string of Memcache.
 var MemcacheKey = func(k *datastore.Key) string {
-	// Versioning, so that incompatible changes to the cache system won't cause problems
-	return "g4:" + k.Encode()
+	return memcacheKeyPrefix + k.Encode()
 }
 
 // NewGoon creates a new Goon object from the given request.
@@ -455,7 +457,13 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			if vi.Kind() == reflect.Interface {
 				vi = vi.Elem()
 			}
-			reflect.Indirect(vi).Set(reflect.Indirect(reflect.ValueOf(s)))
+			vi = reflect.Indirect(vi)
+			cached := reflect.Indirect(reflect.ValueOf(s))
+			viType, cType := vi.Type(), cached.Type()
+			if viType != cType && cType.ConvertibleTo(viType) {
+				cached = cached.Convert(viType)
+			}
+			vi.Set(cached)
 		} else {
 			memkeys = append(memkeys, m)
 			mixs = append(mixs, i)
@@ -492,24 +500,18 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			if v.Index(mixs[i]).Kind() == reflect.Struct {
 				d = v.Index(mixs[i]).Addr().Interface()
 			}
-			fetched := false
 			if s, present := memvalues[m]; present {
 				err := deserializeStruct(d, s.Value)
 				if err == nil || (IgnoreFieldMismatch && errFieldMismatch(err)) {
 					g.putMemory(d)
-					fetched = true
 				} else if err == datastore.ErrNoSuchEntity || errFieldMismatch(err) {
 					anyErr = true // this flag tells GetMulti to return multiErr later
 					multiErr[mixs[i]] = err
-					fetched = true // success to fetch negative cache. no need to fallback to datastore
-				} else if err == errCacheFetchFailed {
-					// NOP
 				} else {
 					g.error(err)
 					return err
 				}
-			}
-			if !fetched {
+			} else {
 				dskeys = append(dskeys, keys[mixs[i]])
 				dsdst = append(dsdst, d)
 				dixs = append(dixs, mixs[i])
