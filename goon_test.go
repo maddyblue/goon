@@ -1670,7 +1670,7 @@ func TestNegativeCacheClear(t *testing.T) {
 			return nil
 		}, nil)
 		if err != nil {
-			t.Fatalf("Unexpected error on RunInTransaction: %v", err)
+			t.Errorf("Unexpected error on RunInTransaction: %v", err)
 		}
 		ended <- true
 	}()
@@ -2458,21 +2458,21 @@ func TestRace(t *testing.T) {
 	go func() {
 		err := g.Get(hasIdSlice[0])
 		if err != nil {
-			t.Fatalf("Error fetching id #0 - %v", err)
+			t.Errorf("Error fetching id #0 - %v", err)
 		}
 		wg.Done()
 	}()
 	go func() {
 		err := g.GetMulti(hasIdSlice[1:1500])
 		if err != nil {
-			t.Fatalf("Error fetching ids 1 through 1499 - %v", err)
+			t.Errorf("Error fetching ids 1 through 1499 - %v", err)
 		}
 		wg.Done()
 	}()
 	go func() {
 		err := g.GetMulti(hasIdSlice[1500:])
 		if err != nil {
-			t.Fatalf("Error fetching id #1500 through 4000 - %v", err)
+			t.Errorf("Error fetching id #1500 through 4000 - %v", err)
 		}
 		wg.Done()
 	}()
