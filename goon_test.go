@@ -17,6 +17,7 @@
 package goon
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"reflect"
@@ -1016,7 +1017,7 @@ func TestSerialization(t *testing.T) {
 
 	initializeIvItems(c)
 
-	// Test that size & data is the same in back-to-back
+	// Test that size is the same in back-to-back
 	iviOut := ivItems[0].clone()
 	data, err := serializeStruct(iviOut)
 	if err != nil {
@@ -1028,9 +1029,6 @@ func TestSerialization(t *testing.T) {
 	}
 	if len(data) != len(dataB) {
 		t.Fatalf("Back-to-back serialization returned different length data: %v != %v", len(data), len(dataB))
-	}
-	if !reflect.DeepEqual(data, dataB) {
-		t.Fatalf("Back-to-back serialization returned different data\n%x\n%x", data, dataB)
 	}
 
 	// Test that we can deserialize back to the struct
@@ -1061,15 +1059,28 @@ func TestSerialization(t *testing.T) {
 		t.Errorf("Invalid PLS result! Expected %+v but got %+v", iviplsOut, iviplsIn)
 	}
 
-	// Make sure both normal & PLS result in the same data
+	// Make sure both normal & PLS result in the same length data
 	if len(data) != len(dataPLS) {
 		t.Fatalf("Serialization returned different length data for normal vs PLS: %v != %v", len(data), len(dataPLS))
 	}
-	if !reflect.DeepEqual(data, dataPLS) {
-		t.Fatalf("Serialization returned different dat for normal vs PLS:\n%x\n%x", data, dataPLS)
-	}
 
 	t.Logf("data size: %v", len(data))
+
+	// Test that the retrieved data is stable
+	s1, s2 := &HasId{Id: 1, Name: "qqq"}, &HasId{Id: 2, Name: "zzzz"}
+	d1, err := serializeStruct(s1)
+	if err != nil {
+		t.Fatalf("Failed to serialize: %v", err)
+	}
+	d1Copy := make([]byte, len(d1))
+	copy(d1Copy, d1)
+	_, err = serializeStruct(s2)
+	if err != nil {
+		t.Fatalf("Failed to serialize: %v", err)
+	}
+	if !bytes.Equal(d1, d1Copy) {
+		t.Fatalf("Serialization bytes are not stable! Expected %x but got %x", d1Copy, d1)
+	}
 }
 
 type dummyPLS struct {
