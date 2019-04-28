@@ -595,6 +595,15 @@ func realError(multiError appengine.MultiError) error {
 		return nil
 	}
 	init := multiError[0]
+	// some errors are *always* returned in MultiError form from the datastore
+	if _, ok := init.(*datastore.ErrFieldMismatch); ok { // returned in GetMulti
+		return multiError
+	}
+	if init == datastore.ErrInvalidEntityType || // returned in GetMulti
+		init == datastore.ErrNoSuchEntity { // returned in GetMulti
+		return multiError
+	}
+	// check if all errors are the same
 	for i := 1; i < len(multiError); i++ {
 		// since type error could hold structs, pointers, etc,
 		// the only way to compare non-nil errors is by their string output
@@ -605,15 +614,6 @@ func realError(multiError appengine.MultiError) error {
 		} else if init.Error() != multiError[i].Error() {
 			return multiError
 		}
-	}
-	// all errors are the same
-	// some errors are *always* returned in MultiError form from the datastore
-	if _, ok := init.(*datastore.ErrFieldMismatch); ok { // returned in GetMulti
-		return multiError
-	}
-	if init == datastore.ErrInvalidEntityType || // returned in GetMulti
-		init == datastore.ErrNoSuchEntity { // returned in GetMulti
-		return multiError
 	}
 	// datastore.ErrInvalidKey is returned as a single error in PutMulti
 	return init
