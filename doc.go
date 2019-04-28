@@ -134,5 +134,35 @@ requests. The default settings were determined experimentally and should
 provide reasonable defaults for most applications.
 
 See: http://talks.golang.org/2013/highperf.slide#23
+
+
+PropertyLoadSaver support
+
+Structs that implement the PropertyLoadSaver interface are guaranteed to call
+the Save() method once and only once per Put/PutMulti call and never elsewhere.
+Similarly the Load() method is guaranteed to be called once and only once per
+Get/GetMulti/GetAll/Next call and never elsewhere.
+
+Keep in mind that the goon local cache is just a pointer to the previous result.
+This means that when you use Get to fetch something into a PropertyLoadSaver
+implementing struct, that struct's pointer is saved. Subsequent calls to Get
+will just return that pointer. This means that although Load() was called once
+during the initial Get, the subsequent calls to Get won't call Load() again.
+Generally this shouldn't be an issue, but e.g. if you generate some random
+data in the Load() call then sequential calls to Get that share the same goon
+local cache will always return the random data of the first call.
+
+A gotcha can be encountered with the local cache where Load() is never called.
+Specifically if you first call Get to load some entity into a struct S which
+does *not* implement PropertyLoadSaver. The local cache will now have a pointer
+to this struct S. When you now proceed to call Get again on the same id but into
+a struct PLS which implements PropertyLoadSaver but is also convertible from S.
+Then your struct PLS will be applied the value of S, however Load() will never
+be called, because it wasn't the first time and it's never called when loading
+from the local cache. This is a very specific edge case that won't affect 99.9%
+of developers using goon. This issue does not exist with memcache/datastore,
+so either flushing the local cache or doing the S->PLS migration in different
+requests will solve the issue.
+
 */
 package goon
