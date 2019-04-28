@@ -350,12 +350,6 @@ func (g *Goon) putMemcache(entries []cacheEntry) error {
 		cf()
 	}()
 	err := <-errc
-	if appengine.IsTimeoutError(err) {
-		g.timeoutError(err)
-		err = nil
-	} else if err != nil {
-		g.error(err)
-	}
 	return err
 }
 
@@ -469,7 +463,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	cf()
 	if appengine.IsTimeoutError(err) {
 		g.timeoutError(err)
-		err = nil
 	} else if err != nil {
 		g.error(err) // timing out or another error from memcache isn't something to fail over, but do log it
 		// No memvalues found, prepare the datastore fetch list already prepared above
@@ -564,9 +557,13 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			}
 			if len(toCache) > 0 {
 				if err := g.putMemcache(toCache); err != nil {
-					g.error(err)
 					// since putMemcache() gives no guarantee it will actually store the data in memcache
 					// we log and swallow this error
+					if appengine.IsTimeoutError(err) {
+						g.timeoutError(err)
+					} else {
+						g.error(err)
+					}
 				}
 
 			}
