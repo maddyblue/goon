@@ -18,10 +18,9 @@ package goon
 
 import (
 	"bytes"
-	"container/list"
-	"encoding/gob"
-	"errors"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"sync"
@@ -31,645 +30,511 @@ import (
 	"google.golang.org/appengine/datastore"
 )
 
-type fieldInfo struct {
-	sliceIndex []int
-	fieldIndex []int
-}
-
-type fieldMetadata struct {
-	name  string
-	index int
-}
-
-type structMetaData struct {
-	metaDatas   []string
-	totalLength int
-}
-
 // KindNameResolver takes an Entity and returns what the Kind should be for
 // Datastore.
 type KindNameResolver func(src interface{}) string
 
-// A special bootstrapping struct that contains all the datastore-supported types
-// that need to be registered with gob. Using this to initialize every encoder/decoder,
-// we get reusable encoders/decoders. Additionally, this cuts down on the serialized bytes length.
-// https://cloud.google.com/appengine/docs/standard/go/datastore/reference
+// ### Entity serialization ###
+
+const serializationFormatVersion = 5 // Increase this whenever the format changes
+
+// The entities are encoded to bytes with little endian ordering, as follows:
 //
-// Of the datastore supported types, gob internally already registers:
-// - signed integers (int, int8, int16, int32 and int64),
-// - bool,
-// - string,
-// - float32 and float64,
-// - []byte,
+// [header][?prop1][..][?propN]
 //
-// We need to manually register:
-// - datastore.ByteString,
-// - *datastore.Key,
-// - time.Time,
-// - appengine.BlobKey,
-// - appengine.GeoPoint,
-// - slices of any of the above, including internally supported types.
+// header   | uint32 | Always present
+//   The first 30 bits are used for propCount. The last 2 bits for flags.
 //
-type seBootstrap struct {
-	v01 datastore.ByteString
-	v02 *datastore.Key
-	v03 time.Time
-	v04 appengine.BlobKey
-	v05 appengine.GeoPoint
-	v06 []int
-	v07 []int8
-	v08 []int16
-	v09 []int32
-	v10 []int64
-	v11 []bool
-	v12 []string
-	v13 []float32
-	v14 []float64
-	v15 [][]byte
-	v16 []datastore.ByteString
-	v17 []*datastore.Key
-	v18 []time.Time
-	v19 []appengine.BlobKey
-	v20 []appengine.GeoPoint
-}
+// propX    | []byte | X <= propCount
+//   Each property is serialized separately.
+//
+//
+// A property gets serialized into bytes with little endian ordering as follows:
+//
+// [nameLen][?name][header][?valueLen][?value]
+//
+// nameLen  | uint16 | Always present
+//   The length of the property name.
+//
+// name     | string | nameLen > 0
+//   The property name.
+//
+// header   | byte   | Always present
+//   The first 4 bits specify the property value type (propType..), the last 4 bits are used for flags.
+//
+// valueLen | uint24 | type == (string|BlobKey|ByteString|[]byte|*Key) && value != zeroValue
+//   The length of the value bytes.
+//
+// value    | []byte | type != (none|bool) && value != zeroValue
+//
+//    None         N/A
+//    Int64        8 bytes
+//    Bool         N/A (value == propHasValue header flag)
+//    String       valueLen bytes
+//    Float64      8 bytes
+//    ByteString   valueLen bytes
+//    KeyPtr       valueLen bytes
+//    Time         8 bytes
+//    BlobKey      valueLen bytes
+//    GeoPoint     16 bytes, Lat+Lng float64
+//    ByteSlice    valueLen bytes
 
-const seBootstrapFieldCount = 20 // The number of fields in seBootstrap
-
-type serializationEncoder struct {
-	buf *bytes.Buffer
-	enc *gob.Encoder
-}
-
-type serializationDecoder struct {
-	sr  *serializationReader
-	dec *gob.Decoder
-}
-
-type nilType struct {
-	GoonNilValue string
-}
-
-var nilValue = nilType{}
-
-type serializationReader struct {
-	r *bytes.Reader
-}
-
-func (sr *serializationReader) Read(p []byte) (n int, err error) {
-	return sr.r.Read(p)
-}
-
-func (sr *serializationReader) ReadByte() (c byte, err error) {
-	return sr.r.ReadByte()
-}
-
+// Entity header flags
 const (
-	serializationStateEmpty        = 0x00
-	serializationStateNormal       = 0x01
-	serializationStatePropertyList = 0x02
+	entityExists = 1 << 30
+	//entityRESERVED = 1 << 31 // Unused flag
 )
 
-var (
-	timeType                  = reflect.TypeOf(time.Time{})
-	fieldInfos                = make(map[reflect.Type]map[string]*fieldInfo)
-	fieldMetadatas            = make(map[reflect.Type][]fieldMetadata)
-	fieldIMLock               sync.RWMutex
-	serializationEncoders     = list.New()
-	serializationEncodersLock sync.Mutex
-	serializationDecoders     = list.New()
-	serializationDecodersLock sync.Mutex
-	seBoot                    = seBootstrap{v02: &datastore.Key{}}
-	seBootBytes               []byte
-	seBootBytesLock           sync.RWMutex
-	errCacheFetchFailed       = errors.New("goon: cache fetch failed")
-)
+const entityHeaderMaskPropCount = 1<<30 - 1              // All the bits used for propCount
+const entityHeaderMaskFlags = ^entityHeaderMaskPropCount // All the bits used for flags
 
-func init() {
-	// Register gob interface types, required by our current PropertyLoadSave implementation
-	gob.Register(seBoot.v01)
-	gob.Register(seBoot.v02)
-	gob.Register(seBoot.v03)
-	gob.Register(seBoot.v04)
-	gob.Register(seBoot.v05)
-	gob.Register(seBoot.v06)
-	gob.Register(seBoot.v07)
-	gob.Register(seBoot.v08)
-	gob.Register(seBoot.v09)
-	gob.Register(seBoot.v10)
-	gob.Register(seBoot.v11)
-	gob.Register(seBoot.v12)
-	gob.Register(seBoot.v13)
-	gob.Register(seBoot.v14)
-	gob.Register(seBoot.v15)
-	gob.Register(seBoot.v16)
-	gob.Register(seBoot.v17)
-	gob.Register(seBoot.v18)
-	gob.Register(seBoot.v19)
-	gob.Register(seBoot.v20)
-	gob.Register(nilValue)
-
-	// The serialization type cache bootstrapping optimization suffers from a race condition.
-	// Because encoding/gob uses a partial global type cache of its own, it is possible that
-	// some other piece of code uses encoding/gob before we do our bootstrapping. To be exact,
-	// inconsistent use of encoding/gob with custom types before us is what causes problems.
-	// Using encoding/gob after us isn't a problem. Neither is using it before us, if the usage
-	// always happens before us. The order of usage before us only matters if the custom types
-	// match a type that we have in our bootstrapping. To mostly solve this race condition,
-	// we bootstrap a single decoder in this init() function. However a rare edge case remains
-	// where the race condition can still cause trouble for us. The requirements for it are:
-	// 1) Some other init() function has to use encoding/gob
-	// 2) Be in a package that does not import goon, nor import anything that imports goon
-	// 3) Executes before goon's init()
-	// 4) That init()'s encoding/gob usage has to either:
-	//    a) Happen inconsistently, i.e. not always happen, e.g.:
-	//       * The usage is under a conditional, e.g. only executes when the clock is 09:00
-	//       * The order in which the package is presented to the compiler gets moved after goon
-	//       * The usage is removed during a code update
-	//    b) Register a same type as us, but in an inconsistent order between multiple executions
-	freeSerializationDecoder(getSerializationDecoder([]byte{}))
+func serializeEntityHeader(propCount, flags int) uint32 {
+	return uint32((flags & entityHeaderMaskFlags) | (propCount & entityHeaderMaskPropCount))
 }
 
-// getFieldInfoAndMetadata returns metadata about a struct. Its main purpose is to cut down
-// reflection usage on types, which is slow. Instead, metadata is generated once per type, and cached.
-func getFieldInfoAndMetadata(t reflect.Type) (map[string]*fieldInfo, []fieldMetadata) {
-	fieldIMLock.RLock()
-	// Attempt to get the data for this type under an efficient read lock
-	fieldMap, ok := fieldInfos[t]
-	fms := fieldMetadatas[t]
-	fieldIMLock.RUnlock()
+func deserializeEntityHeader(header uint32) (propCount, flags int) {
+	return int(header) & entityHeaderMaskPropCount, int(header) & entityHeaderMaskFlags
+}
 
-	if !ok {
-		fieldIMLock.Lock()
-		// Check again, the data could have appeared when we didn't have a lock
-		fieldMap, ok = fieldInfos[t]
-		if !ok {
-			// We are going to generate the data for this type
-			fieldMap = make(map[string]*fieldInfo, 16)
-			generateFieldInfoAndMetadata(t, "", make([]int, 0, 16), []int{}, fieldMap)
-			fieldInfos[t] = fieldMap
-		}
-		fms = fieldMetadatas[t]
-		fieldIMLock.Unlock()
+// The valid datastore.Property.Value types are:
+//    - int64
+//    - bool
+//    - string
+//    - float64
+//    - datastore.ByteString
+//    - *datastore.Key
+//    - time.Time
+//    - appengine.BlobKey
+//    - appengine.GeoPoint
+//    - []byte (up to 1 megabyte in length)
+//    - *Entity (representing a nested struct)
+const (
+	propTypeNone       = 0
+	propTypeInt64      = 1
+	propTypeBool       = 2
+	propTypeString     = 3
+	propTypeFloat64    = 4
+	propTypeByteString = 5
+	propTypeKeyPtr     = 6
+	propTypeTime       = 7
+	propTypeBlobKey    = 8
+	propTypeGeoPoint   = 9
+	propTypeByteSlice  = 10
+	//propTypeEntityPtr  = 11 // TODO: Implement this?
+	// Space for 4 more types, as the propType value must fit in 4 bits (0-15)
+)
+
+// Property header flags
+const (
+	propHasValue = 1 << 4
+	propMultiple = 1 << 5
+	propNoIndex  = 1 << 6
+	//propRESERVED = 1 << 7 // Unused flag
+)
+
+// We limit the maximum length of datastore.Property.Name,
+// however this is our implementation specific and not datastore specific.
+const propMaxNameLength = 1<<16 - 1
+
+// Keep a pool of buffers around for more efficient allocation
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return bytes.NewBuffer(make([]byte, 0, 16384)) // 16 KiB initial capacity
+	},
+}
+
+// getBuffer returns a reusable buffer from a pool.
+// Every buffer acquired with this function must be later freed via freeBuffer.
+func getBuffer() *bytes.Buffer {
+	return bufferPool.Get().(*bytes.Buffer)
+}
+
+// freeBuffer returns the buffer to the pool, allowing for reuse.
+func freeBuffer(buf *bytes.Buffer) {
+	buf.Reset()
+	bufferPool.Put(buf)
+}
+
+func writeInt16(buf *bytes.Buffer, i int) {
+	buf.WriteByte(byte(i))
+	buf.WriteByte(byte(i >> 8))
+}
+
+func writeInt24(buf *bytes.Buffer, i int) {
+	buf.WriteByte(byte(i))
+	buf.WriteByte(byte(i >> 8))
+	buf.WriteByte(byte(i >> 16))
+}
+
+func toUnixMicro(t time.Time) int64 {
+	// We cannot use t.UnixNano() / 1e3 because we want to handle times more than
+	// 2^63 nanoseconds (which is about 292 years) away from 1970, and those cannot
+	// be represented in the numerator of a single int64 divide.
+	return t.Unix()*1e6 + int64(t.Nanosecond()/1e3)
+}
+
+func fromUnixMicro(t int64) time.Time {
+	return time.Unix(t/1e6, (t%1e6)*1e3).UTC()
+}
+
+func serializeProperty(buf *bytes.Buffer, p *datastore.Property) error {
+	nameLen := len(p.Name)
+	if nameLen > propMaxNameLength {
+		return fmt.Errorf("Maximum property name length is %d, but received %d", propMaxNameLength, nameLen)
+	}
+	writeInt16(buf, nameLen)
+	if nameLen > 0 {
+		buf.WriteString(p.Name)
 	}
 
-	return fieldMap, fms
-}
+	var header byte
+	if p.Multiple {
+		header |= propMultiple
+	}
+	if p.NoIndex {
+		header |= propNoIndex
+	}
 
-// getFieldMetadata returns already generated, cached, metadata about a struct.
-func getFieldMetadata(t reflect.Type) []fieldMetadata {
-	fieldIMLock.RLock()
-	defer fieldIMLock.RUnlock()
-	return fieldMetadatas[t]
-}
+	v := reflect.ValueOf(p.Value)
+	unsupported := false
 
-// generateFieldInfoAndMetadata generates metadata about the fields of a struct.
-//
-// NB! generateFieldInfoAndMetadata should only be called under a fieldIMLock write-lock
-func generateFieldInfoAndMetadata(t reflect.Type, namePrefix string, indexPrefix, sliceIndex []int, fieldMap map[string]*fieldInfo) {
-	var fieldName string
-	fms, havefms := fieldMetadatas[t]
-
-	numFields := t.NumField()
-	for i := 0; i < numFields; i++ {
-		tf := t.Field(i)
-		if tf.PkgPath != "" && !tf.Anonymous {
-			continue
+	switch v.Kind() {
+	case reflect.Invalid:
+		// Has no type and no value, but is legal
+		buf.WriteByte(header)
+	case reflect.Int64:
+		header |= propTypeInt64
+		val := uint64(v.Int())
+		if val == 0 {
+			buf.WriteByte(header)
+		} else {
+			header |= propHasValue
+			buf.WriteByte(header)
+			data := make([]byte, 8)
+			binary.LittleEndian.PutUint64(data, val)
+			buf.Write(data)
 		}
-
-		tag := tf.Tag.Get("datastore")
-		if len(tag) > 0 {
-			if commaPos := strings.Index(tag, ","); commaPos == -1 {
-				fieldName = tag
-			} else if commaPos == 0 {
-				fieldName = tf.Name
+	case reflect.Bool:
+		header |= propTypeBool
+		if v.Bool() {
+			header |= propHasValue
+		}
+		buf.WriteByte(header)
+	case reflect.String:
+		switch v.Interface().(type) {
+		case appengine.BlobKey:
+			header |= propTypeBlobKey
+		default:
+			header |= propTypeString
+		}
+		val := v.String()
+		if valLen := len(val); valLen == 0 {
+			buf.WriteByte(header)
+		} else {
+			header |= propHasValue
+			buf.WriteByte(header)
+			writeInt24(buf, valLen)
+			buf.WriteString(val)
+		}
+	case reflect.Float64:
+		header |= propTypeFloat64
+		val := v.Float()
+		if val == 0 {
+			buf.WriteByte(header)
+		} else {
+			header |= propHasValue
+			buf.WriteByte(header)
+			data := make([]byte, 8)
+			binary.LittleEndian.PutUint64(data, math.Float64bits(val))
+			buf.Write(data)
+		}
+	case reflect.Ptr:
+		if k, ok := v.Interface().(*datastore.Key); ok {
+			header |= propTypeKeyPtr
+			if k == nil {
+				buf.WriteByte(header)
 			} else {
-				fieldName = tag[:commaPos]
-			}
-			if fieldName == "-" {
-				continue
+				header |= propHasValue
+				buf.WriteByte(header)
+				val := k.Encode()
+				writeInt24(buf, len(val))
+				buf.WriteString(val)
 			}
 		} else {
-			fieldName = tf.Name
+			unsupported = true
 		}
-		if !havefms {
-			fms = append(fms, fieldMetadata{name: fieldName, index: i})
-		}
-		if namePrefix != "" {
-			fieldName = namePrefix + fieldName
-		}
-
-		if tf.Type.Kind() == reflect.Slice {
-			elemType := tf.Type.Elem()
-			if elemType.Kind() == reflect.Struct && elemType != timeType {
-				generateFieldInfoAndMetadata(elemType, fieldName+".", make([]int, 0, 8), append(indexPrefix, i), fieldMap)
-				continue
+	case reflect.Struct:
+		switch s := v.Interface().(type) {
+		case time.Time:
+			header |= propTypeTime
+			if s.IsZero() {
+				buf.WriteByte(header)
+			} else {
+				header |= propHasValue
+				buf.WriteByte(header)
+				data := make([]byte, 8)
+				binary.LittleEndian.PutUint64(data, uint64(toUnixMicro(s)))
+				buf.Write(data)
 			}
-		} else if tf.Type.Kind() == reflect.Struct && tf.Type != timeType {
-			generateFieldInfoAndMetadata(tf.Type, fieldName+".", append(indexPrefix, i), sliceIndex, fieldMap)
-			continue
+		case appengine.GeoPoint:
+			header |= propTypeGeoPoint
+			if s.Lat == 0 && s.Lng == 0 {
+				buf.WriteByte(header)
+			} else {
+				header |= propHasValue
+				buf.WriteByte(header)
+				data := make([]byte, 16)
+				binary.LittleEndian.PutUint64(data[:8], math.Float64bits(s.Lat))
+				binary.LittleEndian.PutUint64(data[8:], math.Float64bits(s.Lng))
+				buf.Write(data)
+			}
+		default:
+			unsupported = true
 		}
-
-		finalIndex := append(indexPrefix, i)
-		fi := &fieldInfo{sliceIndex: make([]int, len(sliceIndex)), fieldIndex: make([]int, len(finalIndex))}
-		copy(fi.sliceIndex, sliceIndex)
-		copy(fi.fieldIndex, finalIndex)
-		fieldMap[fieldName] = fi
+	case reflect.Slice:
+		switch b := v.Interface().(type) {
+		case datastore.ByteString:
+			header |= propTypeByteString
+			if bLen := len(b); bLen == 0 {
+				buf.WriteByte(header)
+			} else {
+				header |= propHasValue
+				buf.WriteByte(header)
+				writeInt24(buf, bLen)
+				buf.Write(b)
+			}
+		case []byte:
+			header |= propTypeByteSlice
+			if bLen := len(b); bLen == 0 {
+				buf.WriteByte(header)
+			} else {
+				header |= propHasValue
+				buf.WriteByte(header)
+				writeInt24(buf, bLen)
+				buf.Write(b)
+			}
+		default:
+			unsupported = true
+		}
+	default:
+		unsupported = true
 	}
-
-	if !havefms {
-		fieldMetadatas[t] = fms
+	if unsupported {
+		return fmt.Errorf("unsupported datastore.Property value type: " + v.Type().String())
 	}
+	return nil
 }
 
-// serializeStructMetaData is a fast encoder of struct metadata, which doesn't depend on gob.
-// Struct metadata is just a slice of strings, which this function converts into a series of bytes.
-func serializeStructMetaData(buf []byte, smd *structMetaData) {
-	pos := 0
-	for _, metaData := range smd.metaDatas {
-		copy(buf[pos:], metaData)
-		pos += len(metaData)
-		buf[pos] = '+'
-		pos++
+func deserializeProperty(buf *bytes.Buffer, prop *datastore.Property) error {
+	next := func(n int) ([]byte, error) {
+		b := buf.Next(n)
+		if bLen := len(b); bLen != n {
+			return b, fmt.Errorf("Buffer EOF, expected %d bytes but got %v", n, bLen)
+		}
+		return b, nil
 	}
-	if pos > 0 {
-		buf[pos-1] = '|'
+	getSize := func() (int, error) {
+		sizeBytes, err := next(3)
+		if err != nil {
+			return 0, err
+		}
+		return int(sizeBytes[0]) | int(sizeBytes[1])<<8 | int(sizeBytes[2])<<16, nil
 	}
-}
 
-// deserializeStructMetaData is a fast decoder of struct metadata, which doesn't depend on gob.
-// It takes a slice of bytes buf, generated by serializeStructMetaData, and converts it into a slice of strings.
-func deserializeStructMetaData(buf []byte) *structMetaData {
-	smd := &structMetaData{metaDatas: make([]string, 0, 16)}
-	pos, bufLen := 0, len(buf)
-	for i := 0; i < bufLen; i++ {
-		if buf[i] == '+' || buf[i] == '|' {
-			smd.metaDatas = append(smd.metaDatas, string(buf[pos:i]))
-			smd.totalLength += i - pos
-			pos = i + 1
-			if buf[i] == '|' {
-				break
+	// Read the name length
+	nameLenBytes, err := next(2)
+	if err != nil {
+		return err
+	}
+	nameLen := int(nameLenBytes[0]) | int(nameLenBytes[1])<<8
+	// If thehre's a name, read it
+	if nameLen > 0 {
+		nameBytes, err := next(nameLen)
+		if err != nil {
+			return err
+		}
+		prop.Name = string(nameBytes)
+	}
+
+	// Read the header
+	header, err := buf.ReadByte()
+	if err != nil {
+		return err
+	}
+
+	// Apply the flags
+	prop.Multiple = (header&propMultiple != 0)
+	prop.NoIndex = (header&propNoIndex != 0)
+
+	// Determine the value
+	valueType := header & 0xF
+	zeroValue := header&propHasValue == 0
+	switch valueType {
+	case propTypeNone:
+		// nil interface, so nothing to do
+	case propTypeInt64:
+		if zeroValue {
+			prop.Value = int64(0)
+		} else {
+			valBytes, err := next(8)
+			if err != nil {
+				return err
+			}
+			prop.Value = int64(binary.LittleEndian.Uint64(valBytes))
+		}
+	case propTypeBool:
+		prop.Value = !zeroValue
+	case propTypeString:
+		if zeroValue {
+			prop.Value = ""
+		} else {
+			size, err := getSize()
+			if err != nil {
+				return err
+			}
+			valBytes, err := next(size)
+			if err != nil {
+				return err
+			}
+			prop.Value = string(valBytes)
+		}
+	case propTypeBlobKey:
+		if zeroValue {
+			prop.Value = appengine.BlobKey("")
+		} else {
+			size, err := getSize()
+			if err != nil {
+				return err
+			}
+			valBytes, err := next(size)
+			if err != nil {
+				return err
+			}
+			prop.Value = appengine.BlobKey(valBytes)
+		}
+	case propTypeFloat64:
+		if zeroValue {
+			prop.Value = float64(0)
+		} else {
+			valBytes, err := next(8)
+			if err != nil {
+				return err
+			}
+			prop.Value = math.Float64frombits(binary.LittleEndian.Uint64(valBytes))
+		}
+	case propTypeKeyPtr:
+		if zeroValue {
+			var key *datastore.Key
+			prop.Value = key
+		} else {
+			size, err := getSize()
+			if err != nil {
+				return err
+			}
+			valBytes, err := next(size)
+			if err != nil {
+				return err
+			}
+			prop.Value, err = datastore.DecodeKey(string(valBytes))
+			if err != nil {
+				return err
 			}
 		}
-	}
-	return smd
-}
-
-// bootstrapSerializationEncoder runs the encoder through a bootstrapping process,
-// which registers all datastore-supported types. This is an optimization that must
-// be done only once per a reusable encoder.
-//
-// NB! updateSEBootBytes should only be set true if called under seBootBytesLock write-lock
-func bootstrapSerializationEncoder(se *serializationEncoder, updateSEBootBytes bool) {
-	se.enc.Encode(seBoot.v01)
-	se.enc.Encode(seBoot.v02)
-	se.enc.Encode(seBoot.v03)
-	se.enc.Encode(seBoot.v04)
-	se.enc.Encode(seBoot.v05)
-	se.enc.Encode(seBoot.v06)
-	se.enc.Encode(seBoot.v07)
-	se.enc.Encode(seBoot.v08)
-	se.enc.Encode(seBoot.v09)
-	se.enc.Encode(seBoot.v10)
-	se.enc.Encode(seBoot.v11)
-	se.enc.Encode(seBoot.v12)
-	se.enc.Encode(seBoot.v13)
-	se.enc.Encode(seBoot.v14)
-	se.enc.Encode(seBoot.v15)
-	se.enc.Encode(seBoot.v16)
-	se.enc.Encode(seBoot.v17)
-	se.enc.Encode(seBoot.v18)
-	se.enc.Encode(seBoot.v19)
-	se.enc.Encode(seBoot.v20)
-
-	if updateSEBootBytes {
-		seBootBytes = make([]byte, se.buf.Len())
-		copy(seBootBytes, se.buf.Bytes())
-	}
-
-	se.buf.Reset()
-}
-
-// bootstrapSerializationDecoder runs the decoder through a bootstrapping process,
-// which registers all datastore-supported types. This is an optimization that must
-// be done only once per a reusable decoder.
-func bootstrapSerializationDecoder(sd *serializationDecoder) {
-	seBootBytesLock.RLock()
-	ok := len(seBootBytes) > 0
-	seBootBytesLock.RUnlock()
-	if !ok {
-		seBootBytesLock.Lock()
-		ok = len(seBootBytes) > 0
-		if !ok {
-			buf := bytes.NewBuffer(make([]byte, 0, 512))
-			enc := gob.NewEncoder(buf)
-			se := &serializationEncoder{buf: buf, enc: enc}
-			bootstrapSerializationEncoder(se, true)
+	case propTypeTime:
+		if zeroValue {
+			prop.Value = time.Time{}
+		} else {
+			valBytes, err := next(8)
+			if err != nil {
+				return err
+			}
+			prop.Value = fromUnixMicro(int64(binary.LittleEndian.Uint64(valBytes)))
 		}
-		seBootBytesLock.Unlock()
+	case propTypeGeoPoint:
+		if zeroValue {
+			prop.Value = appengine.GeoPoint{}
+		} else {
+			valBytes, err := next(16)
+			if err != nil {
+				return err
+			}
+			prop.Value = appengine.GeoPoint{
+				Lat: math.Float64frombits(binary.LittleEndian.Uint64(valBytes[:8])),
+				Lng: math.Float64frombits(binary.LittleEndian.Uint64(valBytes[8:])),
+			}
+		}
+	case propTypeByteString:
+		if zeroValue {
+			prop.Value = datastore.ByteString{}
+		} else {
+			size, err := getSize()
+			if err != nil {
+				return err
+			}
+			prop.Value = make(datastore.ByteString, size)
+			if _, err := buf.Read(prop.Value.(datastore.ByteString)); err != nil {
+				return err
+			}
+		}
+	case propTypeByteSlice:
+		if zeroValue {
+			prop.Value = []byte{}
+		} else {
+			size, err := getSize()
+			if err != nil {
+				return err
+			}
+			prop.Value = make([]byte, size)
+			if _, err := buf.Read(prop.Value.([]byte)); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("Unrecognized value type %d", valueType)
 	}
 
-	sd.sr.r = bytes.NewReader(seBootBytes)
-	for i := 0; i < seBootstrapFieldCount; i++ {
-		sd.dec.Decode(nil)
-	}
-}
-
-// getSerializationEncoder returns an efficient reusable encoder from a pool.
-// Every encoder acquired with this function must be later freed via freeSerializationEncoder.
-func getSerializationEncoder() *serializationEncoder {
-	serializationEncodersLock.Lock()
-	// Use an existing one if possible
-	if serializationEncoders.Len() > 0 {
-		defer serializationEncodersLock.Unlock()
-		return serializationEncoders.Remove(serializationEncoders.Front()).(*serializationEncoder)
-	}
-	serializationEncodersLock.Unlock()
-	// Otherwise allocate a new one
-	buf := bytes.NewBuffer(make([]byte, 0, 16384)) // 16 KiB initial capacity
-	enc := gob.NewEncoder(buf)
-	se := &serializationEncoder{buf: buf, enc: enc}
-	bootstrapSerializationEncoder(se, false)
-	return se
-}
-
-// freeSerializationEncoder returns the encoder to the pool, allowing for reuse.
-func freeSerializationEncoder(se *serializationEncoder) {
-	se.buf.Reset()
-	serializationEncodersLock.Lock()
-	serializationEncoders.PushBack(se)
-	// TODO: Perhaps some occasional clean-up is in order?
-	// Running 50 goroutines concurrently can allocate a bunch of these
-	// but they may not be needed again for quite some time
-	serializationEncodersLock.Unlock()
-}
-
-// getSerializationDecoder returns an efficient reusable decoder from a pool.
-// Every decoder acquired with this function must be later freed via freeSerializationDecoder.
-func getSerializationDecoder(data []byte) *serializationDecoder {
-	serializationDecodersLock.Lock()
-	// Use an existing one if possible
-	if serializationDecoders.Len() > 0 {
-		sd := serializationDecoders.Remove(serializationDecoders.Front()).(*serializationDecoder)
-		serializationDecodersLock.Unlock()
-		sd.sr.r = bytes.NewReader(data)
-		return sd
-	}
-	serializationDecodersLock.Unlock()
-	// Otherwise allocate a new one
-	sr := &serializationReader{}
-	dec := gob.NewDecoder(sr)
-	sd := &serializationDecoder{sr: sr, dec: dec}
-	bootstrapSerializationDecoder(sd)
-	sd.sr.r = bytes.NewReader(data)
-	return sd
-}
-
-// freeSerializationDecoder returns the decoder to the pool, allowing for reuse.
-func freeSerializationDecoder(sd *serializationDecoder) {
-	sd.sr.r = nil // Avoid memory leaks
-	serializationDecodersLock.Lock()
-	serializationDecoders.PushBack(sd)
-	// TODO: Perhaps some occasional clean-up is in order?
-	// Running 50 goroutines concurrently can allocate a bunch of these
-	// but they may not be needed again for quite some time
-	serializationDecodersLock.Unlock()
+	return nil
 }
 
 // serializeStruct takes a struct and serializes it to portable bytes.
 func serializeStruct(src interface{}) ([]byte, error) {
 	if src == nil {
-		return []byte{serializationStateEmpty}, nil
+		return []byte{0, 0, 0, 0}, nil
 	}
-
-	v := reflect.Indirect(reflect.ValueOf(src))
-	t := v.Type()
-	k := t.Kind()
-
-	if k != reflect.Struct {
+	if k := reflect.Indirect(reflect.ValueOf(src)).Type().Kind(); k != reflect.Struct {
 		return nil, fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	se := getSerializationEncoder()
-	defer freeSerializationEncoder(se)
+	buf := getBuffer()
+	defer freeBuffer(buf)
 
-	if ls, ok := src.(datastore.PropertyLoadSaver); ok {
-		se.buf.WriteByte(serializationStatePropertyList)
-		props, err := ls.Save()
-		if err != nil {
-			return nil, err
-		}
-		for i := 0; i < len(props); i++ {
-			v := reflect.ValueOf(props[i].Value)
-			if v.Kind() == reflect.Ptr && v.IsNil() {
-				props[i].Value = nilValue
-			}
-		}
-		if err := se.enc.Encode(props); err != nil {
-			return nil, fmt.Errorf("goon: Failed to encode PropertyList - %v", err)
-		}
-		return se.buf.Bytes(), nil
+	var err error
+	var props []datastore.Property
+	if pls, ok := src.(datastore.PropertyLoadSaver); ok {
+		props, err = pls.Save()
 	} else {
-		smd := &structMetaData{metaDatas: make([]string, 0, 16)}
-		_, fms := getFieldInfoAndMetadata(t) // Use this function to force generation if needed
-		if err := serializeStructInternal(se.enc, smd, fms, "", v); err != nil {
+		props, err = datastore.SaveStruct(src)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Serialize the entity header
+	header := serializeEntityHeader(len(props), entityExists)
+	headerBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(headerBytes, header)
+	buf.Write(headerBytes)
+
+	// Serialize the properties
+	for i := range props {
+		if err := serializeProperty(buf, &props[i]); err != nil {
 			return nil, err
 		}
-
-		bufSize := se.buf.Len()
-		// final size = header + all metadatas + separators for metadata + data
-		finalBufSize := 1 + smd.totalLength + len(smd.metaDatas) + bufSize
-		finalBuf := make([]byte, finalBufSize)
-		finalBuf[0] = byte(serializationStateNormal)          // Set the header
-		serializeStructMetaData(finalBuf[1:], smd)            // Serialize the metadata
-		copy(finalBuf[finalBufSize-bufSize:], se.buf.Bytes()) // Copy the actual data
-		return finalBuf, nil
 	}
-}
 
-// serializeStructInternal is a helper function for serializeStruct, mainly for easier recursion.
-// It takes a bunch of metadata that describes a struct, and encodes field values with gob.
-func serializeStructInternal(enc *gob.Encoder, smd *structMetaData, fms []fieldMetadata, namePrefix string, v reflect.Value) error {
-	var fieldName string
-	var metaData string
-	var elemType reflect.Type
-
-	for _, fm := range fms {
-		vf := v.Field(fm.index)
-
-		if namePrefix != "" {
-			fieldName = namePrefix + fm.name
-		} else {
-			fieldName = fm.name
-		}
-
-		if vf.Kind() == reflect.Slice {
-			{
-				vfType := vf.Type()
-				elemType = vfType.Elem()
-				// Convert custom slice types to the underlying slice type, e.g.
-				// type MyInts []int  =>  []int
-				if vfType.Name() != "" && vfType.Name() != vf.Kind().String() {
-					vf = vf.Convert(reflect.SliceOf(elemType))
-				}
-				// We end the vfType scope here, because it might not be valid (after conversion)
-			}
-			if elemType != timeType {
-				// Unroll slices of structs
-				if elemType.Kind() == reflect.Struct {
-					if vfLen := vf.Len(); vfLen > 0 {
-						subFms := getFieldMetadata(elemType)
-						subPrefix := fieldName + "."
-						for j := 0; j < vfLen; j++ {
-							vi := vf.Index(j)
-							if err := serializeStructInternal(enc, smd, subFms, subPrefix, vi); err != nil {
-								return err
-							}
-						}
-					}
-					continue
-				} else if elemType.Kind() == reflect.Ptr {
-					// For a slice of pointers we need to check if any index is nil,
-					// because Gob unfortunately fails at encoding nil values
-					anyNil := false
-					vfLen := vf.Len()
-					for j := 0; j < vfLen; j++ {
-						vi := vf.Index(j)
-						if vi.IsNil() {
-							anyNil = true
-							break
-						}
-					}
-					if anyNil {
-						for j := 0; j < vfLen; j++ {
-							vi := vf.Index(j)
-							encodeValue := true
-							if vi.IsNil() {
-								// Gob unfortunately fails at encoding nil values
-								metaData = "!" + fieldName
-								encodeValue = false
-							} else {
-								metaData = fieldName
-							}
-							if err := serializeStructInternalEncode(enc, smd, fieldName, metaData, encodeValue, vi); err != nil {
-								return err
-							}
-						}
-						continue
-					}
-				} else if elemType.Name() != "" && elemType.Name() != elemType.Kind().String() {
-					// For slices of custom non-struct types, encode them as slices of the underlying type.
-					// This is required to be able to re-use a global gob encoding machine,
-					// as custom types require the type info to be declared by gob for every encoded struct!
-					// NB! We don't currently update the elemType variable as an optimization!
-					vfLen := vf.Len()
-					switch elemType.Kind() {
-					case reflect.String:
-						dupe := make([]string, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = vf.Index(i).String()
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Bool:
-						dupe := make([]bool, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = vf.Index(i).Bool()
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Int:
-						dupe := make([]int, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = int(vf.Index(i).Int())
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Int8:
-						dupe := make([]int8, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = int8(vf.Index(i).Int())
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Int16:
-						dupe := make([]int16, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = int16(vf.Index(i).Int())
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Int32:
-						dupe := make([]int32, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = int32(vf.Index(i).Int())
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Int64:
-						dupe := make([]int64, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = vf.Index(i).Int()
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Float32:
-						dupe := make([]float32, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = float32(vf.Index(i).Float())
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Float64:
-						dupe := make([]float64, vfLen, vfLen)
-						for i := 0; i < vfLen; i++ {
-							dupe[i] = vf.Index(i).Float()
-						}
-						vf = reflect.ValueOf(dupe)
-					case reflect.Slice:
-						// We only support slices of byte slices
-						if elemType.Elem().Kind() == reflect.Uint8 {
-							dupe := make([][]byte, vfLen, vfLen)
-							for i := 0; i < vfLen; i++ {
-								dupe[i] = vf.Index(i).Bytes()
-							}
-							vf = reflect.ValueOf(dupe)
-						}
-					}
-				}
-			}
-		} else if vf.Kind() == reflect.Struct {
-			if vfType := vf.Type(); vfType != timeType {
-				if err := serializeStructInternal(enc, smd, getFieldMetadata(vfType), fieldName+".", vf); err != nil {
-					return err
-				}
-				continue
-			}
-		}
-
-		encodeValue := true
-		if vf.Kind() == reflect.Slice && elemType.Kind() != reflect.Uint8 {
-			// NB! []byte is a special case and not a slice
-			// When decoding, if the target is a slice but metadata doesn't have the $ sign,
-			// then we can properly create a single value slice instead of panicing
-			metaData = "$" + fieldName
-		} else if vf.Kind() == reflect.Ptr && vf.IsNil() {
-			// Gob unfortunately fails at encoding nil values
-			metaData = "!" + fieldName
-			encodeValue = false
-		} else {
-			metaData = fieldName
-		}
-
-		if err := serializeStructInternalEncode(enc, smd, fieldName, metaData, encodeValue, vf); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// serializeStructInternalEncode takes struct field metadata and encodes the value using gob.
-func serializeStructInternalEncode(enc *gob.Encoder, smd *structMetaData, fieldName, metaData string, encodeValue bool, v reflect.Value) error {
-	smd.metaDatas = append(smd.metaDatas, metaData)
-	smd.totalLength += len(metaData)
-
-	if encodeValue {
-		if err := enc.EncodeValue(v); err != nil {
-			return fmt.Errorf("goon: Failed to encode field %v value %v - %v", fieldName, v.Interface(), err)
-		}
-	}
-	return nil
+	output := make([]byte, buf.Len())
+	copy(output, buf.Bytes())
+	return output, nil
 }
 
 // deserializeStruct takes portable bytes b, generated by serializeStruct, and assigns correct values to struct dst.
@@ -677,146 +542,34 @@ func deserializeStruct(dst interface{}, b []byte) error {
 	if len(b) == 0 {
 		return fmt.Errorf("goon: Expected some data to deserialize, got none.")
 	}
-
-	v := reflect.Indirect(reflect.ValueOf(dst))
-	t := v.Type()
-	k := t.Kind()
-
-	if k != reflect.Struct {
+	if k := reflect.Indirect(reflect.ValueOf(dst)).Type().Kind(); k != reflect.Struct {
 		return fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
 
-	header := b[0]
-	switch header {
-	case serializationStateEmpty:
+	// Deserialize the header
+	header := binary.LittleEndian.Uint32(b[:4])
+	propCount, flags := deserializeEntityHeader(header)
+	if flags&entityExists == 0 {
 		return datastore.ErrNoSuchEntity
-	case serializationStateNormal, serializationStatePropertyList:
-		// supported header. keep going.
-	default:
-		return fmt.Errorf("goon: Unrecognized cache header: %v", header)
 	}
 
-	smd := deserializeStructMetaData(b[1:])
-	dataPos := 1 + smd.totalLength + len(smd.metaDatas)
-	sd := getSerializationDecoder(b[dataPos:])
-	defer freeSerializationDecoder(sd)
-	structHistory := make(map[string]map[string]bool, 8)
-	fieldMap, _ := getFieldInfoAndMetadata(t)
-	var notFoundField string
-
-	pls, hasPLS := dst.(datastore.PropertyLoadSaver)
-	switch header {
-	case serializationStateNormal:
-		if hasPLS {
-			// unfortunately fetching PropertyList cache to non-PLS is not supported
-			// and should falls back to datastore
-			return errCacheFetchFailed
-		}
-		for _, metaData := range smd.metaDatas {
-			fieldName, slice, zeroValue := metaData, false, false
-			if metaData[0] == '$' {
-				fieldName, slice = metaData[1:], true
-			} else if metaData[0] == '!' {
-				fieldName, zeroValue = metaData[1:], true
-			}
-			nameParts := strings.Split(fieldName, ".")
-
-			if fi, ok := fieldMap[fieldName]; ok {
-				if err := deserializeStructInternal(sd.dec, fi, fieldName, nameParts, slice, zeroValue, structHistory, v, t); err != nil {
-					return err
-				}
-			} else {
-				sd.dec.Decode(nil) // Discard the value
-				notFoundField = fieldName
+	// Deserialize the properties
+	if propCount > 0 {
+		buf := bytes.NewBuffer(b[4:])
+		props := make([]datastore.Property, propCount)
+		for i := 0; i < propCount; i++ {
+			if err := deserializeProperty(buf, &props[i]); err != nil {
+				return err
 			}
 		}
-	case serializationStatePropertyList:
-		var props []datastore.Property
-		if err := sd.dec.Decode(&props); err != nil {
-			return errCacheFetchFailed
-		}
-		for i := 0; i < len(props); i++ {
-			if props[i].Value == nilValue {
-				props[i].Value = nil
-			}
-		}
-		if hasPLS {
+		if pls, ok := dst.(datastore.PropertyLoadSaver); ok {
 			if err := pls.Load(props); err != nil {
 				return err
 			}
 		} else {
-			// fetching PropertyList cache to non-PLS struct can be handled by LoadStruct()
 			if err := datastore.LoadStruct(dst, props); err != nil {
 				return err
 			}
-		}
-	}
-
-	if notFoundField != "" {
-		return &datastore.ErrFieldMismatch{
-			StructType: t,
-			FieldName:  notFoundField,
-			Reason:     "no such struct field",
-		}
-	}
-	return nil
-}
-
-// deserializeStructInternal is a helper function for deserializeStruct.
-// It takes a gob decoder and struct field metadata, and then assigns the correct value to the specified struct field.
-func deserializeStructInternal(dec *gob.Decoder, fi *fieldInfo, fieldName string, nameParts []string, slice, zeroValue bool, structHistory map[string]map[string]bool, v reflect.Value, t reflect.Type) error {
-	if len(fi.sliceIndex) > 0 {
-		v = v.FieldByIndex(fi.sliceIndex)
-		t = v.Type()
-
-		var sv reflect.Value
-		createNew := false
-		nameIdx := len(fi.sliceIndex)
-		absName, childName := strings.Join(nameParts[:nameIdx], "."), strings.Join(nameParts[nameIdx:], ".")
-		sh, ok := structHistory[absName]
-		if !ok || sh[childName] {
-			sh = make(map[string]bool, 8)
-			structHistory[absName] = sh
-			createNew = true
-		} else if len(sh) == 0 {
-			createNew = true
-		}
-
-		if createNew {
-			structType := t.Elem()
-			sv = reflect.New(structType).Elem()
-			v.Set(reflect.Append(v, sv))
-		}
-
-		sv = v.Index(v.Len() - 1)
-		sh[childName] = true
-
-		v = sv
-		t = v.Type()
-	}
-
-	vf := v.FieldByIndex(fi.fieldIndex)
-
-	if vf.Kind() == reflect.Slice && !slice {
-		elemType := vf.Type().Elem()
-		if elemType.Kind() == reflect.Uint8 {
-			if !zeroValue {
-				if err := dec.DecodeValue(vf); err != nil {
-					return fmt.Errorf("goon: Failed to decode field %v - %v", fieldName, err)
-				}
-			}
-		} else {
-			ev := reflect.New(elemType).Elem()
-			if !zeroValue {
-				if err := dec.DecodeValue(ev); err != nil {
-					return fmt.Errorf("goon: Failed to decode field %v - %v", fieldName, err)
-				}
-			}
-			vf.Set(reflect.Append(vf, ev))
-		}
-	} else if !zeroValue {
-		if err := dec.DecodeValue(vf); err != nil {
-			return fmt.Errorf("goon: Failed to decode field %v - %v", fieldName, err)
 		}
 	}
 
