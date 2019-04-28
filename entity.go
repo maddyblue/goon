@@ -499,14 +499,11 @@ func deserializeProperty(buf *bytes.Buffer, prop *datastore.Property) error {
 // serializeStruct takes a struct and serializes it to portable bytes.
 func serializeStruct(src interface{}) ([]byte, error) {
 	if src == nil {
-		return []byte{0, 0, 0, 0}, nil
+		return serializeProperties(nil, false)
 	}
 	if k := reflect.Indirect(reflect.ValueOf(src)).Type().Kind(); k != reflect.Struct {
 		return nil, fmt.Errorf("goon: Expected struct, got instead: %v", k)
 	}
-
-	buf := getBuffer()
-	defer freeBuffer(buf)
 
 	var err error
 	var props []datastore.Property
@@ -518,6 +515,19 @@ func serializeStruct(src interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return serializeProperties(props, true)
+}
+
+// serializeProperties takes a slice of properties and serializes it to portable bytes.
+func serializeProperties(props []datastore.Property, exists bool) ([]byte, error) {
+	// NOTE: We use a separate exists bool to support nil-props for existing structs
+	if !exists {
+		return []byte{0, 0, 0, 0}, nil
+	}
+
+	buf := getBuffer()
+	defer freeBuffer(buf)
 
 	// Serialize the entity header
 	header := serializeEntityHeader(len(props), entityExists)
@@ -554,26 +564,26 @@ func deserializeStruct(dst interface{}, b []byte) error {
 	}
 
 	// Deserialize the properties
-	if propCount > 0 {
-		buf := bytes.NewBuffer(b[4:])
-		props := make([]datastore.Property, propCount)
-		for i := 0; i < propCount; i++ {
-			if err := deserializeProperty(buf, &props[i]); err != nil {
-				return err
-			}
-		}
-		if pls, ok := dst.(datastore.PropertyLoadSaver); ok {
-			if err := pls.Load(props); err != nil {
-				return err
-			}
-		} else {
-			if err := datastore.LoadStruct(dst, props); err != nil {
-				return err
-			}
+	buf := bytes.NewBuffer(b[4:])
+	props := make([]datastore.Property, propCount)
+	for i := 0; i < propCount; i++ {
+		if err := deserializeProperty(buf, &props[i]); err != nil {
+			return err
 		}
 	}
 
-	return nil
+	return deserializeProperties(dst, props)
+}
+
+// deserializeProperties takes a slice of properties and assigns correct values to struct dst.
+func deserializeProperties(dst interface{}, props []datastore.Property) error {
+	if k := reflect.Indirect(reflect.ValueOf(dst)).Type().Kind(); k != reflect.Struct {
+		return fmt.Errorf("goon: Expected struct, got instead: %v", k)
+	}
+	if pls, ok := dst.(datastore.PropertyLoadSaver); ok {
+		return pls.Load(props)
+	}
+	return datastore.LoadStruct(dst, props)
 }
 
 // getStructKey returns the key of the struct based in its reflected or

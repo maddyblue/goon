@@ -101,7 +101,7 @@ func TestCloneIVItem(t *testing.T) {
 	for i := range ivItems {
 		clone := *ivItems[i].clone()
 		if !reflect.DeepEqual(ivItems[i], clone) {
-			t.Fatalf("ivItem clone failed, expected %+v but got %+v", ivItems[i], clone)
+			t.Fatalf("ivItem clone failed!\n%v", getDiff(ivItems[i], clone, fmt.Sprintf("ivItems[%d]", i), "clone"))
 		}
 	}
 }
@@ -154,6 +154,9 @@ type ivItem struct {
 	ChildKey    *datastore.Key
 	ZeroKey     *datastore.Key
 	KeySliceNil []*datastore.Key
+
+	SaveCount int
+	LoadCount int
 }
 
 func (ivi ivItem) clone() *ivItem {
@@ -184,6 +187,8 @@ func (ivi ivItem) clone() *ivItem {
 		ChildKey:     cloneKey(ivi.ChildKey),
 		ZeroKey:      cloneKey(ivi.ZeroKey),
 		KeySliceNil:  cloneKeys(ivi.KeySliceNil),
+		SaveCount:    ivi.SaveCount,
+		LoadCount:    ivi.LoadCount,
 	}
 }
 
@@ -453,11 +458,14 @@ type ivItemI interface {
 type ivItemPLS ivItem
 
 func (ivi *ivItemPLS) Save() ([]datastore.Property, error) {
+	ivi.SaveCount++
 	return datastore.SaveStruct(ivi)
 }
 
 func (ivi *ivItemPLS) Load(props []datastore.Property) error {
-	return datastore.LoadStruct(ivi, props)
+	err := datastore.LoadStruct(ivi, props)
+	ivi.LoadCount++
+	return err
 }
 
 var ivItems []ivItem
@@ -587,125 +595,92 @@ func initializeIvItems(c context.Context) {
 	ivItems = append(ivItems, *ivi3)
 }
 
-func getInputVarietySrc(t *testing.T, g *Goon, ivType int, indices ...int) interface{} {
-	if ivType >= ivTypeTotal {
-		t.Fatalf("Invalid input variety type! %v >= %v", ivType, ivTypeTotal)
-		return nil
-	}
-
+func getInputVarietyItem(t *testing.T, g *Goon, ivType int, empty bool, indices ...int) interface{} {
 	var result interface{}
+
+	getItem := func(index int) *ivItem {
+		if empty {
+			return &ivItem{Id: ivItems[index].Id}
+		}
+		return ivItems[index].clone()
+	}
 
 	switch ivType {
 	case ivTypePtrToSliceOfStructs:
 		s := []ivItem{}
 		for _, index := range indices {
-			s = append(s, *ivItems[index].clone())
+			s = append(s, *getItem(index))
 		}
 		result = &s
 	case ivTypePtrToSliceOfPtrsToStruct:
 		s := []*ivItem{}
 		for _, index := range indices {
-			s = append(s, ivItems[index].clone())
+			s = append(s, getItem(index))
 		}
 		result = &s
 	case ivTypePtrToSliceOfInterfaces:
 		s := []ivItemI{}
 		for _, index := range indices {
-			s = append(s, ivItems[index].clone())
+			s = append(s, getItem(index))
 		}
 		result = &s
 	case ivTypeSliceOfStructs:
 		s := []ivItem{}
 		for _, index := range indices {
-			s = append(s, *ivItems[index].clone())
+			s = append(s, *getItem(index))
 		}
 		result = s
 	case ivTypeSliceOfPtrsToStruct:
 		s := []*ivItem{}
 		for _, index := range indices {
-			s = append(s, ivItems[index].clone())
+			s = append(s, getItem(index))
 		}
 		result = s
 	case ivTypeSliceOfInterfaces:
 		s := []ivItemI{}
 		for _, index := range indices {
-			s = append(s, ivItems[index].clone())
+			s = append(s, getItem(index))
 		}
 		result = s
 	case ivTypePtrToSliceOfPLS:
 		s := []ivItemPLS{}
 		for _, index := range indices {
-			s = append(s, (ivItemPLS)(*ivItems[index].clone()))
+			s = append(s, (ivItemPLS)(*getItem(index)))
 		}
 		result = &s
 	case ivTypePtrToSliceOfPtrsToPLS:
 		s := []*ivItemPLS{}
 		for _, index := range indices {
-			s = append(s, (*ivItemPLS)(ivItems[index].clone()))
+			s = append(s, (*ivItemPLS)(getItem(index)))
 		}
 		result = &s
 	case ivTypePtrToSliceOfInterfacesPLS:
 		s := []ivItemI{}
 		for _, index := range indices {
-			s = append(s, (*ivItemPLS)(ivItems[index].clone()))
+			s = append(s, (*ivItemPLS)(getItem(index)))
 		}
 		result = &s
 	case ivTypeSliceOfPLS:
 		s := []ivItemPLS{}
 		for _, index := range indices {
-			s = append(s, (ivItemPLS)(*ivItems[index].clone()))
+			s = append(s, (ivItemPLS)(*getItem(index)))
 		}
 		result = s
 	case ivTypeSliceOfPtrsToPLS:
 		s := []*ivItemPLS{}
 		for _, index := range indices {
-			s = append(s, (*ivItemPLS)(ivItems[index].clone()))
+			s = append(s, (*ivItemPLS)(getItem(index)))
 		}
 		result = s
 	case ivTypeSliceOfInterfacesPLS:
 		s := []ivItemI{}
 		for _, index := range indices {
-			s = append(s, (*ivItemPLS)(ivItems[index].clone()))
+			s = append(s, (*ivItemPLS)(getItem(index)))
 		}
 		result = s
-	}
-
-	return result
-}
-
-func getInputVarietyDst(t *testing.T, ivType int) interface{} {
-	if ivType >= ivTypeTotal {
-		t.Fatalf("Invalid input variety type! %v >= %v", ivType, ivTypeTotal)
+	default:
+		t.Fatalf("Invalid input variety type! %v", ivType)
 		return nil
-	}
-
-	var result interface{}
-
-	switch ivType {
-	case ivTypePtrToSliceOfStructs:
-		result = &[]ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
-	case ivTypePtrToSliceOfPtrsToStruct:
-		result = &[]*ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
-	case ivTypePtrToSliceOfInterfaces:
-		result = &[]ivItemI{&ivItem{Id: ivItems[0].Id}, &ivItem{Id: ivItems[1].Id}, &ivItem{Id: ivItems[2].Id}}
-	case ivTypeSliceOfStructs:
-		result = []ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
-	case ivTypeSliceOfPtrsToStruct:
-		result = []*ivItem{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
-	case ivTypeSliceOfInterfaces:
-		result = []ivItemI{&ivItem{Id: ivItems[0].Id}, &ivItem{Id: ivItems[1].Id}, &ivItem{Id: ivItems[2].Id}}
-	case ivTypePtrToSliceOfPLS:
-		result = &[]ivItemPLS{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
-	case ivTypePtrToSliceOfPtrsToPLS:
-		result = &[]*ivItemPLS{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
-	case ivTypePtrToSliceOfInterfacesPLS:
-		result = &[]ivItemI{&ivItemPLS{Id: ivItems[0].Id}, &ivItemPLS{Id: ivItems[1].Id}, &ivItemPLS{Id: ivItems[2].Id}}
-	case ivTypeSliceOfPLS:
-		result = []ivItemPLS{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
-	case ivTypeSliceOfPtrsToPLS:
-		result = []*ivItemPLS{{Id: ivItems[0].Id}, {Id: ivItems[1].Id}, {Id: ivItems[2].Id}}
-	case ivTypeSliceOfInterfacesPLS:
-		result = []ivItemI{&ivItemPLS{Id: ivItems[0].Id}, &ivItemPLS{Id: ivItems[1].Id}, &ivItemPLS{Id: ivItems[2].Id}}
 	}
 
 	return result
@@ -767,6 +742,19 @@ func getPrettyIVType(ivType int) string {
 	return result
 }
 
+func isIVTypePLS(ivType int) bool {
+	switch ivType {
+	case ivTypePtrToSliceOfPLS,
+		ivTypePtrToSliceOfPtrsToPLS,
+		ivTypePtrToSliceOfInterfacesPLS,
+		ivTypeSliceOfPLS,
+		ivTypeSliceOfPtrsToPLS,
+		ivTypeSliceOfInterfacesPLS:
+		return true
+	}
+	return false
+}
+
 func ivWipe(t *testing.T, g *Goon, prettyInfo string) {
 	// Make sure the datastore is clear of any previous tests
 	// TODO: Batch this once goon gets more convenient batch delete support
@@ -781,30 +769,92 @@ func ivWipe(t *testing.T, g *Goon, prettyInfo string) {
 	memcache.Flush(g.Context)
 }
 
+// getDiff is a helper function that returns string lines describing the differences between a & b
+func getDiff(a, b interface{}, aName, bName string) string {
+	var buf bytes.Buffer
+
+	av := reflect.Indirect(reflect.ValueOf(a))
+	bv := reflect.Indirect(reflect.ValueOf(b))
+
+	switch av.Kind() {
+	case reflect.Slice:
+		if av.Len() != bv.Len() {
+			buf.WriteString(fmt.Sprintf("%v has len %v, but %v has len %v\n", aName, av.Len(), bName, bv.Len()))
+		} else {
+			for i := 0; i < av.Len(); i++ {
+				avi := av.Index(i).Interface()
+				bvi := bv.Index(i).Interface()
+				buf.WriteString(getDiff(avi, bvi, fmt.Sprintf("%s[%d]", aName, i), fmt.Sprintf("%s[%d]", bName, i)))
+			}
+		}
+	case reflect.Struct:
+		if av.NumField() != bv.NumField() {
+			buf.WriteString(fmt.Sprintf("%v has %v fields, but %v has %v fields\n", aName, av.NumField(), bName, bv.NumField()))
+		} else {
+			for i := 0; i < av.NumField(); i++ {
+				avf := av.Field(i)
+				bvf := bv.Field(i)
+
+				avft := av.Type().Field(i)
+				bvft := bv.Type().Field(i)
+
+				avftName := fmt.Sprintf("%s.%s", aName, avft.Name)
+				bvftName := fmt.Sprintf("%s.%s", bName, bvft.Name)
+
+				if avft.Type != bvft.Type {
+					buf.WriteString(fmt.Sprintf("%v has type %v, but %v has type %v\n", avftName, avft.Type, bvftName, bvft.Type))
+				} else {
+					if avft.PkgPath == "" || avft.Anonymous || bvft.PkgPath == "" || bvft.Anonymous {
+						buf.WriteString(getDiff(avf.Interface(), bvf.Interface(), avftName, bvftName))
+					}
+				}
+			}
+		}
+	default:
+		if !reflect.DeepEqual(a, b) {
+			buf.WriteString(fmt.Sprintf("MISMATCH: %v == %v | %v == %v\n", aName, a, bName, b))
+		}
+	}
+
+	return buf.String()
+}
+
 func ivGetMulti(t *testing.T, g *Goon, ref, dst interface{}, prettyInfo string) error {
 	// Get our data back and make sure it's correct
 	if err := g.GetMulti(dst); err != nil {
-		t.Errorf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
+		t.Fatalf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
 		return err
 	} else {
 		dstLen := reflect.Indirect(reflect.ValueOf(dst)).Len()
 		refLen := reflect.Indirect(reflect.ValueOf(ref)).Len()
 
 		if dstLen != refLen {
-			t.Errorf("%s > Unexpected dst len (%v) doesn't match ref len (%v)", prettyInfo, dstLen, refLen)
+			t.Fatalf("%s > Unexpected dst len (%v) doesn't match ref len (%v)", prettyInfo, dstLen, refLen)
 		} else if !reflect.DeepEqual(ref, dst) {
-			t.Errorf("%s > Expected - %v, %v, %v - got %v, %v, %v", prettyInfo,
-				reflect.Indirect(reflect.ValueOf(ref)).Index(0).Interface(),
-				reflect.Indirect(reflect.ValueOf(ref)).Index(1).Interface(),
-				reflect.Indirect(reflect.ValueOf(ref)).Index(2).Interface(),
-				reflect.Indirect(reflect.ValueOf(dst)).Index(0).Interface(),
-				reflect.Indirect(reflect.ValueOf(dst)).Index(1).Interface(),
-				reflect.Indirect(reflect.ValueOf(dst)).Index(2).Interface())
+			t.Fatalf("%s > ivGetMulti didn't return what was expected:\n%s", prettyInfo, getDiff(ref, dst, "ref", "dst"))
 		}
 	}
 	return nil
 }
 
+func setPLSCounts(ref interface{}, saveCount, loadCount bool) {
+	// Confirm that Save() and Load() are called as specified
+	v := reflect.Indirect(reflect.ValueOf(ref))
+	for i := 0; i < v.Len(); i++ {
+		vi := reflect.Indirect(v.Index(i))
+		if vi.Kind() == reflect.Interface {
+			vi = reflect.Indirect(vi.Elem())
+		}
+		if saveCount {
+			vi.FieldByName("SaveCount").SetInt(1)
+		}
+		if loadCount {
+			vi.FieldByName("LoadCount").SetInt(1)
+		}
+	}
+}
+
+// This function tests standard Put/Get functions and their relation to the caches
 func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	if mode >= ivModeTotal {
 		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
@@ -814,15 +864,11 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	// Generate a nice debug info string for clear logging
 	prettyInfo := getPrettyIVType(srcType) + " " + getPrettyIVType(dstType) + " " + getPrettyIVMode(mode)
 
-	// This function just gets the entities based on a predefined list, helper for cache population
+	// This function just populates the cache via GetMulti
 	loadIVItem := func(indices ...int) {
-		for _, index := range indices {
-			ivi := &ivItem{Id: ivItems[index].Id}
-			if err := g.Get(ivi); err != nil {
-				t.Fatalf("%s > Unexpected error on get - %v", prettyInfo, err)
-			} else if !reflect.DeepEqual(ivItems[index], *ivi) {
-				t.Fatalf("%s > Expected - %v, got %v", prettyInfo, ivItems[index], *ivi)
-			}
+		dst := getInputVarietyItem(t, g, dstType, true, indices...)
+		if err := g.GetMulti(dst); err != nil {
+			t.Fatalf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
 		}
 	}
 
@@ -830,16 +876,22 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	ivWipe(t, g, prettyInfo)
 
 	// Generate test data with the specified types
-	src := getInputVarietySrc(t, g, srcType, 0, 1, 2)
-	ref := getInputVarietySrc(t, g, dstType, 0, 1, 2)
-	dst := getInputVarietyDst(t, dstType)
+	src := getInputVarietyItem(t, g, srcType, false, 0, 1, 2)
+	ref := getInputVarietyItem(t, g, dstType, false, 0, 1, 2)
+	dstA := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
+	dstB := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
+
+	setPLSCounts(ref, isIVTypePLS(srcType), isIVTypePLS(dstType))
 
 	// Save our test data
 	if _, err := g.PutMulti(src); err != nil {
 		t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
 	}
 
-	// Clear the caches, as we're going to precisely set the caches via Get
+	// Attempt an immediate get, which should catch any faulty Put-based caching
+	ivGetMulti(t, g, ref, dstA, prettyInfo+" PC")
+
+	// Clear the caches, as we're going to precisely set the caches via loadIVItem
 	g.FlushLocalCache()
 	memcache.Flush(g.Context)
 
@@ -868,9 +920,10 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	}
 
 	// Get our data back and make sure it's correct
-	ivGetMulti(t, g, ref, dst, prettyInfo)
+	ivGetMulti(t, g, ref, dstB, prettyInfo+" GC")
 }
 
+// This function tests Put inside a transaction and its relation to the caches
 func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	if mode >= ivModeTotal {
 		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
@@ -883,7 +936,11 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 		return
 	case ivModeMemcacheAndDatastore:
 		return
+	case ivModeLocalcache:
+		return
 	case ivModeLocalcacheAndMemcache:
+		return
+	case ivModeLocalcacheAndDatastore:
 		return
 	case ivModeLocalcacheAndMemcacheAndDatastore:
 		return
@@ -896,9 +953,12 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 	ivWipe(t, g, prettyInfo)
 
 	// Generate test data with the specified types
-	src := getInputVarietySrc(t, g, srcType, 0, 1, 2)
-	ref := getInputVarietySrc(t, g, dstType, 0, 1, 2)
-	dst := getInputVarietyDst(t, dstType)
+	src := getInputVarietyItem(t, g, srcType, false, 0, 1, 2)
+	ref := getInputVarietyItem(t, g, dstType, false, 0, 1, 2)
+	dstA := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
+	dstB := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
+
+	setPLSCounts(ref, isIVTypePLS(srcType), isIVTypePLS(dstType))
 
 	// Save our test data
 	if err := g.RunInTransaction(func(tg *Goon) error {
@@ -908,31 +968,21 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 		t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
 	}
 
+	// Attempt an immediate get, which should catch any faulty Put-based caching
+	ivGetMulti(t, g, ref, dstA, prettyInfo+" PC")
+
 	// Set the caches into proper state based on given mode
 	switch mode {
 	case ivModeDatastore:
 		g.FlushLocalCache()
 		memcache.Flush(g.Context)
-	case ivModeLocalcache:
-		// Entities already in local cache
-	case ivModeLocalcacheAndDatastore:
-		g.FlushLocalCache()
-		memcache.Flush(g.Context)
-
-		subSrc := getInputVarietySrc(t, g, srcType, 0)
-
-		if err := g.RunInTransaction(func(tg *Goon) error {
-			_, err := tg.PutMulti(subSrc)
-			return err
-		}, &datastore.TransactionOptions{XG: true}); err != nil {
-			t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
-		}
 	}
 
 	// Get our data back and make sure it's correct
-	ivGetMulti(t, g, ref, dst, prettyInfo)
+	ivGetMulti(t, g, ref, dstB, prettyInfo+" GC")
 }
 
+// This function tests Get inside a transaction and its relation to the caches
 func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	if mode >= ivModeTotal {
 		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
@@ -962,9 +1012,11 @@ func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode in
 	ivWipe(t, g, prettyInfo)
 
 	// Generate test data with the specified types
-	src := getInputVarietySrc(t, g, srcType, 0, 1, 2)
-	ref := getInputVarietySrc(t, g, dstType, 0, 1, 2)
-	dst := getInputVarietyDst(t, dstType)
+	src := getInputVarietyItem(t, g, srcType, false, 0, 1, 2)
+	ref := getInputVarietyItem(t, g, dstType, false, 0, 1, 2)
+	dst := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
+
+	setPLSCounts(ref, isIVTypePLS(srcType), isIVTypePLS(dstType))
 
 	// Save our test data
 	if _, err := g.PutMulti(src); err != nil {
@@ -981,7 +1033,7 @@ func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode in
 
 	// Get our data back and make sure it's correct
 	if err := g.RunInTransaction(func(tg *Goon) error {
-		return ivGetMulti(t, tg, ref, dst, prettyInfo)
+		return ivGetMulti(t, tg, ref, dst, prettyInfo+" GC")
 	}, &datastore.TransactionOptions{XG: true}); err != nil {
 		t.Fatalf("%s > Unexpected error on transaction - %v", prettyInfo, err)
 	}
@@ -1019,6 +1071,7 @@ func TestSerialization(t *testing.T) {
 
 	// Test that size is the same in back-to-back
 	iviOut := ivItems[0].clone()
+	iviOut.SaveCount = 1 // Set it to non-zero so that serialized size will match PLS
 	data, err := serializeStruct(iviOut)
 	if err != nil {
 		t.Fatalf("Failed to serialize iviOut: %v", err)
@@ -1039,7 +1092,7 @@ func TestSerialization(t *testing.T) {
 	}
 	iviIn.Id = iviOut.Id // Manually set the id
 	if !reflect.DeepEqual(iviOut, iviIn) {
-		t.Errorf("Invalid result! Expected %+v but got %+v", iviOut, iviIn)
+		t.Errorf("Invalid result!\n%v", getDiff(iviOut, iviIn, "iviOut", "iviIn"))
 	}
 
 	// PropertyLoadSaver serialization
@@ -1054,9 +1107,11 @@ func TestSerialization(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to deserialize to iviplsIn: %v", err)
 	}
-	iviplsIn.Id = iviplsOut.Id // Manually set the id
+	iviplsIn.Id = iviplsOut.Id               // Manually set the id
+	iviplsIn.LoadCount = iviplsOut.LoadCount // Reset the load count
 	if !reflect.DeepEqual(iviplsOut, iviplsIn) {
-		t.Errorf("Invalid PLS result! Expected %+v but got %+v", iviplsOut, iviplsIn)
+		t.Errorf("Invalid PLS result!\n%v", getDiff(iviplsOut, iviplsIn, "iviplsOut", "iviplsIn"))
+
 	}
 
 	// Make sure both normal & PLS result in the same length data
@@ -1135,7 +1190,7 @@ func TestPropertyLoadSaver(t *testing.T) {
 		t.Fatalf("Unexpected error on Get: %v", err)
 	}
 	if !reflect.DeepEqual(dA, dB) {
-		t.Errorf("dA & dB don't match! %+v -vs- %+v", dA, dB)
+		t.Errorf("dA & dB don't match!\n%s", getDiff(dA, dB, "dA", "dB"))
 	}
 }
 
@@ -1548,6 +1603,9 @@ func TestTXNRace(t *testing.T) {
 		t.Fatalf("Unexpected error on Put %v", err)
 	}
 
+	// Make sure the local cache is empty
+	g.FlushLocalCache()
+
 	// Get this data back, to populate caches
 	if err := g.Get(hid); err != nil {
 		t.Fatalf("Unexpected error on Get %v", err)
@@ -1577,6 +1635,7 @@ func TestTXNRace(t *testing.T) {
 		//   In the real world, this concurrent request may run in another instance.
 		//   The transaction block may contain multiple other operations after the preceding Put(),
 		//   allowing for ample time for the concurrent request to run before the transaction is committed.
+		hid = &HasId{Id: 1}
 		if err := g.Get(hid); err != nil {
 			t.Fatalf("Unexpected error on Get %v", err)
 		} else if hid.Name != "foo" {
@@ -1593,6 +1652,7 @@ func TestTXNRace(t *testing.T) {
 	g.FlushLocalCache()
 
 	// Get the data back again, to confirm it was changed in the transaction
+	hid = &HasId{Id: 1}
 	if err := g.Get(hid); err != nil {
 		t.Fatalf("Unexpected error on Get %v", err)
 	} else if hid.Name != "bar" {
@@ -1611,6 +1671,7 @@ func TestTXNRace(t *testing.T) {
 		}
 
 		// Concurrent request emulation
+		hid = &HasId{Id: 1}
 		if err := g.Get(hid); err != nil {
 			t.Fatalf("Unexpected error on Get %v", err)
 		} else if hid.Name != "bar" {
@@ -1627,6 +1688,7 @@ func TestTXNRace(t *testing.T) {
 	g.FlushLocalCache()
 
 	// Attempt to get the data back again, to confirm it was deleted in the transaction
+	hid = &HasId{Id: 1}
 	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
 		t.Errorf("Expected ErrNoSuchEntity, got %v", err)
 	}
@@ -1641,7 +1703,6 @@ func TestNegativeCacheHit(t *testing.T) {
 	g := FromContext(c)
 
 	hid := &HasId{Id: 1}
-
 	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
 		t.Fatalf("Expected ErrNoSuchEntity, got %v", err)
 	}
@@ -1650,6 +1711,9 @@ func TestNegativeCacheHit(t *testing.T) {
 	if _, err := datastore.Put(c, datastore.NewKey(c, "HasId", "", 1, nil), &HasId{Id: 1, Name: "one"}); err != nil {
 		t.Fatalf("Unexpected error on datastore.Put: %v", err)
 	}
+
+	// Clear local cache to test memcache
+	g.FlushLocalCache()
 
 	// Get the entity again via goon, to make sure we cached the non-existance
 	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
@@ -1705,7 +1769,7 @@ func TestNegativeCacheClear(t *testing.T) {
 			t.Fatalf("Unexpected error on get: %v", err)
 		}
 		if want.Name != hid.Name {
-			t.Fatalf("Expected Get Entity got : %v", want)
+			t.Fatalf("Expected %v but got %v", hid.Name, want.Name)
 		}
 	}
 }
@@ -1725,6 +1789,8 @@ func TestCaches(t *testing.T) {
 		t.Fatalf("Unexpected error on put - %v", err)
 	}
 
+	// Test the scenario where Put would populate local cache
+
 	// fetch *struct{} from cache
 	ghid := &HasId{Id: phid.Id}
 	err = g.Get(ghid)
@@ -1732,7 +1798,7 @@ func TestCaches(t *testing.T) {
 		t.Fatalf("Unexpected error on get - %v", err)
 	}
 	if !reflect.DeepEqual(phid, ghid) {
-		t.Fatalf("Expected - %v, got %v", phid, ghid)
+		t.Fatalf("Invalid result!\n%s", getDiff(phid, ghid, "phid", "ghid"))
 	}
 
 	// fetch []struct{} from cache
@@ -1742,11 +1808,12 @@ func TestCaches(t *testing.T) {
 		t.Fatalf("Unexpected error on get - %v", err)
 	}
 	if !reflect.DeepEqual(*phid, ghids[0]) {
-		t.Fatalf("Expected - %v, got %v", *phid, ghids[0])
+		t.Fatalf("Invalid result!\n%s", getDiff(*phid, ghids[0], "*phid", "ghids[0]"))
 	}
 
-	// Now flush localcache and fetch them again
+	// Now flush localcache and fetch them again to test memcache
 	g.FlushLocalCache()
+
 	// fetch *struct{} from memcache
 	ghid = &HasId{Id: phid.Id}
 	err = g.Get(ghid)
@@ -1754,10 +1821,12 @@ func TestCaches(t *testing.T) {
 		t.Fatalf("Unexpected error on get - %v", err)
 	}
 	if !reflect.DeepEqual(phid, ghid) {
-		t.Fatalf("Expected - %v, got %v", phid, ghid)
+		t.Fatalf("Invalid result!\n%s", getDiff(phid, ghid, "phid", "ghid"))
 	}
 
+	// Need to flush local cache again because it was populated by Get
 	g.FlushLocalCache()
+
 	// fetch []struct{} from memcache
 	ghids = []HasId{{Id: phid.Id}}
 	err = g.GetMulti(&ghids)
@@ -1765,7 +1834,7 @@ func TestCaches(t *testing.T) {
 		t.Fatalf("Unexpected error on get - %v", err)
 	}
 	if !reflect.DeepEqual(*phid, ghids[0]) {
-		t.Fatalf("Expected - %v, got %v", *phid, ghids[0])
+		t.Fatalf("Invalid result!\n%s", getDiff(*phid, ghids[0], "*phid", "ghids[0]"))
 	}
 }
 
@@ -1838,10 +1907,6 @@ func TestGoon(t *testing.T) {
 	if err := n.Get(&HasId{Id: 0}); err == nil {
 		t.Fatalf("ds: expected error, we're fetching from the datastore on an incomplete key!")
 	}
-	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
-		t.Fatalf("ds: expected no such entity")
-	}
-	// run twice to make sure autocaching works correctly
 	if err := n.Get(&HasId{Id: 1}); err != datastore.ErrNoSuchEntity {
 		t.Fatalf("ds: expected no such entity")
 	}
@@ -1920,11 +1985,16 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("get: unexpected error - %v", err)
 	}
 	if hi2.Name != hi.Name {
-		t.Fatalf("Could not fetch HasId object from memory - %#v != %#v, memory=%#v", hi, hi2, n.cache[MemcacheKey(n.Key(hi2))])
+		n.cacheLock.Lock()
+		cv := n.cache[MemcacheKey(n.Key(hi2))]
+		n.cacheLock.Unlock()
+		t.Fatalf("Could not fetch HasId object from memory - %#v != %#v, memory=%#v", hi, hi2, cv)
 	}
 
 	hi3 := &HasId{Id: hi.Id}
+	n.cacheLock.Lock()
 	delete(n.cache, MemcacheKey(n.Key(hi)))
+	n.cacheLock.Unlock()
 	if err := n.Get(hi3); err != nil {
 		t.Fatalf("get: unexpected error - %v", err)
 	}
@@ -1933,7 +2003,9 @@ func TestGoon(t *testing.T) {
 	}
 
 	hi4 := &HasId{Id: hi.Id}
+	n.cacheLock.Lock()
 	delete(n.cache, MemcacheKey(n.Key(hi4)))
+	n.cacheLock.Unlock()
 	if memcache.Flush(n.Context) != nil {
 		t.Fatalf("Unable to flush memcache")
 	}
@@ -1961,7 +2033,11 @@ func TestGoon(t *testing.T) {
 	}
 
 	hiPush := &HasId{Id: hi.Id, Name: "changedinmemcache"}
-	n.putMemcache([]interface{}{hiPush}, []byte{1})
+	props, err := datastore.SaveStruct(hiPush)
+	if err != nil {
+		t.Fatalf("datastore.SaveStruct failed: %v", err)
+	}
+	n.putMemcache([]cacheEntry{{key: n.Key(hiPush), props: props}})
 	n.cacheLock.Lock()
 	delete(n.cache, MemcacheKey(n.Key(hi)))
 	n.cacheLock.Unlock()

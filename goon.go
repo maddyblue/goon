@@ -17,7 +17,6 @@
 package goon
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -63,8 +62,7 @@ type Goon struct {
 	cache         map[string]interface{}
 	cacheLock     sync.RWMutex // protect the cache from concurrent goroutines to speed up RPC access
 	inTransaction bool
-	txnCacheLock  sync.Mutex // protects toSet / toDelete / toDeleteMC
-	toSet         map[string]interface{}
+	txnCacheLock  sync.Mutex // protects toDelete / toDeleteMC
 	toDelete      map[string]bool
 	toDeleteMC    map[string]bool
 	// KindNameResolver is used to determine what Kind to give an Entity.
@@ -172,7 +170,6 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 		ng = &Goon{
 			Context:          tc,
 			inTransaction:    true,
-			toSet:            make(map[string]interface{}),
 			toDelete:         make(map[string]bool),
 			toDeleteMC:       make(map[string]bool),
 			KindNameResolver: g.KindNameResolver,
@@ -192,9 +189,6 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 		}
 		g.cacheLock.Lock()
 		defer g.cacheLock.Unlock()
-		for k, v := range ng.toSet {
-			g.cache[k] = v
-		}
 		for k := range ng.toDelete {
 			delete(g.cache, k)
 		}
@@ -273,12 +267,8 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 				if g.inTransaction {
 					mk := MemcacheKey(rkeys[i])
 					g.txnCacheLock.Lock()
-					delete(g.toDelete, mk)
-					g.toSet[mk] = vi
 					g.toDeleteMC[mk] = true
 					g.txnCacheLock.Unlock()
-				} else {
-					g.putMemory(vi)
 				}
 			}
 		}(i)
@@ -328,27 +318,24 @@ func (g *Goon) FlushLocalCache() {
 	g.cacheLock.Unlock()
 }
 
-func (g *Goon) putMemcache(srcs []interface{}, exists []byte) error {
-	items := make([]*memcache.Item, len(srcs))
+type cacheEntry struct {
+	key   *datastore.Key
+	props datastore.PropertyList
+}
+
+func (g *Goon) putMemcache(entries []cacheEntry) error {
+	items := make([]*memcache.Item, len(entries))
 	payloadSize := 0
-	for i, src := range srcs {
-		toSerialize := src
-		if exists[i] == 0 {
-			toSerialize = nil
-		}
-		data, err := serializeStruct(toSerialize)
+	for i, entry := range entries {
+		data, err := serializeProperties(entry.props, entry.props != nil)
 		if err != nil {
 			g.error(err)
-			return err
-		}
-		key, _, err := g.getStructKey(src)
-		if err != nil {
 			return err
 		}
 		// payloadSize will overflow if we push 2+ gigs on a 32bit machine
 		payloadSize += len(data)
 		items[i] = &memcache.Item{
-			Key:   MemcacheKey(key),
+			Key:   MemcacheKey(entry.key),
 			Value: data,
 		}
 	}
@@ -362,7 +349,6 @@ func (g *Goon) putMemcache(srcs []interface{}, exists []byte) error {
 		errc <- memcache.SetMulti(tc, items)
 		cf()
 	}()
-	g.putMemoryMulti(srcs, exists)
 	err := <-errc
 	if appengine.IsTimeoutError(err) {
 		g.timeoutError(err)
@@ -532,14 +518,23 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	for i := 0; i < goroutines; i++ {
 		go func(i int) {
 			defer wg.Done()
-			var toCache []interface{}
-			var exists []byte
 			lo := i * getMultiLimit
 			hi := (i + 1) * getMultiLimit
 			if hi > len(dskeys) {
 				hi = len(dskeys)
 			}
-			gmerr := datastore.GetMulti(g.Context, dskeys[lo:hi], dsdst[lo:hi])
+			toCache := make([]cacheEntry, 0, hi-lo)
+			propLists := make([]datastore.PropertyList, hi-lo)
+			handleProp := func(i, idx int) {
+				err := deserializeProperties(dsdst[lo+i], propLists[i])
+				if err == nil || (IgnoreFieldMismatch && errFieldMismatch(err)) {
+					toCache = append(toCache, cacheEntry{key: dskeys[lo+i], props: propLists[i]})
+					g.putMemory(dsdst[lo+i])
+				} else {
+					multiErr[idx] = err
+				}
+			}
+			gmerr := datastore.GetMulti(g.Context, dskeys[lo:hi], propLists)
 			if gmerr != nil {
 				mu.Lock()
 				anyErr = true // this flag tells GetMulti to return multiErr later
@@ -553,23 +548,22 @@ func (g *Goon) GetMulti(dst interface{}) error {
 					return
 				}
 				for i, idx := range dixs[lo:hi] {
-					if merr[i] == nil || (IgnoreFieldMismatch && errFieldMismatch(merr[i])) {
-						toCache = append(toCache, dsdst[lo+i])
-						exists = append(exists, 1)
+					if merr[i] == nil {
+						handleProp(i, idx)
 					} else {
 						if merr[i] == datastore.ErrNoSuchEntity {
-							toCache = append(toCache, dsdst[lo+i])
-							exists = append(exists, 0)
+							toCache = append(toCache, cacheEntry{key: dskeys[lo+i], props: nil})
 						}
 						multiErr[idx] = merr[i]
 					}
 				}
 			} else {
-				toCache = append(toCache, dsdst[lo:hi]...)
-				exists = append(exists, bytes.Repeat([]byte{1}, hi-lo)...)
+				for i, idx := range dixs[lo:hi] {
+					handleProp(i, idx)
+				}
 			}
 			if len(toCache) > 0 {
-				if err := g.putMemcache(toCache, exists); err != nil {
+				if err := g.putMemcache(toCache); err != nil {
 					g.error(err)
 					// since putMemcache() gives no guarantee it will actually store the data in memcache
 					// we log and swallow this error
@@ -643,7 +637,6 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 
 		if g.inTransaction {
 			g.txnCacheLock.Lock()
-			delete(g.toSet, mk)
 			g.toDelete[mk] = true
 			g.txnCacheLock.Unlock()
 		} else {
