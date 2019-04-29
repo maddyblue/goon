@@ -819,7 +819,13 @@ func getDiff(a, b interface{}, aName, bName string) string {
 	return buf.String()
 }
 
-func ivGetMulti(t *testing.T, g *Goon, ref, dst interface{}, prettyInfo string) error {
+func ivGetMulti(t *testing.T, g *Goon, ref, dst interface{}, dirtyFunc func(), prettyInfo string) error {
+	// Dirty up the local cache entries before Get
+	// NOTE: It would be awesome if we could dirty them up after Get and have it match,
+	//       however the current goon implementation does a value copy of the cached entity.
+	if dirtyFunc != nil {
+		dirtyFunc()
+	}
 	// Get our data back and make sure it's correct
 	if err := g.GetMulti(dst); err != nil {
 		t.Fatalf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
@@ -854,6 +860,33 @@ func setPLSCounts(ref interface{}, saveCount, loadCount bool) {
 	}
 }
 
+// This function marks either all or the provided indices of target as dirty.
+// It's purpose is to use it on entities fetched via Get,
+// and then see if refetching those entities returns the dirty entities.
+func makeDirty(target interface{}, indices ...int) {
+	if target == nil {
+		return
+	}
+	v := reflect.Indirect(reflect.ValueOf(target))
+	for i := 0; i < v.Len(); i++ {
+		found := (len(indices) == 0) // If no indices are provided, we dirty everything
+		for _, index := range indices {
+			if index == i {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		vi := reflect.Indirect(v.Index(i))
+		if vi.Kind() == reflect.Interface {
+			vi = reflect.Indirect(vi.Elem())
+		}
+		vi.FieldByName("String").SetString("dirty")
+	}
+}
+
 // This function tests standard Put/Get functions and their relation to the caches
 func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	if mode >= ivModeTotal {
@@ -865,11 +898,12 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	prettyInfo := getPrettyIVType(srcType) + " " + getPrettyIVType(dstType) + " " + getPrettyIVMode(mode)
 
 	// This function just populates the cache via GetMulti
-	loadIVItem := func(indices ...int) {
+	loadIVItem := func(indices ...int) interface{} {
 		dst := getInputVarietyItem(t, g, dstType, true, indices...)
 		if err := g.GetMulti(dst); err != nil {
 			t.Fatalf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
 		}
+		return dst
 	}
 
 	// Start with a clean slate
@@ -889,11 +923,13 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 	}
 
 	// Attempt an immediate get, which should catch any faulty Put-based caching
-	ivGetMulti(t, g, ref, dstA, prettyInfo+" PC")
+	ivGetMulti(t, g, ref, dstA, nil, prettyInfo+" PC")
 
 	// Clear the caches, as we're going to precisely set the caches via loadIVItem
 	g.FlushLocalCache()
 	memcache.Flush(g.Context)
+
+	var locallyCached interface{}
 
 	// Set the caches into proper state based on given mode
 	switch mode {
@@ -906,21 +942,25 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 		loadIVItem(0, 1) // Left in memcache
 		g.FlushLocalCache()
 	case ivModeLocalcache:
-		loadIVItem(0, 1, 2) // Left in local cache
+		locallyCached = loadIVItem(0, 1, 2) // Left in local cache
+		makeDirty(ref, 0, 1, 2)             // Dirty up the local cache ones
 	case ivModeLocalcacheAndMemcache:
 		loadIVItem(0) // Left in memcache
 		g.FlushLocalCache()
-		loadIVItem(1, 2) // Left in local cache
+		locallyCached = loadIVItem(1, 2) // Left in local cache
+		makeDirty(ref, 1, 2)             // Dirty up the local cache ones
 	case ivModeLocalcacheAndDatastore:
-		loadIVItem(0, 1) // Left in local cache
+		locallyCached = loadIVItem(0, 1) // Left in local cache
+		makeDirty(ref, 0, 1)             // Dirty up the local cache ones
 	case ivModeLocalcacheAndMemcacheAndDatastore:
 		loadIVItem(0) // Left in memcache
 		g.FlushLocalCache()
-		loadIVItem(1) // Left in local cache
+		locallyCached = loadIVItem(1) // Left in local cache
+		makeDirty(ref, 1)             // Dirty up the local cache ones
 	}
 
 	// Get our data back and make sure it's correct
-	ivGetMulti(t, g, ref, dstB, prettyInfo+" GC")
+	ivGetMulti(t, g, ref, dstB, func() { makeDirty(locallyCached) }, prettyInfo+" GC")
 }
 
 // This function tests Put inside a transaction and its relation to the caches
@@ -969,7 +1009,7 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 	}
 
 	// Attempt an immediate get, which should catch any faulty Put-based caching
-	ivGetMulti(t, g, ref, dstA, prettyInfo+" PC")
+	ivGetMulti(t, g, ref, dstA, nil, prettyInfo+" PC")
 
 	// Set the caches into proper state based on given mode
 	switch mode {
@@ -979,7 +1019,7 @@ func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode in
 	}
 
 	// Get our data back and make sure it's correct
-	ivGetMulti(t, g, ref, dstB, prettyInfo+" GC")
+	ivGetMulti(t, g, ref, dstB, nil, prettyInfo+" GC")
 }
 
 // This function tests Get inside a transaction and its relation to the caches
@@ -1033,7 +1073,7 @@ func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode in
 
 	// Get our data back and make sure it's correct
 	if err := g.RunInTransaction(func(tg *Goon) error {
-		return ivGetMulti(t, tg, ref, dst, prettyInfo+" GC")
+		return ivGetMulti(t, tg, ref, dst, nil, prettyInfo+" GC")
 	}, &datastore.TransactionOptions{XG: true}); err != nil {
 		t.Fatalf("%s > Unexpected error on transaction - %v", prettyInfo, err)
 	}
