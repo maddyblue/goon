@@ -49,12 +49,21 @@ type cache struct {
 	limit    int                      // Maximum size allowed
 }
 
-func NewCache(limit int) *cache {
+const defaultCacheLimit = 16 << 20 // 16 MiB
+
+func newCache(limit int) *cache {
 	return &cache{elements: map[string]*list.Element{}, limit: limit}
 }
 
+func (c *cache) setLimit(limit int) {
+	c.lock.Lock()
+	c.limit = limit
+	c.meetLimitUnderLock()
+	c.lock.Unlock()
+}
+
 // meetLimit must be called under cache.lock
-func (c *cache) meetLimit() {
+func (c *cache) meetLimitUnderLock() {
 	for c.size > c.limit {
 		e := c.accessed.Back()
 		if e == nil {
@@ -89,7 +98,7 @@ func (c *cache) setUnderLock(item *cacheItem) {
 func (c *cache) Set(item *cacheItem) {
 	c.lock.Lock()
 	c.setUnderLock(item)
-	c.meetLimit()
+	c.meetLimitUnderLock()
 	c.lock.Unlock()
 }
 
@@ -99,7 +108,7 @@ func (c *cache) SetMulti(items []*cacheItem) {
 	for _, item := range items {
 		c.setUnderLock(item)
 	}
-	c.meetLimit()
+	c.meetLimitUnderLock()
 	c.lock.Unlock()
 }
 

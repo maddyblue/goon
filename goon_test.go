@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"reflect"
 	"strings"
 	"sync"
@@ -469,6 +470,7 @@ func (ivi *ivItemPLS) Load(props []datastore.Property) error {
 }
 
 var ivItems []ivItem
+var ivItemKeys []*datastore.Key
 
 func initializeIvItems(c context.Context) {
 	// We force UTC, because the datastore API will always return UTC
@@ -593,6 +595,11 @@ func initializeIvItems(c context.Context) {
 	ivItems = append(ivItems, *ivi1)
 	ivItems = append(ivItems, *ivi2)
 	ivItems = append(ivItems, *ivi3)
+
+	g := FromContext(c)
+	for i := range ivItems {
+		ivItemKeys = append(ivItemKeys, g.Key(&ivItems[i]))
+	}
 }
 
 func getInputVarietyItem(t *testing.T, g *Goon, ivType int, empty bool, indices ...int) interface{} {
@@ -755,20 +762,6 @@ func isIVTypePLS(ivType int) bool {
 	return false
 }
 
-func ivWipe(t *testing.T, g *Goon, prettyInfo string) {
-	// Make sure the datastore is clear of any previous tests
-	// TODO: Batch this once goon gets more convenient batch delete support
-	for _, ivi := range ivItems {
-		if err := g.Delete(g.Key(ivi)); err != nil {
-			t.Fatalf("%s > Unexpected error on delete - %v", prettyInfo, err)
-		}
-	}
-
-	// Make sure the caches are clear, so any caching is done by our specific test
-	g.FlushLocalCache()
-	memcache.Flush(g.Context)
-}
-
 // getDiff is a helper function that returns string lines describing the differences between a & b
 func getDiff(a, b interface{}, aName, bName string) string {
 	var buf bytes.Buffer
@@ -819,13 +812,23 @@ func getDiff(a, b interface{}, aName, bName string) string {
 	return buf.String()
 }
 
-func ivGetMulti(t *testing.T, g *Goon, ref, dst interface{}, dirtyFunc func(), prettyInfo string) error {
-	// Dirty up the local cache entries before Get
-	// NOTE: It would be awesome if we could dirty them up after Get and have it match,
-	//       however the current goon implementation does a value copy of the cached entity.
-	if dirtyFunc != nil {
-		dirtyFunc()
+func onlyErrNoSuchEntity(err error) bool {
+	if err == nil {
+		return false
 	}
+	merr, ok := err.(appengine.MultiError)
+	if !ok || len(merr) == 0 {
+		return false
+	}
+	for i := 0; i < len(merr); i++ {
+		if merr[i] != datastore.ErrNoSuchEntity {
+			return false
+		}
+	}
+	return true
+}
+
+func ivGetMulti(t *testing.T, g *Goon, ref, dst interface{}, prettyInfo string) error {
 	// Get our data back and make sure it's correct
 	if err := g.GetMulti(dst); err != nil {
 		t.Fatalf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
@@ -887,8 +890,7 @@ func makeDirty(target interface{}, indices ...int) {
 	}
 }
 
-// This function tests standard Put/Get functions and their relation to the caches
-func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
+func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int, txn bool) {
 	if mode >= ivModeTotal {
 		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
 		return
@@ -896,40 +898,49 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 
 	// Generate a nice debug info string for clear logging
 	prettyInfo := getPrettyIVType(srcType) + " " + getPrettyIVType(dstType) + " " + getPrettyIVMode(mode)
-
-	// This function just populates the cache via GetMulti
-	loadIVItem := func(indices ...int) interface{} {
-		dst := getInputVarietyItem(t, g, dstType, true, indices...)
-		if err := g.GetMulti(dst); err != nil {
-			t.Fatalf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
-		}
-		return dst
+	if txn {
+		prettyInfo += " TXN"
 	}
-
-	// Start with a clean slate
-	ivWipe(t, g, prettyInfo)
 
 	// Generate test data with the specified types
 	src := getInputVarietyItem(t, g, srcType, false, 0, 1, 2)
 	ref := getInputVarietyItem(t, g, dstType, false, 0, 1, 2)
 	dstA := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
 	dstB := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
+	dstC := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
 
 	setPLSCounts(ref, isIVTypePLS(srcType), isIVTypePLS(dstType))
 
 	// Save our test data
-	if _, err := g.PutMulti(src); err != nil {
-		t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+	if txn {
+		if err := g.RunInTransaction(func(tg *Goon) error {
+			_, err := tg.PutMulti(src)
+			return err
+		}, &datastore.TransactionOptions{XG: true}); err != nil {
+			t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+		}
+	} else {
+		if _, err := g.PutMulti(src); err != nil {
+			t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+		}
 	}
 
 	// Attempt an immediate get, which should catch any faulty Put-based caching
-	ivGetMulti(t, g, ref, dstA, nil, prettyInfo+" PC")
+	ivGetMulti(t, g, ref, dstA, prettyInfo+" PC")
 
 	// Clear the caches, as we're going to precisely set the caches via loadIVItem
+	// TODO: Instead of clear, fill the caches with invalid data
 	g.FlushLocalCache()
 	memcache.Flush(g.Context)
 
-	var locallyCached interface{}
+	// This function just populates the cache via GetMulti
+	loadIVItem := func(indices ...int) {
+		dst := getInputVarietyItem(t, g, dstType, true, indices...)
+		if err := g.GetMulti(dst); err != nil {
+			t.Fatalf("%s > Unexpected error on GetMulti - %v", prettyInfo, err)
+		}
+		makeDirty(dst) // Make these dirty to confirm the cache doesn't reflect it
+	}
 
 	// Set the caches into proper state based on given mode
 	switch mode {
@@ -942,141 +953,51 @@ func validateInputVariety(t *testing.T, g *Goon, srcType, dstType, mode int) {
 		loadIVItem(0, 1) // Left in memcache
 		g.FlushLocalCache()
 	case ivModeLocalcache:
-		locallyCached = loadIVItem(0, 1, 2) // Left in local cache
-		makeDirty(ref, 0, 1, 2)             // Dirty up the local cache ones
+		loadIVItem(0, 1, 2) // Left in local cache
 	case ivModeLocalcacheAndMemcache:
 		loadIVItem(0) // Left in memcache
 		g.FlushLocalCache()
-		locallyCached = loadIVItem(1, 2) // Left in local cache
-		makeDirty(ref, 1, 2)             // Dirty up the local cache ones
+		loadIVItem(1, 2) // Left in local cache
 	case ivModeLocalcacheAndDatastore:
-		locallyCached = loadIVItem(0, 1) // Left in local cache
-		makeDirty(ref, 0, 1)             // Dirty up the local cache ones
+		loadIVItem(0, 1) // Left in local cache
 	case ivModeLocalcacheAndMemcacheAndDatastore:
 		loadIVItem(0) // Left in memcache
 		g.FlushLocalCache()
-		locallyCached = loadIVItem(1) // Left in local cache
-		makeDirty(ref, 1)             // Dirty up the local cache ones
+		loadIVItem(1) // Left in local cache
 	}
 
 	// Get our data back and make sure it's correct
-	ivGetMulti(t, g, ref, dstB, func() { makeDirty(locallyCached) }, prettyInfo+" GC")
-}
-
-// This function tests Put inside a transaction and its relation to the caches
-func validateInputVarietyTXNPut(t *testing.T, g *Goon, srcType, dstType, mode int) {
-	if mode >= ivModeTotal {
-		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
-		return
+	if txn {
+		if err := g.RunInTransaction(func(tg *Goon) error {
+			return ivGetMulti(t, tg, ref, dstB, prettyInfo+" GC")
+		}, &datastore.TransactionOptions{XG: true}); err != nil {
+			t.Fatalf("%s > Unexpected error on transaction - %v", prettyInfo, err)
+		}
+	} else {
+		ivGetMulti(t, g, ref, dstB, prettyInfo+" GC")
 	}
 
-	// The following modes are redundant with the current goon transaction implementation
-	switch mode {
-	case ivModeMemcache:
-		return
-	case ivModeMemcacheAndDatastore:
-		return
-	case ivModeLocalcache:
-		return
-	case ivModeLocalcacheAndMemcache:
-		return
-	case ivModeLocalcacheAndDatastore:
-		return
-	case ivModeLocalcacheAndMemcacheAndDatastore:
-		return
+	// Delete our data
+	if txn {
+		if err := g.RunInTransaction(func(tg *Goon) error {
+			return tg.DeleteMulti(ivItemKeys)
+		}, &datastore.TransactionOptions{XG: true}); err != nil {
+			t.Fatalf("%s > Unexpected error on DeleteMulti - %v", prettyInfo, err)
+		}
+	} else {
+		if err := g.DeleteMulti(ivItemKeys); err != nil {
+			t.Fatalf("%s > Unexpected error on DeleteMulti - %v", prettyInfo, err)
+		}
 	}
 
-	// Generate a nice debug info string for clear logging
-	prettyInfo := getPrettyIVType(srcType) + " " + getPrettyIVType(dstType) + " " + getPrettyIVMode(mode) + " TXNPut"
-
-	// Start with a clean slate
-	ivWipe(t, g, prettyInfo)
-
-	// Generate test data with the specified types
-	src := getInputVarietyItem(t, g, srcType, false, 0, 1, 2)
-	ref := getInputVarietyItem(t, g, dstType, false, 0, 1, 2)
-	dstA := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
-	dstB := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
-
-	setPLSCounts(ref, isIVTypePLS(srcType), isIVTypePLS(dstType))
-
-	// Save our test data
-	if err := g.RunInTransaction(func(tg *Goon) error {
-		_, err := tg.PutMulti(src)
-		return err
-	}, &datastore.TransactionOptions{XG: true}); err != nil {
-		t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
+	// Make sure our data isn't retrievable from any layer
+	if err := g.GetMulti(dstC); !onlyErrNoSuchEntity(err) {
+		t.Fatalf("%s > Expected ErrNoSuchEntity but got %v", prettyInfo, err)
 	}
 
-	// Attempt an immediate get, which should catch any faulty Put-based caching
-	ivGetMulti(t, g, ref, dstA, nil, prettyInfo+" PC")
-
-	// Set the caches into proper state based on given mode
-	switch mode {
-	case ivModeDatastore:
-		g.FlushLocalCache()
-		memcache.Flush(g.Context)
-	}
-
-	// Get our data back and make sure it's correct
-	ivGetMulti(t, g, ref, dstB, nil, prettyInfo+" GC")
-}
-
-// This function tests Get inside a transaction and its relation to the caches
-func validateInputVarietyTXNGet(t *testing.T, g *Goon, srcType, dstType, mode int) {
-	if mode >= ivModeTotal {
-		t.Fatalf("Invalid input variety mode! %v >= %v", mode, ivModeTotal)
-		return
-	}
-
-	// The following modes are redundant with the current goon transaction implementation
-	switch mode {
-	case ivModeMemcache:
-		return
-	case ivModeMemcacheAndDatastore:
-		return
-	case ivModeLocalcache:
-		return
-	case ivModeLocalcacheAndMemcache:
-		return
-	case ivModeLocalcacheAndDatastore:
-		return
-	case ivModeLocalcacheAndMemcacheAndDatastore:
-		return
-	}
-
-	// Generate a nice debug info string for clear logging
-	prettyInfo := getPrettyIVType(srcType) + " " + getPrettyIVType(dstType) + " " + getPrettyIVMode(mode) + " TXNGet"
-
-	// Start with a clean slate
-	ivWipe(t, g, prettyInfo)
-
-	// Generate test data with the specified types
-	src := getInputVarietyItem(t, g, srcType, false, 0, 1, 2)
-	ref := getInputVarietyItem(t, g, dstType, false, 0, 1, 2)
-	dst := getInputVarietyItem(t, g, dstType, true, 0, 1, 2)
-
-	setPLSCounts(ref, isIVTypePLS(srcType), isIVTypePLS(dstType))
-
-	// Save our test data
-	if _, err := g.PutMulti(src); err != nil {
-		t.Fatalf("%s > Unexpected error on PutMulti - %v", prettyInfo, err)
-	}
-
-	// Set the caches into proper state based on given mode
-	// TODO: Instead of clear, fill the caches with invalid data, because we're supposed to always fetch from the datastore
-	switch mode {
-	case ivModeDatastore:
-		g.FlushLocalCache()
-		memcache.Flush(g.Context)
-	}
-
-	// Get our data back and make sure it's correct
-	if err := g.RunInTransaction(func(tg *Goon) error {
-		return ivGetMulti(t, tg, ref, dst, nil, prettyInfo+" GC")
-	}, &datastore.TransactionOptions{XG: true}); err != nil {
-		t.Fatalf("%s > Unexpected error on transaction - %v", prettyInfo, err)
-	}
+	// Do final clean-up of any negative cache
+	g.FlushLocalCache()
+	memcache.Flush(g.Context)
 }
 
 func TestInputVariety(t *testing.T) {
@@ -1092,9 +1013,9 @@ func TestInputVariety(t *testing.T) {
 	for srcType := 0; srcType < ivTypeTotal; srcType++ {
 		for dstType := 0; dstType < ivTypeTotal; dstType++ {
 			for mode := 0; mode < ivModeTotal; mode++ {
-				validateInputVariety(t, g, srcType, dstType, mode)
-				validateInputVarietyTXNPut(t, g, srcType, dstType, mode)
-				validateInputVarietyTXNGet(t, g, srcType, dstType, mode)
+				for txn := 0; txn < 2; txn++ {
+					validateInputVariety(t, g, srcType, dstType, mode, txn == 1)
+				}
 			}
 		}
 	}
@@ -1217,20 +1138,32 @@ func TestPropertyLoadSaver(t *testing.T) {
 	if _, err := g.Put(dA); err != nil {
 		t.Fatalf("Unexpected error on Put: %v", err)
 	}
-	// Clear the local cache and get it to fill the memcache
-	g.FlushLocalCache()
-	dX := &dummyPLS{Id: 1}
-	if err := g.Get(dX); err != nil {
-		t.Fatalf("Unexpected error on Get: %v", err)
-	}
-	// Clear the local cache and get it from the memcache
-	g.FlushLocalCache()
-	dB := &dummyPLS{Id: 1}
-	if err := g.Get(dB); err != nil {
-		t.Fatalf("Unexpected error on Get: %v", err)
-	}
-	if !reflect.DeepEqual(dA, dB) {
-		t.Errorf("dA & dB don't match!\n%s", getDiff(dA, dB, "dA", "dB"))
+
+	for i := 0; i < 5; i++ {
+		switch i {
+		case 0:
+			// Test immediately after Put, leave caches as is
+		case 1:
+			// Clear the local cache to test memcache
+			g.FlushLocalCache()
+		case 2:
+			// Clear both caches to test datastore
+			g.FlushLocalCache()
+			memcache.Flush(g.Context)
+		case 3:
+			// Test local cache from the Get
+		case 4:
+			// Clear the local cache to test memcache from the Get
+			g.FlushLocalCache()
+		}
+
+		dB := &dummyPLS{Id: dA.Id}
+		if err := g.Get(dB); err != nil {
+			t.Fatalf("Unexpected error on Get #%d: %v", i, err)
+		}
+		if !reflect.DeepEqual(dA, dB) {
+			t.Errorf("dA & dB don't match #%d!\n%s", i, getDiff(dA, dB, "dA", "dB"))
+		}
 	}
 }
 
@@ -1259,6 +1192,7 @@ type MigrationA struct {
 	ZZs              []ZigZag          `datastore:"zigzag,noindex"`
 	ZeroKey          *datastore.Key    `datastore:",noindex"`
 	File             []byte
+	LoadCount        int
 	DeprecatedField  string       `datastore:"depf,noindex"`
 	DeprecatedStruct MigrationSub `datastore:"deps,noindex"`
 	FinalField       string       `datastore:"final,noindex"` // This should always be last, to test deprecating middle properties
@@ -1340,6 +1274,7 @@ type MigrationB struct {
 	ZZs            ZigZags           `datastore:"zigzag,noindex"`
 	Keys           []*datastore.Key  `datastore:"ZeroKey,noindex"`
 	Files          [][]byte          `datastore:"File,noindex"`
+	LoadCount      int               `datastore:"LoadCount,noindex"`
 	FinalField     string            `datastore:"final,noindex"`
 }
 
@@ -1367,7 +1302,9 @@ func (m *MigrationPlsA) Save() ([]datastore.Property, error) {
 	return datastore.SaveStruct(m)
 }
 func (m *MigrationPlsA) Load(props []datastore.Property) error {
-	return datastore.LoadStruct(m, props)
+	err := datastore.LoadStruct(m, props)
+	m.LoadCount++
+	return err
 }
 
 func (m MigrationPlsB) parent() *datastore.Key {
@@ -1380,7 +1317,9 @@ func (m *MigrationPlsB) Save() ([]datastore.Property, error) {
 	return datastore.SaveStruct(m)
 }
 func (m *MigrationPlsB) Load(props []datastore.Property) error {
-	return datastore.LoadStruct(m, props)
+	err := datastore.LoadStruct(m, props)
+	m.LoadCount++
+	return err
 }
 
 // Make sure these implement datastore.PropertyLoadSaver
@@ -1466,12 +1405,17 @@ func TestMigration(t *testing.T) {
 				t.Fatalf("Unexpected error on Get: %v", err)
 			}
 
-			// Clear the local cache, because it doesn't need to support migration
+			// Test whether local cache supports migration
+			var fetched MigrationEntity
+			debugInfo := fmt.Sprintf("%s LC-%v", tt.name, IgnoreFieldMismatch)
+			fetched = verifyMigration(t, g, tt.src, tt.dst, migrationMethodGet, debugInfo)
+			checkMigrationResult(t, g, tt.src, fetched, debugInfo)
+
+			// Clear the local cache, to test memcache
 			g.FlushLocalCache()
 
 			// Test whether memcache supports migration
-			var fetched MigrationEntity
-			debugInfo := fmt.Sprintf("%s - field mismatch: %v - MC", tt.name, IgnoreFieldMismatch)
+			debugInfo = fmt.Sprintf("%s MC-%v", tt.name, IgnoreFieldMismatch)
 			fetched = verifyMigration(t, g, tt.src, tt.dst, migrationMethodGet, debugInfo)
 			checkMigrationResult(t, g, tt.src, fetched, debugInfo)
 
@@ -1563,6 +1507,10 @@ func checkMigrationResult(t *testing.T, g *Goon, src, fetched interface{}, debug
 		migB = v
 	case *MigrationPlsB:
 		migB = (*MigrationB)(v)
+
+		if migB.LoadCount != 1 {
+			t.Errorf("%v > Expected LoadCount 1 but got %d", debugInfo, migB.LoadCount)
+		}
 	}
 
 	if migA.Id != migB.Identification {
@@ -1748,22 +1696,31 @@ func TestNegativeCacheHit(t *testing.T) {
 	defer done()
 	g := FromContext(c)
 
-	hid := &HasId{Id: 1}
-	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
-		t.Fatalf("Expected ErrNoSuchEntity, got %v", err)
-	}
+	// Run twice to test local cache & memcache
+	for _, mode := range []string{"MC", "LC"} {
+		debugInfo := fmt.Sprintf("%s", mode)
 
-	// Do a sneaky save straight to the datastore
-	if _, err := datastore.Put(c, datastore.NewKey(c, "HasId", "", 1, nil), &HasId{Id: 1, Name: "one"}); err != nil {
-		t.Fatalf("Unexpected error on datastore.Put: %v", err)
-	}
+		hid := &HasId{Id: rand.Int63()}
+		if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
+			t.Fatalf("%s > Expected ErrNoSuchEntity, got %v", debugInfo, err)
+		}
 
-	// Clear local cache to test memcache
-	g.FlushLocalCache()
+		// Do a sneaky save straight to the datastore
+		if _, err := datastore.Put(c, datastore.NewKey(c, "HasId", "", hid.Id, nil), &HasId{Id: hid.Id, Name: "one"}); err != nil {
+			t.Fatalf("%s > Unexpected error on datastore.Put: %v", debugInfo, err)
+		}
 
-	// Get the entity again via goon, to make sure we cached the non-existance
-	if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
-		t.Errorf("Expected ErrNoSuchEntity, got %v", err)
+		switch mode {
+		case "MC":
+			g.FlushLocalCache()
+		case "LC":
+			memcache.Flush(c)
+		}
+
+		// Get the entity again via goon, to make sure we cached the non-existance
+		if err := g.Get(hid); err != datastore.ErrNoSuchEntity {
+			t.Errorf("%s > Expected ErrNoSuchEntity, got %v", debugInfo, err)
+		}
 	}
 }
 
@@ -1775,47 +1732,65 @@ func TestNegativeCacheClear(t *testing.T) {
 	defer done()
 	g := FromContext(c)
 
-	hid := &HasId{Name: "one"}
-	var id int64
+	// Run twice to test local cache & memcache
+	for _, mode := range []string{"MC", "LC"} {
+		for tx := 0; tx < 2; tx++ {
+			debugInfo := fmt.Sprintf("%s-%v", mode, tx == 1)
 
-	puted := make(chan bool)
-	cached := make(chan bool)
-	ended := make(chan bool)
+			hid := &HasId{Name: "one"}
+			var id int64
 
-	go func() {
-		err := g.RunInTransaction(func(tg *Goon) error {
-			tg.Put(hid)
-			id = hid.Id
-			puted <- true
-			<-cached
-			return nil
-		}, nil)
-		if err != nil {
-			t.Errorf("Unexpected error on RunInTransaction: %v", err)
-		}
-		ended <- true
-	}()
+			ided := make(chan bool)
+			cached := make(chan bool)
+			ended := make(chan bool)
 
-	// simulate negative cache (yet commit)
-	{
-		<-puted
-		negative := &HasId{Id: id}
-		g.FlushLocalCache()
-		if err := g.Get(negative); err != datastore.ErrNoSuchEntity {
-			t.Fatalf("Expected ErrNoSuchEntity, got %v", err)
-		}
-		cached <- true
-	}
+			go func() {
+				var err error
+				if tx == 0 {
+					id = rand.Int63()
+					hid.Id = id
+					ided <- true
+					<-cached
+					_, err = g.Put(hid)
+				} else {
+					err = g.RunInTransaction(func(tg *Goon) error {
+						_, err := tg.Put(hid)
+						id = hid.Id
+						ided <- true
+						<-cached
+						return err
+					}, nil)
+				}
+				if err != nil {
+					t.Errorf("%s > Unexpected error on RunInTransaction: %v", debugInfo, err)
+				}
+				ended <- true
+			}()
 
-	{
-		<-ended
-		want := &HasId{Id: id}
-		g.FlushLocalCache()
-		if err := g.Get(want); err != nil {
-			t.Fatalf("Unexpected error on get: %v", err)
-		}
-		if want.Name != hid.Name {
-			t.Fatalf("Expected %v but got %v", hid.Name, want.Name)
+			// Populate the cache with a negative hit
+			{
+				<-ided
+				negative := &HasId{Id: id}
+				if err := g.Get(negative); err != datastore.ErrNoSuchEntity {
+					t.Fatalf("%s > Expected ErrNoSuchEntity, got %v", debugInfo, err)
+				}
+				cached <- true
+			}
+
+			// Make sure the negative cache no longer exists
+			{
+				<-ended
+				want := &HasId{Id: id}
+				if mode == "MC" {
+					g.FlushLocalCache()
+				}
+				if err := g.Get(want); err != nil {
+					t.Fatalf("%s > Unexpected error on get: %v", debugInfo, err)
+				}
+				if want.Name != hid.Name {
+					t.Fatalf("%s > Expected '%v' but got '%v'", debugInfo, hid.Name, want.Name)
+				}
+			}
 		}
 	}
 }
@@ -1991,8 +1966,8 @@ func TestGoon(t *testing.T) {
 	}
 	if err := n.GetMulti(nes); err != nil {
 		t.Fatalf("put: unexpected error")
-	} else if *es[0] != *nes[0] || *es[1] != *nes[1] {
-		t.Fatalf("put: bad results")
+	} else if !reflect.DeepEqual(es, nes) {
+		t.Fatalf("put: bad results\n%s", getDiff(es, nes, "es", "nes"))
 	} else {
 		nesk0 := n.Key(nes[0])
 		if !nesk0.Equal(datastore.NewKey(c, "HasId", "", 1, nil)) {
@@ -2031,16 +2006,11 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("get: unexpected error - %v", err)
 	}
 	if hi2.Name != hi.Name {
-		n.cacheLock.Lock()
-		cv := n.cache[MemcacheKey(n.Key(hi2))]
-		n.cacheLock.Unlock()
-		t.Fatalf("Could not fetch HasId object from memory - %#v != %#v, memory=%#v", hi, hi2, cv)
+		t.Fatalf("Could not fetch HasId object from memory - %#v != %#v", hi, hi2)
 	}
 
 	hi3 := &HasId{Id: hi.Id}
-	n.cacheLock.Lock()
-	delete(n.cache, MemcacheKey(n.Key(hi)))
-	n.cacheLock.Unlock()
+	n.cache.Delete(MemcacheKey(n.Key(hi)))
 	if err := n.Get(hi3); err != nil {
 		t.Fatalf("get: unexpected error - %v", err)
 	}
@@ -2049,9 +2019,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	hi4 := &HasId{Id: hi.Id}
-	n.cacheLock.Lock()
-	delete(n.cache, MemcacheKey(n.Key(hi4)))
-	n.cacheLock.Unlock()
+	n.cache.Delete(MemcacheKey(n.Key(hi4)))
 	if memcache.Flush(n.Context) != nil {
 		t.Fatalf("Unable to flush memcache")
 	}
@@ -2068,25 +2036,31 @@ func TestGoon(t *testing.T) {
 	//   but this tests that goon isn't still pulling from the datastore (or memcache) unnecessarily
 	// hi in datastore Name = hasid
 	hiPull := &HasId{Id: hi.Id}
-	n.cacheLock.Lock()
-	n.cache[MemcacheKey(n.Key(hi))].(*HasId).Name = "changedincache"
-	n.cacheLock.Unlock()
+	{
+		cachekey := MemcacheKey(n.Key(hi))
+		hiTamper := &HasId{Id: hi.Id, Name: "changedincache"}
+		data, err := serializeStruct(hiTamper)
+		if err != nil {
+			t.Fatalf("Unexpected error serializing: %v", err)
+		}
+		n.cache.Set(&cacheItem{key: cachekey, value: data})
+	}
 	if err := n.Get(hiPull); err != nil {
 		t.Fatalf("get: unexpected error - %v", err)
 	}
 	if hiPull.Name != "changedincache" {
 		t.Fatalf("hiPull.Name should be 'changedincache' but got %s", hiPull.Name)
 	}
-
-	hiPush := &HasId{Id: hi.Id, Name: "changedinmemcache"}
-	props, err := datastore.SaveStruct(hiPush)
-	if err != nil {
-		t.Fatalf("datastore.SaveStruct failed: %v", err)
+	{
+		cachekey := MemcacheKey(n.Key(hi))
+		hiPush := &HasId{Id: hi.Id, Name: "changedinmemcache"}
+		data, err := serializeStruct(hiPush)
+		if err != nil {
+			t.Fatalf("Unexpected error serializing: %v", err)
+		}
+		n.putMemcache([]*cacheItem{{key: cachekey, value: data}})
+		n.cache.Delete(cachekey)
 	}
-	n.putMemcache([]cacheEntry{{key: n.Key(hiPush), props: props}})
-	n.cacheLock.Lock()
-	delete(n.cache, MemcacheKey(n.Key(hi)))
-	n.cacheLock.Unlock()
 
 	hiPull = &HasId{Id: hi.Id}
 	if err := n.Get(hiPull); err != nil {
@@ -2118,17 +2092,52 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("GetAll Zero: expected 0 keys, got %v", len(dskeys))
 	}
 
-	// Create some entities that we will query for
-	if getKeys, err := n.PutMulti([]*QueryItem{{Id: 1, Data: "one"}, {Id: 2, Data: "two"}}); err != nil {
-		t.Fatalf("PutMulti: unexpected error: %v", err)
-	} else {
-		// do a datastore Get by *Key so that data is written to the datstore and indexes generated before subsequent query
-		if err := datastore.GetMulti(c, getKeys, make([]QueryItem, 2)); err != nil {
+	createEntities := func() {
+		// Create some entities that we will query for
+		if getKeys, err := n.PutMulti([]*QueryItem{{Id: 1, Data: "one"}, {Id: 2, Data: "two"}}); err != nil {
+			t.Fatalf("PutMulti: unexpected error: %v", err)
+		} else {
+			// do a datastore Get by *Key so that data is written to the datstore and indexes generated before subsequent query
+			if err := datastore.GetMulti(c, getKeys, make([]QueryItem, 2)); err != nil {
+				t.Error(err)
+			}
+		}
+		// Make sure we clear the cache, as we will fill it later with a query
+		n.FlushLocalCache()
+	}
+	deleteEntities := func(ids ...int64) {
+		if len(ids) == 0 {
+			ids = []int64{1, 2}
+		}
+		var keys []*datastore.Key
+		for _, id := range ids {
+			keys = append(keys, datastore.NewKey(c, "QueryItem", "", id, nil))
+		}
+		if err := datastore.DeleteMulti(c, keys); err != nil {
 			t.Error(err)
 		}
 	}
 
-	// Clear the local memory cache, because we want to test it being filled correctly by GetAll
+	createEntities()
+
+	// Get the entity using a slice of structs that needs to be appended but has garbage data
+	qiSGRes := []QueryItem{{Id: 1, Data: "invalid cache"}, {Garbage: "uninitialized memory"}}[:1]
+	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "two"), &qiSGRes); err != nil {
+		t.Fatalf("GetAll SoS: unexpected error: %v", err)
+	} else if len(dskeys) != 1 {
+		t.Fatalf("GetAll SoS: expected 1 key, got %v", len(dskeys))
+	} else if dskeys[0].IntID() != 2 {
+		t.Fatalf("GetAll SoS: expected key IntID to be 2, got %v", dskeys[0].IntID())
+	} else if len(qiSGRes) != 2 {
+		t.Fatalf("GetAll SoS: expected 2 results, got %v", len(qiSGRes))
+	} else if qiSGRes[1].Id != 2 {
+		t.Fatalf("GetAll SoS: expected entity id to be 2, got %v", qiSGRes[1].Id)
+	} else if qiSGRes[1].Data != "two" {
+		t.Fatalf("GetAll SoS: expected entity data to be 'two', got '%v'", qiSGRes[1].Data)
+	} else if qiSGRes[1].Garbage != "" {
+		t.Fatalf("GetAll SoS: expected no garbage data, but got '%v'", qiSGRes[1].Garbage)
+	}
+
 	n.FlushLocalCache()
 
 	// Get the entity using a slice of structs
@@ -2147,7 +2156,9 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("GetAll SoS: expected entity data to be 'one', got '%v'", qiSRes[0].Data)
 	}
 
-	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
+	deleteEntities()
+
+	// Get the entity using normal Get to test local cache
 	qiS := &QueryItem{Id: 1}
 	if err := n.Get(qiS); err != nil {
 		t.Fatalf("Get SoS: unexpected error: %v", err)
@@ -2157,8 +2168,7 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Get SoS: expected entity data to be 'one', got '%v'", qiS.Data)
 	}
 
-	// Clear the local memory cache, because we want to test it being filled correctly by GetAll
-	n.FlushLocalCache()
+	createEntities()
 
 	// Get the entity using a slice of pointers to struct
 	qiPRes := []*QueryItem{}
@@ -2176,7 +2186,9 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("GetAll SoPtS: expected entity data to be 'one', got '%v'", qiPRes[0].Data)
 	}
 
-	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
+	deleteEntities()
+
+	// Get the entity using normal Get to test local cache
 	qiP := &QueryItem{Id: 1}
 	if err := n.Get(qiP); err != nil {
 		t.Fatalf("Get SoPtS: unexpected error: %v", err)
@@ -2186,8 +2198,7 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Get SoPtS: expected entity data to be 'one', got '%v'", qiP.Data)
 	}
 
-	// Clear the local memory cache, because we want to test it being filled correctly by Next
-	n.FlushLocalCache()
+	createEntities()
 
 	// Get the entity using an iterator
 	qiIt := n.Run(datastore.NewQuery("QueryItem").Filter("data=", "one"))
@@ -2208,7 +2219,9 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Next: expected iterator to end with the error datastore.Done, got %v", err)
 	}
 
-	// Get the entity using normal Get to test local cache (provided the local cache actually got saved)
+	deleteEntities()
+
+	// Get the entity using normal Get to test local cache
 	qiI := &QueryItem{Id: 1}
 	if err := n.Get(qiI); err != nil {
 		t.Fatalf("Get Iterator: unexpected error: %v", err)
@@ -2218,10 +2231,9 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Get Iterator: expected entity data to be 'one', got '%v'", qiI.Data)
 	}
 
-	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
-	n.FlushLocalCache()
+	createEntities()
 
-	// Get the entity using a non-zero slice of structs
+	// Get the entity using a non-zero slice of structs, to also test the cache being filled incorrectly
 	qiNZSRes := []QueryItem{{Id: 1, Data: "invalid cache"}}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "two"), &qiNZSRes); err != nil {
 		t.Fatalf("GetAll NZSoS: unexpected error: %v", err)
@@ -2241,6 +2253,8 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("GetAll NZSoS: expected entity data to be 'two', got '%v'", qiNZSRes[1].Data)
 	}
 
+	deleteEntities(2)
+
 	// Get the entities using normal GetMulti to test local cache
 	qiNZSs := []QueryItem{{Id: 1}, {Id: 2}}
 	if err := n.GetMulti(qiNZSs); err != nil {
@@ -2257,10 +2271,9 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiNZSs[1].Data)
 	}
 
-	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
-	n.FlushLocalCache()
+	createEntities()
 
-	// Get the entity using a non-zero slice of pointers to struct
+	// Get the entity using a non-zero slice of pointers to struct, to also test the cache being filled incorrectly
 	qiNZPRes := []*QueryItem{{Id: 1, Data: "invalid cache"}}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "two"), &qiNZPRes); err != nil {
 		t.Fatalf("GetAll NZSoPtS: unexpected error: %v", err)
@@ -2280,6 +2293,8 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("GetAll NZSoPtS: expected entity data to be 'two', got '%v'", qiNZPRes[1].Data)
 	}
 
+	deleteEntities(2)
+
 	// Get the entities using normal GetMulti to test local cache
 	qiNZPs := []*QueryItem{{Id: 1}, {Id: 2}}
 	if err := n.GetMulti(qiNZPs); err != nil {
@@ -2296,10 +2311,40 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("GetMulti NZSoPtS: expected entity data to be 'two', got '%v'", qiNZPs[1].Data)
 	}
 
-	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
+	createEntities()
+
+	// Get the entity using a keys-only iterator
+	qiItKO := n.Run(datastore.NewQuery("QueryItem").Filter("data=", "one").KeysOnly())
+
+	qiItKORes := &QueryItem{}
+	if dskey, err := qiItKO.Next(qiItKORes); err != nil {
+		t.Fatalf("Next: unexpected error: %v", err)
+	} else if dskey.IntID() != 1 {
+		t.Fatalf("Next: expected key IntID to be 1, got %v", dskey.IntID())
+	} else if qiItKORes.Id != 1 {
+		t.Fatalf("Next: expected entity id to be 1, got %v", qiItKORes.Id)
+	} else if qiItKORes.Data != "" {
+		t.Fatalf("Next: expected entity data to be empty, got '%v'", qiItKORes.Data)
+	}
+
+	// Make sure the iterator ends correctly
+	if _, err := qiItKO.Next(&QueryItem{}); err != datastore.Done {
+		t.Fatalf("Next: expected iterator to end with the error datastore.Done, got %v", err)
+	}
+
+	// Get the entity using normal Get to test local cache
+	qiIKO := &QueryItem{Id: 1}
+	if err := n.Get(qiIKO); err != nil {
+		t.Fatalf("Get Iterator: unexpected error: %v", err)
+	} else if qiIKO.Id != 1 {
+		t.Fatalf("Get Iterator: expected entity id to be 1, got %v", qiIKO.Id)
+	} else if qiIKO.Data != "one" {
+		t.Fatalf("Get Iterator: expected entity data to be 'one', got '%v'", qiIKO.Data)
+	}
+
 	n.FlushLocalCache()
 
-	// Test the simplest keys-only query
+	// Test the simplest keys-only query, also test the cache not being filled incorrectly by a keys-only query
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "one").KeysOnly(), nil); err != nil {
 		t.Fatalf("GetAll KeysOnly: unexpected error: %v", err)
 	} else if len(dskeys) != 1 {
@@ -2318,10 +2363,9 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Get KeysOnly: expected entity data to be 'one', got '%v'", qiKO.Data)
 	}
 
-	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
 	n.FlushLocalCache()
 
-	// Test the keys-only query with slice of structs
+	// Test the keys-only query with slice of structs, also test the cache not being filled incorrectly by a keys-only query
 	qiKOSRes := []QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "one").KeysOnly(), &qiKOSRes); err != nil {
 		t.Fatalf("GetAll KeysOnly SoS: unexpected error: %v", err)
@@ -2348,10 +2392,9 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Get KeysOnly SoS: expected entity data to be 'one', got '%v'", qiKOSRes[0].Data)
 	}
 
-	// Clear the local memory cache, because we want to test it not being filled incorrectly by a keys-only query
 	n.FlushLocalCache()
 
-	// Test the keys-only query with slice of pointers to struct
+	// Test the keys-only query with slice of pointers to struct, also test the cache not being filled incorrectly by a keys-only query
 	qiKOPRes := []*QueryItem{}
 	if dskeys, err := n.GetAll(datastore.NewQuery("QueryItem").Filter("data=", "one").KeysOnly(), &qiKOPRes); err != nil {
 		t.Fatalf("GetAll KeysOnly SoPtS: unexpected error: %v", err)
@@ -2378,7 +2421,6 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("Get KeysOnly SoPtS: expected entity data to be 'one', got '%v'", qiKOPRes[0].Data)
 	}
 
-	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
 	n.FlushLocalCache()
 
 	// Test the keys-only query with non-zero slice of structs
@@ -2418,7 +2460,6 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("GetMulti NZSoS: expected entity data to be 'two', got '%v'", qiKONZSRes[1].Data)
 	}
 
-	// Clear the local memory cache, because we want to test it not being filled incorrectly when supplying a non-zero slice
 	n.FlushLocalCache()
 
 	// Test the keys-only query with non-zero slice of pointers to struct
@@ -2485,8 +2526,9 @@ type HasDefaultKind struct {
 }
 
 type QueryItem struct {
-	Id   int64  `datastore:"-" goon:"id"`
-	Data string `datastore:"data"`
+	Id      int64  `datastore:"-" goon:"id"`
+	Data    string `datastore:"data"`
+	Garbage string `datastore:"-"`
 }
 
 type HasString struct {
@@ -2942,29 +2984,29 @@ func TestMemcachePutTimeout(t *testing.T) {
 	}
 
 	// Generate the cache entry
-	props, err := datastore.SaveStruct(hi)
+	data, err := serializeStruct(hi)
 	if err != nil {
-		t.Fatalf("Unexpected error on SaveStruct: %v", err)
+		t.Fatalf("Unexpected error on serialize: %v", err)
 	}
-	ce := cacheEntry{
-		key:   g.Key(hi),
-		props: props,
+	ci := &cacheItem{
+		key:   MemcacheKey(g.Key(hi)),
+		value: data,
 	}
-	ces := []cacheEntry{ce}
+	cis := []*cacheItem{ci}
 
 	MemcachePutTimeoutSmall = 0
-	if err := g.putMemcache(ces); !appengine.IsTimeoutError(err) {
+	if err := g.putMemcache(cis); !appengine.IsTimeoutError(err) {
 		t.Fatalf("Request should timeout - err = %v", err)
 	}
 	MemcachePutTimeoutSmall = time.Second
 	MemcachePutTimeoutThreshold = 0
 	MemcachePutTimeoutLarge = 0
-	if err := g.putMemcache(ces); !appengine.IsTimeoutError(err) {
+	if err := g.putMemcache(cis); !appengine.IsTimeoutError(err) {
 		t.Fatalf("Request should timeout - err = %v", err)
 	}
 
 	MemcachePutTimeoutLarge = time.Second
-	if err := g.putMemcache(ces); err != nil {
+	if err := g.putMemcache(cis); err != nil {
 		t.Fatalf("putMemcache: unexpected error - %v", err)
 	}
 
