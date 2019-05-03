@@ -39,74 +39,100 @@ func (g *Goon) Count(q *datastore.Query) (int, error) {
 // See: https://developers.google.com/appengine/docs/go/datastore/reference#Query.GetAll
 func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, error) {
 	v := reflect.ValueOf(dst)
+	dstV := reflect.Indirect(v)
 	vLenBefore := 0
-
 	if dst != nil {
 		if v.Kind() != reflect.Ptr {
 			return nil, fmt.Errorf("goon: Expected dst to be a pointer to a slice or nil, got instead: %v", v.Kind())
 		}
-
 		v = v.Elem()
 		if v.Kind() != reflect.Slice {
 			return nil, fmt.Errorf("goon: Expected dst to be a pointer to a slice or nil, got instead: %v", v.Kind())
 		}
-
 		vLenBefore = v.Len()
 	}
 
-	keys, err := q.GetAll(g.Context, dst)
+	var propLists []datastore.PropertyList
+	keys, err := q.GetAll(g.Context, &propLists)
 	if err != nil {
-		if errFieldMismatch(err) {
-			if IgnoreFieldMismatch {
-				err = nil
-			}
-		} else {
-			g.error(err)
-			return keys, err
-		}
+		g.error(err)
+		return keys, err
 	}
 	if dst == nil || len(keys) == 0 {
 		return keys, err
 	}
 
-	keysOnly := ((v.Len() - vLenBefore) != len(keys))
+	keysOnly := (len(propLists) != len(keys))
 	updateCache := !g.inTransaction && !keysOnly
 
-	// If this is a keys-only query, we need to fill the slice with zero value elements
-	if keysOnly {
-		elemType := v.Type().Elem()
-		ptr := false
-		if elemType.Kind() == reflect.Ptr {
-			elemType = elemType.Elem()
-			ptr = true
+	elemType := v.Type().Elem()
+	elemTypeIsPtr := false
+	if elemType.Kind() == reflect.Ptr {
+		elemType = elemType.Elem()
+		elemTypeIsPtr = true
+	}
+	if elemType.Kind() != reflect.Struct {
+		return keys, fmt.Errorf("goon: Expected struct, got instead: %v", elemType.Kind())
+	}
+
+	initMem := false
+	finalLen := vLenBefore + len(keys)
+	if v.Cap() < finalLen {
+		// If the slice doesn't have enough capacity for the final length,
+		// then create a new slice with the exact capacity needed,
+		// with all elements zero-value initialized already.
+		newSlice := reflect.MakeSlice(v.Type(), finalLen, finalLen)
+		if copied := reflect.Copy(newSlice, v); copied != vLenBefore {
+			return keys, fmt.Errorf("goon: Wanted to copy %v elements to dst but managed %v", vLenBefore, copied)
 		}
-
-		if elemType.Kind() != reflect.Struct {
-			return keys, fmt.Errorf("goon: Expected struct, got instead: %v", elemType.Kind())
-		}
-
-		for i := 0; i < len(keys); i++ {
-			ev := reflect.New(elemType)
-			if !ptr {
-				ev = ev.Elem()
-			}
-
-			v.Set(reflect.Append(v, ev))
+		v = newSlice
+	} else {
+		// If the slice already has enough capacity ..
+		if elemTypeIsPtr {
+			// .. then just change the length if it's a slice of pointers,
+			// because we will overwrite all the pointers anyway.
+			v.SetLen(finalLen)
+		} else {
+			// .. we need to initialize the memory of every non-pointer element.
+			initMem = true
 		}
 	}
 
+	var toCache []*cacheItem
 	if updateCache {
-		g.cacheLock.Lock()
-		defer g.cacheLock.Unlock()
+		toCache = make([]*cacheItem, 0, len(keys))
 	}
+	var rerr error
 
 	for i, k := range keys {
-		var e interface{}
+		if elemTypeIsPtr {
+			ev := reflect.New(elemType)
+			v.Index(vLenBefore + i).Set(ev)
+		} else if initMem {
+			ev := reflect.New(elemType).Elem()
+			v = reflect.Append(v, ev)
+		}
 		vi := v.Index(vLenBefore + i)
+
+		var e interface{}
 		if vi.Kind() == reflect.Ptr {
 			e = vi.Interface()
 		} else {
 			e = vi.Addr().Interface()
+		}
+
+		if !keysOnly {
+			if err := deserializeProperties(e, propLists[i]); err != nil {
+				if errFieldMismatch(err) {
+					// If we're not configured to ignore, set rerr to err,
+					// but proceed with deserializing other entities
+					if !IgnoreFieldMismatch {
+						rerr = err
+					}
+				} else {
+					return nil, err
+				}
+			}
 		}
 
 		if err := g.setStructKey(e, k); err != nil {
@@ -114,12 +140,25 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 		}
 
 		if updateCache {
-			// Cache lock is handled before the for loop
-			g.cache[MemcacheKey(k)] = e
+			// Serialize the properties
+			data, err := serializeProperties(propLists[i], true)
+			if err != nil {
+				g.error(err)
+				return nil, err
+			}
+			// Prepare the properties for caching
+			toCache = append(toCache, &cacheItem{key: MemcacheKey(k), value: data})
 		}
 	}
 
-	return keys, err
+	if len(toCache) > 0 {
+		g.cache.SetMulti(toCache)
+	}
+
+	// Set dst to the slice we created
+	dstV.Set(v)
+
+	return keys, rerr
 }
 
 // Run runs the query.
@@ -142,35 +181,49 @@ func (t *Iterator) Cursor() (datastore.Cursor, error) {
 }
 
 // Next returns the entity of the next result. When there are no more results,
-// datastore.Done is returned as the error. If dst is null (for a keys-only
-// query), nil is returned as the entity.
+// datastore.Done is returned as the error.
 //
 // If the query is not keys only and dst is non-nil, it also loads the entity
 // stored for that key into the struct pointer dst, with the same semantics
 // and possible errors as for the Get function. This result is cached in memory.
 //
-// If the query is keys only, dst must be passed as nil. Otherwise the cache
-// will be populated with empty entities since there is no way to detect the
-// case of a keys-only query.
+// If the query is keys only and dst is non-nil, dst will be given the right id.
 //
 // Refer to appengine/datastore.Iterator.Next:
 // https://developers.google.com/appengine/docs/go/datastore/reference#Iterator.Next
 func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
-	k, err := t.i.Next(dst)
-	if err != nil && (!IgnoreFieldMismatch || !errFieldMismatch(err)) {
+	var props datastore.PropertyList
+	k, err := t.i.Next(&props)
+	if err != nil {
 		return k, err
 	}
-
+	var rerr error
 	if dst != nil {
-		// Update the struct to have correct key info
-		t.g.setStructKey(dst, k)
-
-		if !t.g.inTransaction {
-			t.g.cacheLock.Lock()
-			t.g.cache[MemcacheKey(k)] = dst
-			t.g.cacheLock.Unlock()
+		keysOnly := (props == nil)
+		updateCache := !t.g.inTransaction && !keysOnly
+		if !keysOnly {
+			if err := deserializeProperties(dst, props); err != nil {
+				if errFieldMismatch(err) {
+					// If we're not configured to ignore, set rerr to err,
+					// but proceed with work
+					if !IgnoreFieldMismatch {
+						rerr = err
+					}
+				} else {
+					return k, err
+				}
+			}
+		}
+		if err := t.g.setStructKey(dst, k); err != nil {
+			return k, err
+		}
+		if updateCache {
+			data, err := serializeProperties(props, true)
+			if err != nil {
+				return k, err
+			}
+			t.g.cache.Set(&cacheItem{key: MemcacheKey(k), value: data})
 		}
 	}
-
-	return k, nil
+	return k, rerr
 }
