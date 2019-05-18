@@ -147,7 +147,7 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 				return nil, err
 			}
 			// Prepare the properties for caching
-			toCache = append(toCache, &cacheItem{key: MemcacheKey(k), value: data})
+			toCache = append(toCache, &cacheItem{key: cacheKey(k), value: data})
 		}
 	}
 
@@ -222,7 +222,7 @@ func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
 			if err != nil {
 				return k, err
 			}
-			t.g.cache.Set(&cacheItem{key: MemcacheKey(k), value: data})
+			t.g.cache.Set(&cacheItem{key: cacheKey(k), value: data})
 		}
 	}
 	return k, rerr

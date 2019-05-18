@@ -2010,7 +2010,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	hi3 := &HasId{Id: hi.Id}
-	n.cache.Delete(MemcacheKey(n.Key(hi)))
+	n.cache.Delete(cacheKey(n.Key(hi)))
 	if err := n.Get(hi3); err != nil {
 		t.Fatalf("get: unexpected error - %v", err)
 	}
@@ -2019,7 +2019,7 @@ func TestGoon(t *testing.T) {
 	}
 
 	hi4 := &HasId{Id: hi.Id}
-	n.cache.Delete(MemcacheKey(n.Key(hi4)))
+	n.cache.Delete(cacheKey(n.Key(hi4)))
 	if memcache.Flush(n.Context) != nil {
 		t.Fatalf("Unable to flush memcache")
 	}
@@ -2037,13 +2037,13 @@ func TestGoon(t *testing.T) {
 	// hi in datastore Name = hasid
 	hiPull := &HasId{Id: hi.Id}
 	{
-		cachekey := MemcacheKey(n.Key(hi))
+		ckey := cacheKey(n.Key(hi))
 		hiTamper := &HasId{Id: hi.Id, Name: "changedincache"}
 		data, err := serializeStruct(hiTamper)
 		if err != nil {
 			t.Fatalf("Unexpected error serializing: %v", err)
 		}
-		n.cache.Set(&cacheItem{key: cachekey, value: data})
+		n.cache.Set(&cacheItem{key: ckey, value: data})
 	}
 	if err := n.Get(hiPull); err != nil {
 		t.Fatalf("get: unexpected error - %v", err)
@@ -2052,14 +2052,14 @@ func TestGoon(t *testing.T) {
 		t.Fatalf("hiPull.Name should be 'changedincache' but got %s", hiPull.Name)
 	}
 	{
-		cachekey := MemcacheKey(n.Key(hi))
+		ckey := cacheKey(n.Key(hi))
 		hiPush := &HasId{Id: hi.Id, Name: "changedinmemcache"}
 		data, err := serializeStruct(hiPush)
 		if err != nil {
 			t.Fatalf("Unexpected error serializing: %v", err)
 		}
-		n.putMemcache([]*cacheItem{{key: cachekey, value: data}})
-		n.cache.Delete(cachekey)
+		n.putMemcache([]*cacheItem{{key: ckey, value: data}})
+		n.cache.Delete(ckey)
 	}
 
 	hiPull = &HasId{Id: hi.Id}
@@ -2989,7 +2989,7 @@ func TestMemcachePutTimeout(t *testing.T) {
 		t.Fatalf("Unexpected error on serialize: %v", err)
 	}
 	ci := &cacheItem{
-		key:   MemcacheKey(g.Key(hi)),
+		key:   cacheKey(g.Key(hi)),
 		value: data,
 	}
 	cis := []*cacheItem{ci}
@@ -3051,7 +3051,7 @@ func TestChangeMemcacheKey(t *testing.T) {
 	}()
 	verID := appengine.VersionID(c)
 	MemcacheKey = func(k *datastore.Key) string {
-		return "g2:" + verID + ":" + k.Encode()
+		return "custom:" + verID + ":" + k.Encode()
 	}
 
 	g := FromContext(c)
@@ -3066,9 +3066,15 @@ func TestChangeMemcacheKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = memcache.Get(c, "g2:"+verID+":"+key.Encode())
+	ckey := cacheKey(key)
+
+	_, err = memcache.Get(c, ckey)
 	if err != nil {
-		t.Fatal("Memcache key should have 'g2:`versionID`:prefix", err)
+		t.Fatal(err)
+	}
+
+	if !strings.HasSuffix(ckey, "custom:"+verID+":"+key.Encode()) {
+		t.Fatal("cache key should have 'custom:`versionID`:`encodedKey` suffix", err)
 	}
 }
 
@@ -3078,6 +3084,13 @@ func TestMemcacheLimits(t *testing.T) {
 		t.Fatalf("Could not start aetest - %v", err)
 	}
 	defer done()
+
+	// Confirm that the cacheKey function respects the output limit
+	pk := datastore.NewKey(c, "Parent", strings.Repeat("p", memcacheMaxKeySize/2), 0, nil)
+	ck := datastore.NewKey(c, "Child", strings.Repeat("c", memcacheMaxKeySize/2), 0, pk)
+	if mk := cacheKey(ck); len(mk) > memcacheMaxKeySize {
+		t.Fatalf("cacheKey returned key with a length of %d exceeding the maximum of %d", len(mk), memcacheMaxKeySize)
+	}
 
 	// Confirm that single maximum size fits
 	maxItem := &memcache.Item{

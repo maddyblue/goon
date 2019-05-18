@@ -18,6 +18,7 @@ package goon
 
 import (
 	"context"
+	"encoding/ascii85"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/blake2b"
 	"google.golang.org/appengine"
 	"google.golang.org/appengine/datastore"
 	"google.golang.org/appengine/log"
@@ -69,12 +71,44 @@ type Goon struct {
 	KindNameResolver KindNameResolver
 }
 
-// Versioning, so that incompatible changes to the cache system won't cause problems
-var memcacheKeyPrefix = fmt.Sprintf("g%X:", serializationFormatVersion)
-
-// MemcacheKey returns key string of Memcache.
+// MemcacheKey returns the string form of the provided datastore key.
 var MemcacheKey = func(k *datastore.Key) string {
-	return memcacheKeyPrefix + k.Encode()
+	return k.Encode()
+}
+
+// Versioning, so that incompatible changes to the cache system won't cause problems
+var cacheKeyPrefix = fmt.Sprintf("g%X:", serializationFormatVersion)
+
+// cacheKey returns the fully legal string key used for cache systems
+func cacheKey(k *datastore.Key) string {
+	// By default we just use the prefix + MemcacheKey result
+	key := cacheKeyPrefix + MemcacheKey(k)
+	// However if the resulting key length exceeds the maximum allowed ..
+	if len(key) > memcacheMaxKeySize {
+		// .. then we need to shorten it while still staying unique.
+		// We pass the key through the BLAKE2b hash function,
+		// which is cryptographically secure but also very fast.
+		// We request an output of 24 bytes (192-bit) for speed reasons.
+		h, err := blake2b.New(24, nil)
+		if err != nil {
+			panic(fmt.Sprintf("Unexpected error initializing blake2b: %v", err))
+		}
+		h.Write([]byte(key))
+		hash := h.Sum(make([]byte, 0, 24))
+		// After hashing, we encode the results with ascii85.
+		// Ascii85 works in 4 byte chunks, generating 5 letters for each.
+		// Which means we turn our 24 byte hash into a 30 letter string.
+		//
+		// We want letters instead of using the hash directly for debug reasons.
+		// As it will be easier for people to observe & manage keys manually.
+		//
+		// We aim the length of 30, because 32 is the maximum length
+		// where the Go std map does key lookups directly without hashing.
+		encoded := make([]byte, 30, 30)
+		ascii85.Encode(encoded, hash)
+		key = string(encoded)
+	}
+	return key
 }
 
 // Memcache limits
@@ -292,7 +326,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 	cachekeys := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if !key.Incomplete() {
-			cachekeys = append(cachekeys, MemcacheKey(key))
+			cachekeys = append(cachekeys, cacheKey(key))
 		}
 	}
 	if g.inTransaction {
@@ -418,7 +452,7 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	for _, key := range keys {
 		// NB! Current implementation has optimizations in place
 		// that expect memcache & local cache keys to match.
-		lckeys = append(lckeys, MemcacheKey(key))
+		lckeys = append(lckeys, cacheKey(key))
 	}
 
 	lcvalues := g.cache.GetMulti(lckeys)
@@ -654,7 +688,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 	// and populate the caches with it.
 	cachekeys := make([]string, 0, len(keys))
 	for _, key := range keys {
-		cachekeys = append(cachekeys, MemcacheKey(key))
+		cachekeys = append(cachekeys, cacheKey(key))
 	}
 	if g.inTransaction {
 		g.txnCacheLock.Lock()
