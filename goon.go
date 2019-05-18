@@ -77,6 +77,22 @@ var MemcacheKey = func(k *datastore.Key) string {
 	return memcacheKeyPrefix + k.Encode()
 }
 
+// Memcache limits
+// These are based on the constants in SDK/google/appengine/api/memcache/memcache_stub.py
+// Also documented in https://cloud.google.com/appengine/docs/standard/go/memcache/
+const (
+	// The Google provided overhead is 73 bytes, which seems wrong in practice.
+	// Testing has shown that Put/PutMulti will succeed with even a lower overhead.
+	// However by 'succeed' I mean not erroring. The value never gets stored.
+	// The actual overhead seems to be 76 at which point the items will
+	// start being stored in memcache and show up in the statistics.
+	memcacheOverhead     = 76
+	memcacheMaxKeySize   = 250
+	memcacheMaxItemSize  = 1 << 20 // 1 MiB
+	memcacheMaxValueSize = memcacheMaxItemSize - memcacheMaxKeySize - memcacheOverhead
+	memcacheMaxRPCSize   = 32 << 20 // 32 MiB
+)
+
 // NewGoon creates a new Goon object from the given request.
 func NewGoon(r *http.Request) *Goon {
 	return FromContext(appengine.NewContext(r))
@@ -441,6 +457,14 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		}
 		return nil
 	}
+
+	// NB! memcache.GetMulti is limited to 32 MiB in the data returned.
+	// So if we fetch 40 keys with all having 1 MiB size, the result
+	// will be 32 items and the remaining 8 keys will be indistinguishable
+	// from a cache miss. Thus this memcache.GetMulti system should be
+	// made more robust, where if the returned data is bigger than
+	// memcacheMaxRPCSize - memcacheMaxItemSize
+	// then we do another GetMulti on the missing keys.
 
 	tc, cf := context.WithTimeout(g.Context, MemcacheGetTimeout)
 	memvalues, err := memcache.GetMulti(tc, mckeys)

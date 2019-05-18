@@ -3071,3 +3071,75 @@ func TestChangeMemcacheKey(t *testing.T) {
 		t.Fatal("Memcache key should have 'g2:`versionID`:prefix", err)
 	}
 }
+
+func TestMemcacheLimits(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+
+	// Confirm that single maximum size fits
+	maxItem := &memcache.Item{
+		Key:        strings.Repeat("k", memcacheMaxKeySize),
+		Value:      make([]byte, memcacheMaxValueSize),
+		Flags:      1<<32 - 1,
+		Expiration: time.Duration(1<<63 - 1),
+	}
+	if err := memcache.Set(c, maxItem); err != nil {
+		t.Fatalf("Expected maximum sized item to pass! Got error: %v", err)
+	}
+	if _, err := memcache.Get(c, maxItem.Key); err != nil {
+		t.Fatalf("Unexpected error on Get: %v", err)
+	}
+
+	// Helper function to test RPC batch size limit
+	testRPCBatchSize := func(maxValueSize int, readBack bool) {
+		var items []*memcache.Item
+		itemSize := memcacheOverhead + memcacheMaxKeySize + maxValueSize
+		extra := memcacheOverhead + memcacheMaxKeySize + 1 // at least 1 byte for value
+		count := (memcacheMaxRPCSize - extra) / itemSize
+		extra += (memcacheMaxRPCSize - extra) % itemSize
+		for i := 0; i < count; i++ {
+			items = append(items, &memcache.Item{
+				Key:        strings.Repeat("k", memcacheMaxKeySize-30) + fmt.Sprintf("%030d", i),
+				Value:      make([]byte, maxValueSize),
+				Flags:      1<<32 - 1,
+				Expiration: time.Duration(1<<63 - 1),
+			})
+		}
+		extraValueSize := extra - memcacheOverhead - memcacheMaxKeySize
+		items = append(items, &memcache.Item{
+			Key:        strings.Repeat("x", memcacheMaxKeySize),
+			Value:      make([]byte, extraValueSize),
+			Flags:      1<<32 - 1,
+			Expiration: time.Duration(1<<63 - 1),
+		})
+		if err := memcache.SetMulti(c, items); err != nil {
+			t.Fatalf("Expected maximum sized batch to pass with maxValueSize %d! Got error: %v", maxValueSize, err)
+		}
+		if readBack {
+			var keys []string
+			for _, item := range items {
+				keys = append(keys, item.Key)
+			}
+			if results, err := memcache.GetMulti(c, keys); err != nil {
+				t.Fatalf("Unexpected error on GetMulti with maxValueSize %d: %v", maxValueSize, err)
+			} else if len(keys) != len(results) {
+				t.Fatalf("Expected %d results but got %d with maxValueSize %d", len(keys), len(results), maxValueSize)
+			}
+		}
+	}
+
+	// Confirm that large entities filling up RPC works
+	testRPCBatchSize(memcacheMaxValueSize, true)
+
+	// Confirm with middle-sized entities
+	testRPCBatchSize(100000, true)
+
+	// Confirm overhead not exceeding our expectations by filling up RPC with tiny entities
+	// NOTE: We don't read back because the memcache emulator is way too slow to do this
+	testRPCBatchSize(1000, false)
+
+	// TODO: Implement these limits for goon, and add tests through goon
+}
