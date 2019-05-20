@@ -745,18 +745,40 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	return nil
 }
 
-// Delete deletes the entity for the given key.
-func (g *Goon) Delete(key *datastore.Key) error {
-	keys := []*datastore.Key{key}
-	err := g.DeleteMulti(keys)
-	if me, ok := err.(appengine.MultiError); ok {
-		return me[0]
+// Delete deletes the provided entity.
+// Takes either *S or *datastore.Key.
+func (g *Goon) Delete(src interface{}) error {
+	var srcs interface{}
+	if key, ok := src.(*datastore.Key); ok {
+		srcs = []*datastore.Key{key}
+	} else {
+		v := reflect.ValueOf(src)
+		if v.Kind() != reflect.Ptr {
+			return fmt.Errorf("goon: expected pointer to a struct, got %#v", src)
+		}
+		srcs = []interface{}{src}
+	}
+	err := g.DeleteMulti(srcs)
+	if err != nil {
+		// Look for an embedded error if it's multi
+		if me, ok := err.(appengine.MultiError); ok {
+			return me[0]
+		}
 	}
 	return err
 }
 
 // DeleteMulti is a batch version of Delete.
-func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
+// Takes either []*S or []*datastore.Key.
+func (g *Goon) DeleteMulti(src interface{}) error {
+	keys, ok := src.([]*datastore.Key)
+	if !ok {
+		var err error
+		keys, err = g.extractKeys(src, false) // don't allow incomplete keys on a Delete request
+		if err != nil {
+			return err
+		}
+	}
 	if len(keys) == 0 {
 		return nil
 		// not an error, and it was "successful", so return nil
