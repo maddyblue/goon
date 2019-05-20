@@ -1667,7 +1667,7 @@ func TestTXNRace(t *testing.T) {
 	// Delete the test data inside a transction
 	if err := g.RunInTransaction(func(tg *Goon) error {
 		thid := &HasId{Id: 1}
-		if err := tg.Delete(tg.Key(thid)); err != nil {
+		if err := tg.Delete(thid); err != nil {
 			t.Fatalf("Unexpected error on TXN Delete %v", err)
 			return err
 		}
@@ -2083,6 +2083,31 @@ func TestGoon(t *testing.T) {
 	_, err = n.Put(hasString)
 	if err != nil {
 		t.Fatalf("Error putting hasString object - %v", hasString)
+	}
+
+	// Test various ways to delete an entity
+	for i := int64(0); i < 4; i++ {
+		hid := &HasId{Id: 551 + i}
+		key, err := n.Put(hid)
+		if err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+		switch i {
+		case 0:
+			err = n.Delete(hid)
+		case 1:
+			err = n.DeleteMulti([]*HasId{hid})
+		case 2:
+			err = n.Delete(key)
+		case 3:
+			err = n.DeleteMulti([]*datastore.Key{key})
+		}
+		if err != nil {
+			t.Fatalf("Delete %d failed: %v", i, err)
+		}
+		if err := n.Get(hid); err != datastore.ErrNoSuchEntity {
+			t.Fatalf("Expected ErrNoSuchEntity but got %v", err)
+		}
 	}
 
 	// Test queries!
