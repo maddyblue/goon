@@ -200,6 +200,28 @@ func (g *Goon) timeoutError(err error) {
 	}
 }
 
+func (g *Goon) memcacheDeleteError(err error) {
+	if err == nil || !LogErrors {
+		return
+	}
+	if me, ok := err.(appengine.MultiError); ok {
+		for i := range me {
+			if me[i] != nil && me[i] != memcache.ErrCacheMiss {
+				err = me[i]
+				goto reportError
+			}
+		}
+		return
+	}
+reportError:
+	_, filename, line, ok := runtime.Caller(1)
+	if ok {
+		log.Errorf(g.Context, "goon - %s:%d - memcache.DeleteMulti failed: %v - the goon cache may be out of sync now!", filepath.Base(filename), line, err)
+	} else {
+		log.Errorf(g.Context, "goon - memcache.DeleteMulti failed: %v - the goon cache may be out of sync now!", err)
+	}
+}
+
 func (g *Goon) extractKeys(src interface{}, putRequest bool) ([]*datastore.Key, error) {
 	v := reflect.Indirect(reflect.ValueOf(src))
 	if v.Kind() != reflect.Slice {
@@ -274,7 +296,7 @@ func (g *Goon) RunInTransaction(f func(tg *Goon) error, opts *datastore.Transact
 			for k := range ng.toDeleteMC {
 				memkeys = append(memkeys, k)
 			}
-			memcache.DeleteMulti(g.Context, memkeys)
+			g.memcacheDeleteError(memcache.DeleteMulti(g.Context, memkeys))
 		}
 		for k := range ng.toDelete {
 			g.cache.Delete(k)
@@ -376,7 +398,7 @@ func (g *Goon) PutMulti(src interface{}) ([]*datastore.Key, error) {
 		g.txnCacheLock.Unlock()
 	} else {
 		g.cache.DeleteMulti(cachekeys)
-		memcache.DeleteMulti(g.Context, cachekeys)
+		g.memcacheDeleteError(memcache.DeleteMulti(g.Context, cachekeys))
 	}
 
 	if any {
@@ -788,7 +810,7 @@ func (g *Goon) DeleteMulti(keys []*datastore.Key) error {
 		g.txnCacheLock.Unlock()
 	} else {
 		g.cache.DeleteMulti(cachekeys)
-		memcache.DeleteMulti(g.Context, cachekeys)
+		g.memcacheDeleteError(memcache.DeleteMulti(g.Context, cachekeys))
 	}
 
 	if any {
