@@ -94,7 +94,7 @@ func (c *cache) setUnderLock(item *cacheItem) {
 	}
 }
 
-// Set takes ownership of item
+// Set takes ownership of item and treats it as immutable
 func (c *cache) Set(item *cacheItem) {
 	c.lock.Lock()
 	c.setUnderLock(item)
@@ -102,7 +102,7 @@ func (c *cache) Set(item *cacheItem) {
 	c.lock.Unlock()
 }
 
-// SetMulti takes ownership of item
+// SetMulti takes ownership of the individual items and treats them as immutable
 func (c *cache) SetMulti(items []*cacheItem) {
 	c.lock.Lock()
 	for _, item := range items {
