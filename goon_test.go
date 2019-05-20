@@ -38,7 +38,6 @@ import (
 func init() {
 	// The SDK emulators are extremely slow, so we can't use production timeouts
 	MemcachePutTimeoutSmall = 10 * time.Second
-	MemcachePutTimeoutLarge = 10 * time.Second
 	MemcacheGetTimeout = 10 * time.Second
 	// Make sure to propagate all errors for better testing
 	propagateMemcachePutError = true
@@ -3008,12 +3007,8 @@ func TestMemcachePutTimeout(t *testing.T) {
 	cis := []*cacheItem{ci}
 
 	MemcachePutTimeoutSmall = 0
-	if err := g.putMemcache(cis); !appengine.IsTimeoutError(err) {
-		t.Fatalf("Request should timeout - err = %v", err)
-	}
-	MemcachePutTimeoutSmall = time.Second
-	MemcachePutTimeoutThreshold = 0
 	MemcachePutTimeoutLarge = 0
+	MemcachePutTimeoutThreshold = 1
 	if err := g.putMemcache(cis); !appengine.IsTimeoutError(err) {
 		t.Fatalf("Request should timeout - err = %v", err)
 	}
@@ -3029,7 +3024,7 @@ func TestMemcachePutTimeout(t *testing.T) {
 	MemcacheGetTimeout = 0
 	// time out Put too
 	MemcachePutTimeoutSmall = 0
-	MemcachePutTimeoutThreshold = 0
+	MemcachePutTimeoutThreshold = 1
 	MemcachePutTimeoutLarge = 0
 	hiResult := &HasId{Id: hi.Id}
 	if err := g.Get(hiResult); err != nil {
