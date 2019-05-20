@@ -2635,11 +2635,8 @@ func TestRace(t *testing.T) {
 	errInternalCall := errors.New("internal call error")
 	withErrorContext := func(ctx context.Context, multiLimit int) context.Context {
 		return appengine.WithAPICallFunc(ctx, func(ctx context.Context, service, method string, in, out proto.Message) error {
-			if service != "datastore_v3" {
-				return nil
-			}
-			if method != "Put" && method != "Get" && method != "Delete" {
-				return nil
+			if service != "datastore_v3" || (method != "Put" && method != "Get" && method != "Delete") {
+				return appengine.APICall(ctx, service, method, in, out)
 			}
 			errs := make(appengine.MultiError, multiLimit)
 			for x := 0; x < multiLimit; x++ {
@@ -2662,12 +2659,8 @@ func TestRace(t *testing.T) {
 		t.Fatalf("Expected %v, got %v", errInternalCall, err)
 	}
 
-	keys := make([]*datastore.Key, len(hasIdSlice))
-	for x, hasId := range hasIdSlice {
-		keys[x] = g.Key(hasId)
-	}
 	g.Context = withErrorContext(g.Context, datastoreDeleteMultiMaxItems)
-	err = g.DeleteMulti(keys)
+	err = g.DeleteMulti(hasIdSlice)
 	if err != errInternalCall {
 		t.Fatalf("Expected %v, got %v", errInternalCall, err)
 	}
