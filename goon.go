@@ -40,18 +40,24 @@ var (
 	// LogTimeoutErrors issues appengine.Context.Warningf on memcache timeout errors.
 	LogTimeoutErrors = false
 
-	// MemcachePutTimeoutThreshold is the number of bytes at which the memcache
-	// timeout uses the large setting.
-	MemcachePutTimeoutThreshold = 1024 * 50
-	// MemcachePutTimeoutSmall is the amount of time to wait during memcache
+	// MemcachePutTimeoutThreshold is the number of bytes after which the large
+	// timeout setting is added to the small timeout setting. This repeats.
+	// Which means that with a 20 KiB threshold and a 100 KiB memcache payload,
+	// the final timeout is MemcachePutTimeoutSmall + 5*MemcachePutTimeoutLarge
+	MemcachePutTimeoutThreshold = 20 * 1024 // 20 KiB
+	// MemcachePutTimeoutSmall is the minimum time to wait during memcache
 	// Put operations before aborting them and using the datastore.
-	MemcachePutTimeoutSmall = time.Millisecond * 5
-	// MemcachePutTimeoutLarge is the amount of time to wait for large memcache
-	// Put requests.
-	MemcachePutTimeoutLarge = time.Millisecond * 15
+	MemcachePutTimeoutSmall = 5 * time.Millisecond
+	// MemcachePutTimeoutLarge is the amount of extra time to wait for larger
+	// memcache Put requests. See also MemcachePutTimeoutThreshold.
+	MemcachePutTimeoutLarge = 1 * time.Millisecond
 	// MemcacheGetTimeout is the amount of time to wait for all memcache Get
-	// requests.
-	MemcacheGetTimeout = time.Millisecond * 10
+	// requests, per key fetched. Because we can't really know how big entities
+	// we are requesting, this setting should be for the maximum size entity.
+	// The final timeout is limited to the number of maximum sized entities
+	// an RPC result can contain, so the timeout won't grow insanely large
+	// if you're fetching a ton of small entities.
+	MemcacheGetTimeout = 31250 * time.Microsecond // 31.25 milliseconds
 
 	// IgnoreFieldMismatch decides whether *datastore.ErrFieldMismatch errors
 	// should be silently ignored. This allows you to easily remove fields from structs.
@@ -115,6 +121,24 @@ func cacheKey(k *datastore.Key) string {
 		key = string(encoded)
 	}
 	return key
+}
+
+// Returns the duration that should be used for a memcache.GetMulti timeout.
+func memcacheGetTimeout(keyCount int) time.Duration {
+	// Takes the number of keys given to memcache.GetMulti,
+	// clamps that to the maximum number of max sized items,
+	// and multiplies it with the per-max-sized-item timeout.
+	if keyCount > memcacheMaxRPCSize/memcacheMaxItemSize {
+		keyCount = memcacheMaxRPCSize / memcacheMaxItemSize
+	}
+	return time.Duration(keyCount) * MemcacheGetTimeout
+}
+
+// Returns the duration that should be used for a memcache.PutMulti timeout.
+func memcachePutTimeout(payloadSize int) time.Duration {
+	// Takes the payload size given to memcache.PutMulti,
+	// and returns a dynamic duration based on that size.
+	return MemcachePutTimeoutSmall + time.Duration(payloadSize/MemcachePutTimeoutThreshold)*MemcachePutTimeoutLarge
 }
 
 // Memcache limits
@@ -398,11 +422,7 @@ func (g *Goon) putMemcache(citems []*cacheItem) error {
 	errc := make(chan error, count)
 	for i := 0; i < count; i++ {
 		go func(idx int) {
-			memcacheTimeout := MemcachePutTimeoutSmall
-			if tasks[idx].size >= MemcachePutTimeoutThreshold {
-				memcacheTimeout = MemcachePutTimeoutLarge
-			}
-			tc, cf := context.WithTimeout(g.Context, memcacheTimeout)
+			tc, cf := context.WithTimeout(g.Context, memcachePutTimeout(tasks[idx].size))
 			errc <- memcache.SetMulti(tc, tasks[idx].items)
 			cf()
 		}(i)
@@ -542,7 +562,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 	// Thus if the returned data is bigger than memcacheMaxRPCSize - memcacheMaxItemSize
 	// then we do another memcache.GetMulti on the missing keys.
 	memvalues := make(map[string]*memcache.Item, len(mckeys))
-	tc, cf := context.WithTimeout(g.Context, MemcacheGetTimeout)
 	mcKeysSet := make(map[string]struct{}, len(mckeys))
 	for _, mk := range mckeys {
 		mcKeysSet[mk] = struct{}{}
@@ -552,7 +571,9 @@ func (g *Goon) GetMulti(dst interface{}) error {
 		for mk := range mcKeysSet {
 			nextmckeys = append(nextmckeys, mk)
 		}
+		tc, cf := context.WithTimeout(g.Context, memcacheGetTimeout(len(nextmckeys)))
 		mvs, err := memcache.GetMulti(tc, nextmckeys)
+		cf()
 		// timing out or another error from memcache isn't something to fail over, but do log it
 		if appengine.IsTimeoutError(err) {
 			g.timeoutError(err)
@@ -571,7 +592,6 @@ func (g *Goon) GetMulti(dst interface{}) error {
 			break
 		}
 	}
-	cf()
 
 	if len(memvalues) > 0 {
 		// since memcache fetch was successful, reset the datastore fetch list and repopulate it
