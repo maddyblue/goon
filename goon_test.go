@@ -35,6 +35,15 @@ import (
 	"google.golang.org/appengine/memcache"
 )
 
+func init() {
+	// The SDK emulators are extremely slow, so we can't use production timeouts
+	MemcachePutTimeoutSmall = 10 * time.Second
+	MemcachePutTimeoutLarge = 10 * time.Second
+	MemcacheGetTimeout = 10 * time.Second
+	// Make sure to propagate all errors for better testing
+	propagateMemcachePutError = true
+}
+
 // *[]S, *[]*S, *[]I, []S, []*S, []I,
 // *[]PLS, *[]*PLS, *[]IPLS, []PLS, []*PLS, []IPLS
 const (
@@ -1867,11 +1876,6 @@ func TestGoon(t *testing.T) {
 	defer done()
 	n := FromContext(c)
 
-	// Don't want any of these tests to hit the timeout threshold on the devapp server
-	MemcacheGetTimeout = time.Second
-	MemcachePutTimeoutLarge = time.Second
-	MemcachePutTimeoutSmall = time.Second
-
 	// key tests
 	noid := NoId{}
 	if k, err := n.KeyError(noid); err == nil && !k.Incomplete() {
@@ -2545,6 +2549,11 @@ type PutGet struct {
 	Value int32
 }
 
+type HasData struct {
+	Id   int64 `datastore:"-" goon:"id"`
+	Data []byte
+}
+
 // This test won't fail but if run with -race flag, it will show known race conditions
 // Using multiple goroutines per http request is recommended here:
 // http://talks.golang.org/2013/highperf.slide#22
@@ -2616,14 +2625,14 @@ func TestRace(t *testing.T) {
 		})
 	}
 
-	g.Context = withErrorContext(g.Context, putMultiLimit)
+	g.Context = withErrorContext(g.Context, datastorePutMultiMaxItems)
 	_, err = g.PutMulti(hasIdSlice)
 	if err != errInternalCall {
 		t.Fatalf("Expected %v, got %v", errInternalCall, err)
 	}
 
 	g.FlushLocalCache()
-	g.Context = withErrorContext(g.Context, getMultiLimit)
+	g.Context = withErrorContext(g.Context, datastoreGetMultiMaxItems)
 	err = g.GetMulti(hasIdSlice)
 	if err != errInternalCall {
 		t.Fatalf("Expected %v, got %v", errInternalCall, err)
@@ -2633,7 +2642,7 @@ func TestRace(t *testing.T) {
 	for x, hasId := range hasIdSlice {
 		keys[x] = g.Key(hasId)
 	}
-	g.Context = withErrorContext(g.Context, deleteMultiLimit)
+	g.Context = withErrorContext(g.Context, datastoreDeleteMultiMaxItems)
 	err = g.DeleteMulti(keys)
 	if err != errInternalCall {
 		t.Fatalf("Expected %v, got %v", errInternalCall, err)
@@ -2968,12 +2977,16 @@ func TestMemcachePutTimeout(t *testing.T) {
 	origMPTL := MemcachePutTimeoutLarge
 	origMPTT := MemcachePutTimeoutThreshold
 	origMGT := MemcacheGetTimeout
+	origPMPE := propagateMemcachePutError
 	defer func() {
 		MemcachePutTimeoutSmall = origMPTS
 		MemcachePutTimeoutLarge = origMPTL
 		MemcachePutTimeoutThreshold = origMPTT
 		MemcacheGetTimeout = origMGT
+		propagateMemcachePutError = origPMPE
 	}()
+
+	propagateMemcachePutError = false
 
 	g := FromContext(c)
 	MemcachePutTimeoutSmall = time.Second
@@ -3154,5 +3167,67 @@ func TestMemcacheLimits(t *testing.T) {
 	// NOTE: We don't read back because the memcache emulator is way too slow to do this
 	testRPCBatchSize(1000, false)
 
-	// TODO: Implement these limits for goon, and add tests through goon
+	// Test RPC limit handling via goon
+	g := FromContext(c)
+
+	// Aim for roughly 80% of max entity size
+	data := bytes.Repeat([]byte{1, 2, 3, 4}, memcacheMaxItemSize/5)
+	// Aim for the maximum RPC size that we can get with datastore GetMulti,
+	// which should still be larger than the maximum memcache RPC size
+	count := int64(datastoreGetMultiMaxRPCSize / len(data))
+	hds := make([]*HasData, 0, count)
+	for i := int64(1); i <= count; i++ {
+		hds = append(hds, &HasData{Id: i, Data: data})
+	}
+
+	// Save all of these
+	// TODO: Use PutMulti once goon supports splitting up too large PutMulti requests
+	// keys, err := g.PutMulti(hds)
+	// if err != nil {
+	// 	t.Fatalf("Unexpected error on PutMulti: %v", err)
+	// }
+	var keys []*datastore.Key
+	for _, hd := range hds {
+		if key, err := g.Put(hd); err != nil {
+			t.Fatalf("Unexpected error on Put: %v", err)
+		} else {
+			keys = append(keys, key)
+		}
+	}
+
+	// Flush all the caches
+	g.FlushLocalCache()
+	memcache.Flush(c)
+
+	// Fetch them all back to confirm datastore works,
+	// and to also populate memcache
+	for _, hd := range hds {
+		hd.Data = nil
+	}
+	if err := g.GetMulti(hds); err != nil {
+		t.Fatalf("Unexpected error on GetMulti: %v", err)
+	}
+	for _, hd := range hds {
+		if !bytes.Equal(hd.Data, data) {
+			t.Fatalf("Invalid data! %v", hd.Id)
+		}
+		hd.Data = nil
+	}
+
+	// Flush local cache & datastore
+	g.FlushLocalCache()
+	if err := datastore.DeleteMulti(c, keys); err != nil {
+		t.Fatalf("Unexpected error on DeleteMulti: %v", err)
+	}
+
+	// Fetch them all back again, this time from memcache
+	if err := g.GetMulti(hds); err != nil {
+		t.Fatalf("Unexpected error on GetMulti: %v", err)
+	}
+	for _, hd := range hds {
+		if !bytes.Equal(hd.Data, data) {
+			t.Fatalf("Invalid data! %v", hd.Id)
+		}
+		hd.Data = nil
+	}
 }
