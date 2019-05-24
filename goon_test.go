@@ -3075,7 +3075,7 @@ func TestChangeMemcacheKey(t *testing.T) {
 	defer func() {
 		MemcacheKey = originalMemcacheKey
 	}()
-	verID := appengine.VersionID(c)
+	verID := "some-version"
 	MemcacheKey = func(k *datastore.Key) string {
 		return "custom:" + verID + ":" + k.Encode()
 	}
