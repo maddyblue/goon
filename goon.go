@@ -58,6 +58,9 @@ var (
 	// IgnoreFieldMismatch decides whether *datastore.ErrFieldMismatch errors
 	// should be silently ignored. This allows you to easily remove fields from structs.
 	IgnoreFieldMismatch = true
+
+	// Timeout for batch-get with over 100 keys
+	GetMultiTimeout = time.Second * 45
 )
 
 // Goon holds the app engine context and the request memory cache.
@@ -429,13 +432,22 @@ func (g *Goon) getMulti(dst interface{}, withCache bool) error {
 		return err
 	}
 
+	getMultiC := g.Context
+
+	// set timeout for batch-get with over 100 keys
+	if len(keys) >= 100 {
+		var cf context.CancelFunc
+		getMultiC, cf = context.WithTimeout(getMultiC, GetMultiTimeout)
+		defer cf()
+	}
+
 	v := reflect.Indirect(reflect.ValueOf(dst))
 
 	multiErr, anyErr := make(appengine.MultiError, len(keys)), false
 
 	if g.inTransaction || !withCache {
 		// todo: support getMultiLimit in transactions
-		if err := datastore.GetMulti(g.Context, keys, v.Interface()); err != nil {
+		if err := datastore.GetMulti(getMultiC, keys, v.Interface()); err != nil {
 			if merr, ok := err.(appengine.MultiError); ok {
 				for i := 0; i < len(keys); i++ {
 					if merr[i] != nil && (!IgnoreFieldMismatch || !errFieldMismatch(merr[i])) {
@@ -559,7 +571,7 @@ func (g *Goon) getMulti(dst interface{}, withCache bool) error {
 			if hi > len(dskeys) {
 				hi = len(dskeys)
 			}
-			gmerr := datastore.GetMulti(g.Context, dskeys[lo:hi], dsdst[lo:hi])
+			gmerr := datastore.GetMulti(getMultiC, dskeys[lo:hi], dsdst[lo:hi])
 			if gmerr != nil {
 				mu.Lock()
 				anyErr = true // this flag tells GetMulti to return multiErr later
