@@ -436,6 +436,10 @@ func (g *Goon) getMulti(dst interface{}, withCache bool) error {
 
 	// set timeout for batch-get with over 100 keys
 	if len(keys) >= 100 {
+		parentDeadline, ok := getMultiC.Deadline()
+		log.Debugf(g.Context, "GetMulti - Parent.Deadline:%t - %s", ok, parentDeadline)
+		log.Debugf(g.Context, "GetMulti - Now:%s", time.Now())
+		log.Debugf(g.Context, "GetMulti - Deadline:%s", time.Now().Add(GetMultiTimeout))
 		var cf context.CancelFunc
 		getMultiC, cf = context.WithTimeout(getMultiC, GetMultiTimeout)
 		defer cf()
