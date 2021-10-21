@@ -1865,6 +1865,63 @@ func TestCaches(t *testing.T) {
 	if !reflect.DeepEqual(*phid, ghids[0]) {
 		t.Fatalf("Invalid result!\n%s", getDiff(*phid, ghids[0], "*phid", "ghids[0]"))
 	}
+
+	// Do a sneaky save straight to the datastore
+	mhid := &HasId{Id: phid.Id, Name: "modified"}
+	if _, err := datastore.Put(c, datastore.NewKey(c, "HasId", "", phid.Id, nil), mhid); err != nil {
+		t.Fatalf("Unexpected error on datastore.Put: %v", err)
+	}
+
+	// Clear the memcache entry specifically
+	if err := g.ClearCache(phid, true, false); err != nil {
+		t.Fatalf("Failed to clear cache: %v", err)
+	}
+
+	// fetch *struct{} from cache
+	ghid = &HasId{Id: phid.Id}
+	err = g.Get(ghid)
+	if err != nil {
+		t.Fatalf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(phid, ghid) {
+		t.Fatalf("Invalid result!\n%s", getDiff(phid, ghid, "phid", "ghid"))
+	}
+
+	// Clear the local cache entry specifically
+	if err := g.ClearCache(phid, false, true); err != nil {
+		t.Fatalf("Failed to clear cache: %v", err)
+	}
+
+	// fetch *struct{} from datastore
+	ghid = &HasId{Id: phid.Id}
+	err = g.Get(ghid)
+	if err != nil {
+		t.Fatalf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(mhid, ghid) {
+		t.Fatalf("Invalid result!\n%s", getDiff(mhid, ghid, "mhid", "ghid"))
+	}
+
+	// Do a sneaky save straight to the datastore
+	nhid := &HasId{Id: phid.Id, Name: "nudged"}
+	if _, err := datastore.Put(c, datastore.NewKey(c, "HasId", "", phid.Id, nil), nhid); err != nil {
+		t.Fatalf("Unexpected error on datastore.Put: %v", err)
+	}
+
+	// Clear the local cache entry specifically
+	if err := g.ClearCache(phid, false, true); err != nil {
+		t.Fatalf("Failed to clear cache: %v", err)
+	}
+
+	// fetch *struct{} from memcache
+	ghid = &HasId{Id: phid.Id}
+	err = g.Get(ghid)
+	if err != nil {
+		t.Fatalf("Unexpected error on get - %v", err)
+	}
+	if !reflect.DeepEqual(mhid, ghid) {
+		t.Fatalf("Invalid result!\n%s", getDiff(mhid, ghid, "mhid", "ghid"))
+	}
 }
 
 func TestGoon(t *testing.T) {
