@@ -412,6 +412,80 @@ func (g *Goon) FlushLocalCache() {
 	g.cache.Flush()
 }
 
+// ClearCache removes the provided entity from cache.
+// Takes either *S or *datastore.Key.
+// The 'mem' and 'local' booleans dictate the type of caches to clear.
+func (g *Goon) ClearCache(src interface{}, mem, local bool) error {
+	if !mem && !local {
+		// Nothing to clear ..
+		return nil
+	}
+	var srcs interface{}
+	if key, ok := src.(*datastore.Key); ok {
+		srcs = []*datastore.Key{key}
+	} else {
+		v := reflect.ValueOf(src)
+		if v.Kind() != reflect.Ptr {
+			return fmt.Errorf("goon: expected pointer to a struct, got %#v", src)
+		}
+		srcs = []interface{}{src}
+	}
+	err := g.ClearCacheMulti(srcs, mem, local)
+	if err != nil {
+		// Look for an embedded error if it's multi
+		if me, ok := err.(appengine.MultiError); ok {
+			return me[0]
+		}
+	}
+	return err
+}
+
+// ClearCacheMulti removes the provided entities from cache.
+// Takes either []*S or []*datastore.Key.
+// The 'mem' and 'local' booleans dictate the type of caches to clear.
+func (g *Goon) ClearCacheMulti(src interface{}, mem, local bool) error {
+	if !mem && !local {
+		// Nothing to clear ..
+		return nil
+	}
+	keys, ok := src.([]*datastore.Key)
+	if !ok {
+		var err error
+		keys, err = g.extractKeys(src, false) // don't allow incomplete keys on a Clear request
+		if err != nil {
+			return err
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+		// not an error, and it was "successful", so return nil
+	}
+	cachekeys := make([]string, 0, len(keys))
+	for _, key := range keys {
+		cachekeys = append(cachekeys, cacheKey(key))
+	}
+	if g.inTransaction {
+		g.txnCacheLock.Lock()
+		for _, ck := range cachekeys {
+			if local {
+				g.toDelete[ck] = struct{}{}
+			}
+			if mem {
+				g.toDeleteMC[ck] = struct{}{}
+			}
+		}
+		g.txnCacheLock.Unlock()
+	} else {
+		if local {
+			g.cache.DeleteMulti(cachekeys)
+		}
+		if mem {
+			g.memcacheDeleteError(memcache.DeleteMulti(g.Context, cachekeys))
+		}
+	}
+	return nil
+}
+
 type memcacheTask struct {
 	items []*memcache.Item
 	size  int
