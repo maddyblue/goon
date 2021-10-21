@@ -2931,7 +2931,7 @@ func TestProjection(t *testing.T) {
 	defer done()
 	g := FromContext(c)
 
-	// Store some times
+	// Store some items
 	if _, err := g.PutMulti([]*QueryItem{{Id: 1, Data: "foo", Extra: "zoo"}, {Id: 2, Data: "bar", Extra: "woo"}}); err != nil {
 		t.Fatalf("failed to put query items: %v", err)
 	}
