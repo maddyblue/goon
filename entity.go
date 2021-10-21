@@ -177,6 +177,11 @@ func fromUnixMicro(t int64) time.Time {
 	return time.Unix(t/1e6, (t%1e6)*1e3).UTC()
 }
 
+func isIndexValue(p *datastore.Property) bool {
+	v := reflect.ValueOf(p.Value)
+	return v.Type().String() == "datastore.indexValue"
+}
+
 func serializeProperty(buf *bytes.Buffer, p *datastore.Property) error {
 	nameLen := len(p.Name)
 	if nameLen > propMaxNameLength {

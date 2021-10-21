@@ -34,7 +34,8 @@ func (g *Goon) Count(q *datastore.Query) (int, error) {
 //
 // For "keys-only" queries dst can be nil, however if it is not, then GetAll
 // appends zero value structs to dst, only setting the goon key fields.
-// No data is cached with "keys-only" queries.
+//
+// No data is cached with projection or "keys-only" queries.
 //
 // See: https://developers.google.com/appengine/docs/go/datastore/reference#Query.GetAll
 func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, error) {
@@ -62,8 +63,17 @@ func (g *Goon) GetAll(q *datastore.Query, dst interface{}) ([]*datastore.Key, er
 		return keys, err
 	}
 
+	projection := false
+	if len(propLists) > 0 {
+		for i := range propLists {
+			if len(propLists[i]) > 0 {
+				projection = isIndexValue(&propLists[i][0])
+				break
+			}
+		}
+	}
 	keysOnly := (len(propLists) != len(keys))
-	updateCache := !g.inTransaction && !keysOnly
+	updateCache := !g.inTransaction && !keysOnly && !projection
 
 	elemType := v.Type().Elem()
 	elemTypeIsPtr := false
@@ -185,7 +195,9 @@ func (t *Iterator) Cursor() (datastore.Cursor, error) {
 //
 // If the query is not keys only and dst is non-nil, it also loads the entity
 // stored for that key into the struct pointer dst, with the same semantics
-// and possible errors as for the Get function. This result is cached in memory.
+// and possible errors as for the Get function.
+//
+// This result is cached in memory, unless it's a projection query.
 //
 // If the query is keys only and dst is non-nil, dst will be given the right id.
 //
@@ -199,8 +211,12 @@ func (t *Iterator) Next(dst interface{}) (*datastore.Key, error) {
 	}
 	var rerr error
 	if dst != nil {
+		projection := false
+		if len(props) > 0 {
+			projection = isIndexValue(&props[0])
+		}
 		keysOnly := (props == nil)
-		updateCache := !t.g.inTransaction && !keysOnly
+		updateCache := !t.g.inTransaction && !keysOnly && !projection
 		if !keysOnly {
 			if err := deserializeProperties(dst, props); err != nil {
 				if errFieldMismatch(err) {
