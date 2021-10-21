@@ -2556,6 +2556,7 @@ type HasDefaultKind struct {
 type QueryItem struct {
 	Id      int64  `datastore:"-" goon:"id"`
 	Data    string `datastore:"data"`
+	Extra   string `datastore:"extra"`
 	Garbage string `datastore:"-"`
 }
 
@@ -2920,6 +2921,107 @@ func TestParents(t *testing.T) {
 	if !dk.Parent().Equal(rootKey) {
 		t.Fatalf("parent of key not equal '%s' v '%s'! ", dk, rootKey)
 	}
+}
+
+func TestProjection(t *testing.T) {
+	c, done, err := aetest.NewContext()
+	if err != nil {
+		t.Fatalf("Could not start aetest - %v", err)
+	}
+	defer done()
+	g := FromContext(c)
+
+	// Store some items
+	if _, err := g.PutMulti([]*QueryItem{{Id: 1, Data: "foo", Extra: "zoo"}, {Id: 2, Data: "bar", Extra: "woo"}}); err != nil {
+		t.Fatalf("failed to put query items: %v", err)
+	}
+
+	// Helps test if the cache has been poisoned by the incomplete results of the projection query
+	testCache := func(spot string) {
+		// Get these items by key
+		qis := []*QueryItem{{Id: 1}, {Id: 2}}
+		if err := g.GetMulti(qis); err != nil {
+			t.Fatalf("[%v] failed to fetch query items by key: %v", spot, err)
+		}
+		// Make sure the data is correct
+		if qis[0].Data != "foo" {
+			t.Errorf("[%v] first query item's data is incorrect: %v", spot, qis[0].Data)
+		}
+		if qis[1].Data != "bar" {
+			t.Errorf("[%v] second query item's data is incorrect: %v", spot, qis[1].Data)
+		}
+		if qis[0].Extra != "zoo" {
+			t.Errorf("[%v] unexpected extra value: %v", spot, qis[0].Extra)
+		}
+		if qis[1].Extra != "woo" {
+			t.Errorf("[%v] unexpected extra value: %v", spot, qis[1].Extra)
+		}
+	}
+
+	// Clear the caches
+	g.FlushLocalCache()
+	memcache.Flush(c)
+
+	// Need to wait due to eventual consistency
+	time.Sleep(time.Second)
+
+	// Do a projection query for these
+	qis := []*QueryItem{}
+	if _, err := g.GetAll(datastore.NewQuery("QueryItem").Project("data").Order("-data"), &qis); err != nil {
+		t.Fatalf("failed to fetch query items: %v", err)
+	}
+
+	if len(qis) != 2 {
+		t.Fatalf("failed to fetch both query items (%v)", len(qis))
+	}
+	if qis[0].Data != "foo" {
+		t.Errorf("first query item's data is incorrect: %v", qis[0].Data)
+	}
+	if qis[1].Data != "bar" {
+		t.Errorf("second query item's data is incorrect: %v", qis[1].Data)
+	}
+	if qis[0].Extra != "" {
+		t.Errorf("unexpected extra value: %v", qis[0].Extra)
+	}
+	if qis[1].Extra != "" {
+		t.Errorf("unexpected extra value: %v", qis[1].Extra)
+	}
+
+	testCache("GetAll")
+
+	// Clear the caches
+	g.FlushLocalCache()
+	memcache.Flush(c)
+
+	// Do another projection query
+	it := g.Run(datastore.NewQuery("QueryItem").Project("data").Order("-data"))
+
+	qi1 := &QueryItem{}
+	if _, err := it.Next(qi1); err != nil {
+		t.Fatalf("failed to fetch first query item: %v", err)
+	}
+	qi2 := &QueryItem{}
+	if _, err := it.Next(qi2); err != nil {
+		t.Fatalf("failed to fetch second query item: %v", err)
+	}
+	if _, err := it.Next(nil); err != datastore.Done {
+		t.Errorf("query didn't properly finish: %v", err)
+	}
+
+	if qi1.Data != "foo" {
+		t.Errorf("first query item's data is incorrect: %v", qi1.Data)
+	}
+	if qi2.Data != "bar" {
+		t.Errorf("second query item's data is incorrect: %v", qi2.Data)
+	}
+	if qi1.Extra != "" {
+		t.Errorf("unexpected extra value: %v", qi1.Extra)
+	}
+	if qi2.Extra != "" {
+		t.Errorf("unexpected extra value: %v", qi2.Extra)
+	}
+
+	testCache("Next")
 }
 
 type ContainerStruct struct {
