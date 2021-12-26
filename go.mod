@@ -1,4 +1,4 @@
-module github.com/mjibson/goon
+module github.com/mjibson/goon/v2
 
 go 1.12
 
