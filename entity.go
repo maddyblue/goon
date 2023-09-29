@@ -97,17 +97,17 @@ func deserializeEntityHeader(header uint32) (propCount, flags int) {
 }
 
 // The valid datastore.Property.Value types are:
-//    - int64
-//    - bool
-//    - string
-//    - float64
-//    - datastore.ByteString
-//    - *datastore.Key
-//    - time.Time
-//    - appengine.BlobKey
-//    - appengine.GeoPoint
-//    - []byte (up to 1 megabyte in length)
-//    - *Entity (representing a nested struct)
+//   - int64
+//   - bool
+//   - string
+//   - float64
+//   - datastore.ByteString
+//   - *datastore.Key
+//   - time.Time
+//   - appengine.BlobKey
+//   - appengine.GeoPoint
+//   - []byte (up to 1 megabyte in length)
+//   - *Entity (representing a nested struct)
 const (
 	propTypeNone       = 0
 	propTypeInt64      = 1
@@ -178,6 +178,9 @@ func fromUnixMicro(t int64) time.Time {
 }
 
 func isIndexValue(p *datastore.Property) bool {
+	if p.Value == nil {
+		return false
+	}
 	v := reflect.ValueOf(p.Value)
 	return v.Type().String() == "datastore.indexValue"
 }
